@@ -169,3 +169,38 @@ def test_the_worker_runs_as_a_script():
     # It should get all the way to looking for its parent and not find one.
     assert 'ZPROCESS_PARENTINFO' in finished.stderr, finished.stderr
     assert 'ImportError' not in finished.stderr, finished.stderr
+
+
+def test_a_scan_left_enabled_is_refused_unless_repeats_are_expected():
+    """One engage that makes many shots gives them all the same tag.
+
+    The first cost to arrive claims the tag and the rest are dropped. That is
+    exactly how averaging repeats is meant to work, so it is only an error
+    when the configuration is not expecting repeats.
+    """
+    from labscript_optimization import config as config_module
+    from labscript_optimization.runmanager_interface import RunmanagerInterface
+
+    class Runmanager:
+        def __init__(self, shots):
+            self.shots = shots
+
+        def error_in_globals(self):
+            return False
+
+        def get_globals(self):
+            return {'gx': 0.0, 'mloop_session': '', 'mloop_iteration': 0}
+
+        def n_shots(self):
+            return self.shots
+
+    strict = config_module.loads(CONFIG)
+    with pytest.raises(RuntimeError, match='would compile 4 shots'):
+        RunmanagerInterface(strict, Runmanager(4)).check_ready()
+
+    RunmanagerInterface(strict, Runmanager(1)).check_ready()
+
+    averaging = config_module.loads(
+        CONFIG.replace('[ANALYSIS]', '[ANALYSIS]\nignore_bad = true')
+    )
+    RunmanagerInterface(averaging, Runmanager(4)).check_ready()

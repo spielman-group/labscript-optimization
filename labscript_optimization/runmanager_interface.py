@@ -77,6 +77,20 @@ class RunmanagerInterface:
                 f"carry the tag that costs are matched by."
             )
 
+        # Every shot of one engage carries the same tag, so the first cost to
+        # arrive claims it and the rest are dropped. That is what makes
+        # multi-shot averaging work, but it is waste if it was not intended.
+        shots = self.client.n_shots()
+        if shots > 1 and not self.config.ignore_bad:
+            raise RuntimeError(
+                f"runmanager would compile {shots} shots per engage, but "
+                f"ignore_bad is false, so only the first cost of each batch "
+                f"would be used and the rest discarded. Either disable the "
+                f"scan so one engage is one shot, or set ignore_bad = true "
+                f"and have your routine write NaN until it has averaged the "
+                f"repeats."
+            )
+
     def submit(self, tag: str, params: Sequence[float]) -> None:
         """Set the globals for one proposal and engage.
 
