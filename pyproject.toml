@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+version_scheme = "release-branch-semver"
+local_scheme = "no-local-version"
+
+[tool.setuptools]
+zip-safe = false
+include-package-data = true
+
+[tool.setuptools.packages]
+find = {namespaces = false}
+
+[project]
+name = "labscript-optimization"
+description = "Machine-learning online optimisation of labscript suite experiments"
+authors = [
+    {name = "Ian Spielman", email = "spielman@umd.edu"},
+]
+keywords = ["experiment control", "automation", "optimisation"]
+license = {file = "LICENSE"}
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3 :: Only",
+]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "scikit-learn",
+    "scipy",
+]
+dynamic = ["version"]
+
+[project.readme]
+file = "README.md"
+content-type = "text/markdown"
+
+[project.urls]
+Repository = "https://github.com/spielman-group/labscript-optimization/"
+Tracker = "https://github.com/spielman-group/labscript-optimization/issues/"
+
+[project.optional-dependencies]
+# The lyse routine and its worker need the suite; the learners do not. Keeping
+# these separate is what lets the learners be unit tested without a lab.
+lyse = [
+    "labscript_utils>=3.4.2",
+    "lyse",
+    "runmanager",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

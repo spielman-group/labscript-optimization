@@ -1,0 +1,101 @@
+# Configuration for a labscript-optimization session.
+#
+# The schema is the one analysislib-mloop used, so an existing mloop_config
+# file loads here unchanged.
+
+[ANALYSIS]
+# Which (routine, result) column of the lyse dataframe holds the cost. The
+# routine that writes it is one of your own; this package never computes a
+# cost. An optional "u_<result>" column alongside it is read as the
+# uncertainty and weights the Gaussian process fit.
+cost_key = ["zTOF_singleShot", "Nb"]
+
+# The cost column holds something to be made as large as possible.
+maximize = true
+
+# A shot whose cost is NaN is treated as "no cost yet" rather than as a
+# failure, so a routine that averages several repeats can write NaN until it
+# has enough of them. The optimiser waits rather than counting the shot.
+ignore_bad = true
+
+# Only parameter groups named here take part.
+groups = ["CMOT"]
+
+[MLOOP]
+# Change this to start a fresh optimisation. Costs are matched to proposals by
+# a tag built from it, so shots from an earlier session are ignored rather
+# than mixed in.
+session = "2026-09-18a"
+
+# random, directed_random, differential_evolution or gaussian_process.
+# gaussian_process runs directed_random for its training shots first.
+learner = "gaussian_process"
+
+# How many shots to keep in runmanager's queue at once.
+num_buffered_runs = 3
+
+# How many shots the trainer runs before the Gaussian process takes over.
+num_training_runs = 20
+
+# Stop conditions. Omit either to let the session run until removed from lyse.
+max_num_runs = 400
+max_num_runs_without_better_params = 80
+
+# Set for a reproducible run; omit for a different sequence each time.
+# seed = 12345
+
+# Knobs here apply to whichever learner takes them.
+trust_region = 0.05
+cost_has_noise = true
+
+# Knobs for one learner only, overriding the above.
+[LEARNER.directed_random]
+# The band of costs, as a fraction of the way from the worst seen towards the
+# best, that a search may be centred on. The default sits away from the best
+# point on purpose: centring on middling results is what makes this learner
+# explore rather than refine.
+trust_range = [0.1, 0.25]
+# A share of proposals that ignore the trust region entirely.
+explore_fraction = 0.0
+
+[LEARNER.gaussian_process]
+# Weight on predicted uncertainty for the first point of a batch; later points
+# step up by one each, so a batch mixes a greedy point with exploratory ones.
+uncer_bias = 1.0
+
+# One optimised parameter per table. "global_name" is shorthand for a
+# runmanager global that takes this parameter's value directly.
+[MLOOP_PARAMS.CMOT.CMOTCaptureWidth]
+global_name = "CMOTCaptureWidth"
+min = 0.01
+max = 0.5
+start = 0.05
+
+[MLOOP_PARAMS.CMOT.CMOTCurrent]
+global_name = "CMOTCurrent"
+min = 5
+max = 40
+start = 20
+
+# enable = false keeps a parameter in the file but out of the search, leaving
+# its runmanager global at whatever value it already holds.
+[MLOOP_PARAMS.CMOT.CMOTFreq]
+global_name = "CMOTFreq"
+enable = false
+min = -1
+max = 1.5
+start = 0.5
+
+# When several parameters feed one global, give the global an expression
+# instead. "args" names the parameters, in the order the lambda takes them.
+# [MLOOP_PARAMS.CMOT.bx]
+# min = -1.0
+# max = 1.0
+#
+# [MLOOP_PARAMS.CMOT.by]
+# min = -1.0
+# max = 1.0
+#
+# [RUNMANAGER_GLOBALS.CMOT.ShimVector]
+# expr = "lambda a, b: (a, b)"
+# args = ["bx", "by"]

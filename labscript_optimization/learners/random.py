@@ -1,0 +1,159 @@
+"""Random and directed random learners.
+
+:class:`RandomLearner` draws uniformly from the whole space. It is the simplest
+thing that works and the reference every other learner is measured against.
+
+:class:`DirectedRandomLearner` is the algorithm the lab actually runs, carried
+over from analysislib-mloop. It draws near a previously seen point rather than
+near the best one, which biases it towards exploring the space instead of
+refining a single minimum.
+"""
+
+from typing import Sequence
+
+import numpy as np
+
+from ..observations import Observation, costs_array, params_array, usable
+from ..space import ParameterSpace
+
+
+class RandomLearner:
+    """Uniform random draws from the whole space.
+
+    Args:
+        space: The parameter space to search.
+        rng: Source of randomness.
+        first_params: A point to return as the very first proposal, or ``None``
+            to start from a random draw. Defaults to the space's configured
+            start.
+    """
+
+    def __init__(
+        self,
+        space: ParameterSpace,
+        rng: np.random.Generator,
+        first_params: np.ndarray | None = None,
+    ):
+        self.space = space
+        self.rng = rng
+        if first_params is None:
+            first_params = space.start
+        self.first_params = (
+            None if first_params is None else np.array(first_params, dtype=float)
+        )
+        if self.first_params is not None and not self.space.contains(self.first_params):
+            raise ValueError(f"first_params outside the bounds: {self.first_params}")
+
+    def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
+        proposals = self.space.uniform(self.rng, k)
+        if not history and self.first_params is not None:
+            proposals[0] = self.first_params
+        return proposals
+
+
+class DirectedRandomLearner:
+    """Random draws centred on a previously seen point.
+
+    Each proposal is either a pure random draw, with probability
+    ``explore_fraction``, or a draw from a trust region centred on one of the
+    observations whose cost falls inside ``trust_range``.
+
+    ``trust_range`` is measured as a fraction of the way from the worst cost
+    seen to the best, so ``[1, 1]`` centres on the best point and values near
+    zero centre on poor ones. The default sits near the worst end deliberately:
+    spreading the search over mediocre points is what makes this learner a
+    better explorer than one that always refines the best.
+
+    Args:
+        space: The parameter space to search.
+        rng: Source of randomness.
+        trust_region: Maximum distance from the centre point. A float in (0, 1)
+            is a fraction of each parameter's range; a sequence is absolute
+            distances. ``None`` searches the whole space, which makes this
+            learner equivalent to :class:`RandomLearner`.
+        trust_range: Two fractions bounding which observations may be chosen as
+            the centre.
+        trust_gaussian: Draw from a Gaussian of width ``trust_region`` about
+            the centre instead of uniformly within it.
+        explore_fraction: Share of proposals that ignore the trust region and
+            draw from the whole space.
+        first_params: A point to return as the very first proposal.
+    """
+
+    def __init__(
+        self,
+        space: ParameterSpace,
+        rng: np.random.Generator,
+        trust_region=0.05,
+        trust_range: Sequence[float] = (0.1, 0.25),
+        trust_gaussian: bool = False,
+        explore_fraction: float = 0.0,
+        first_params: np.ndarray | None = None,
+    ):
+        self.space = space
+        self.rng = rng
+        self.trust_region = space.absolute_trust_region(trust_region)
+        self.trust_gaussian = bool(trust_gaussian)
+
+        self.explore_fraction = float(explore_fraction)
+        if not 0 <= self.explore_fraction <= 1:
+            raise ValueError(
+                f"explore_fraction must be in [0, 1], got {self.explore_fraction}"
+            )
+
+        if len(trust_range) != 2:
+            raise ValueError(f"trust_range needs two values, got {trust_range!r}")
+        if not all(0 <= t <= 1 for t in trust_range):
+            raise ValueError(f"trust_range values must be in [0, 1], got {trust_range!r}")
+        self.trust_range = tuple(sorted(trust_range))
+
+        if first_params is None:
+            first_params = space.start
+        self.first_params = (
+            None if first_params is None else np.array(first_params, dtype=float)
+        )
+        if self.first_params is not None and not self.space.contains(self.first_params):
+            raise ValueError(f"first_params outside the bounds: {self.first_params}")
+
+    def _centre(self, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
+        """Pick the point to draw around.
+
+        The band runs from ``trust_range[0]`` to ``trust_range[1]`` of the way
+        from the worst cost towards the best. When nothing falls inside it --
+        which includes the case of a single observation -- the best point is
+        used.
+        """
+        best, worst = costs.min(), costs.max()
+        high = worst + (best - worst) * self.trust_range[0]
+        low = worst + (best - worst) * self.trust_range[1]
+        inside = (low <= costs) & (costs <= high)
+        if not inside.any():
+            return params[costs.argmin()]
+        candidates = params[inside]
+        return candidates[self.rng.integers(len(candidates))]
+
+    def _draw_near(self, centre: np.ndarray) -> np.ndarray:
+        if self.trust_gaussian:
+            return self.space.clip(self.rng.normal(centre, self.trust_region))
+        low = np.maximum(self.space.minimum, centre - self.trust_region)
+        high = np.minimum(self.space.maximum, centre + self.trust_region)
+        return self.rng.uniform(low, high)
+
+    def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
+        if not history and self.first_params is not None:
+            proposals = self.space.uniform(self.rng, k)
+            proposals[0] = self.first_params
+            return proposals
+
+        seen = usable(history)
+        if not seen or self.trust_region is None:
+            return self.space.uniform(self.rng, k)
+
+        params, costs = params_array(seen), costs_array(seen)
+        proposals = np.empty((k, self.space.num_params))
+        for i in range(k):
+            if self.rng.uniform() < self.explore_fraction:
+                proposals[i] = self.space.uniform(self.rng, 1)[0]
+            else:
+                proposals[i] = self._draw_near(self._centre(params, costs))
+        return proposals
