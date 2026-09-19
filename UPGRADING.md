@@ -142,10 +142,13 @@ status, so a routine that wants them prints it:
 print(optimisation.optimise('mloop_config.toml'))
 ```
 
-`dropped` counts shots runmanager no longer expects to produce anything. A few
-over a long run are ordinary: a shot that ran and left the queue is counted
-there too, because runmanager answers for it exactly as it does for one that
-was deleted.
+`dropped` counts shots the session proposed that will never produce a cost:
+cancelled, deleted, refused, or gone from the queue with nothing reaching lyse.
+A shot that simply ran is not among them. runmanager answers for a finished
+shot exactly as it does for one that was deleted, so a shot is given up on only
+when a second reconcile says the same, by which time a healthy shot's cost has
+come back through lyse. A `dropped` above zero is shots the run actually lost,
+and is worth looking into.
 
 `blocked` is the part of that number worth acting on. It counts shots sitting
 behind a row the queue will not hand over — a rejected head, or one whose
