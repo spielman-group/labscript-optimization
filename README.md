@@ -15,10 +15,11 @@ analysislib-mloop file as it stands: see [Using it](#using-it).
 One lyse routine, one worker process, one session.
 
 ```
-lyse routine ──observation──▶ worker ──set_globals + engage──▶ runmanager
-     ▲                          │                                   │
-     │                          └── history, learner, stop rules    │
-     └──────────── shot with its cost ◀────────────────────────────┘
+lyse routine ──observation──▶ worker ──submit_shots──▶ runmanager
+     ▲                          │                           │
+     │                          └── history, learner,       │
+     │                              stop rules              │
+     └────────── shot with its cost ◀───────────────────────┘
 ```
 
 Each shot is identified by the id runmanager mints for its queue row, written
