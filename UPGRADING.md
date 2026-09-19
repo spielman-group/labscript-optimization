@@ -76,8 +76,8 @@ want. BLACS asks for its next shot as soon as it finishes the last, which is
 before the optimiser has seen the cost and proposed a replacement — so a queue
 holding only one of its shots is empty at precisely that moment and runmanager
 gives BLACS a default shot instead. At one buffered run roughly every second
-shot is a default one. Those shots carry no shot id, so they are never
-mistaken for the optimiser's own.
+shot is a default one. Those shots go to BLACS already compiled, so runmanager
+never writes a shot id into them.
 
 The status counts a `starved` for each time the routine found nothing of its
 own queued. If it keeps climbing, the fit is taking longer than a shot: raise

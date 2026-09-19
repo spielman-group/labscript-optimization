@@ -75,8 +75,8 @@ a `starved` for each time the routine found nothing of its own queued; raise
 `num_buffered_runs` if it keeps climbing.
 
 Those default shots are also what keeps the routine running while the optimiser
-waits. They carry no shot id, so they are not mistaken for its own, and they
-deliberately never become the sequence anchor.
+waits. They go to BLACS already compiled, so runmanager never writes a shot id
+into them, and they deliberately never become the sequence anchor.
 
 You compute the cost yourself, in your own lyse routine, into the column named
 by `cost_key`. A shot whose cost is `NaN` is recorded as a bad observation
