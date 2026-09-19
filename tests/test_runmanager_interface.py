@@ -89,7 +89,7 @@ def test_a_session_starts_when_runmanager_can_sustain_it(interface):
 
 def test_a_policy_that_would_let_the_session_die_silently_is_refused(config):
     interface = RunmanagerInterface(config, FakeClient(policy='nothing'))
-    with pytest.raises(RuntimeError, match="empty-queue policy is 'nothing'"):
+    with pytest.raises(RuntimeError, match="sequence of its own"):
         interface.check_ready()
 
 

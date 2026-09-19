@@ -45,6 +45,12 @@ class RunmanagerInterface:
         lyse, so the routine is never called again and the optimisation stops
         without saying anything. And a labscript file changed underneath a
         running session would optimise a different experiment without a word.
+
+        The policy check earns its place twice over. Under 'default_labscript'
+        the gap between submissions is filled by a shot runmanager makes
+        itself, which deliberately never becomes the sequence anchor, so a
+        whole run stays one sequence with continuing run numbers. Under
+        'nothing' the anchor is let go the moment BLACS finds the queue empty.
         """
         if self.client.error_in_globals():
             raise RuntimeError(
@@ -55,12 +61,15 @@ class RunmanagerInterface:
         policy = self.client.get_empty_queue_policy()
         if policy != "default_labscript":
             raise RuntimeError(
-                f"runmanager's empty-queue policy is {policy!r}. This session "
-                f"would stop silently the first time its queue emptied, "
-                f"because nothing would reach lyse to invoke the routine "
-                f"again. Set the policy to 'default_labscript' so the "
-                f"apparatus keeps running when the optimiser has nothing "
-                f"queued."
+                f"runmanager's empty-queue policy is {policy!r}. Set it to "
+                f"'default_labscript'. Two things go wrong otherwise, and "
+                f"only the first is obvious. Nothing would reach lyse the "
+                f"first time the queue emptied, so the routine would never be "
+                f"invoked again and the session would stop without saying so. "
+                f"And runmanager lets go of the sequence it is continuing as "
+                f"soon as BLACS finds the queue empty, so every submission "
+                f"would start a sequence of its own and the run would be "
+                f"scattered across one sequence per shot."
             )
 
         self.labscript_file = self.client.get_labscript_file()

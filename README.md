@@ -59,9 +59,14 @@ raise `num_buffered_runs` if it keeps climbing.
 runmanager's empty-queue policy must be `default_labscript`. The session
 refuses to start otherwise: a queue that empties under the `nothing` policy
 produces no further shot, so nothing would reach lyse to invoke the routine
-again and the optimisation would stop without saying so. Those default shots
-are also what keeps the routine running while the optimiser waits: they carry
-no shot id, so they are not mistaken for its own.
+again and the optimisation would stop without saying so. It also keeps a run
+in one sequence: runmanager lets go of the sequence it is continuing as soon as
+BLACS finds the queue empty, so under `nothing` every submission would start a
+sequence of its own.
+
+Those default shots are also what keeps the routine running while the optimiser
+waits. They carry no shot id, so they are not mistaken for its own, and they
+deliberately never become the sequence anchor.
 
 You compute the cost yourself, in your own lyse routine, into the column named
 by `cost_key`. A shot whose cost is `NaN` is recorded as a bad observation
