@@ -52,11 +52,19 @@ Delete these from your configuration:
 | `[MLOOP]` | `console_log_level`, `console_log_string` | As above. |
 | whole table | `[COMPILATION]` | Its only key was `mock`, which selected a dry-run interface that has been removed. |
 
-And rename one:
+And rename two:
 
 | Table | Rename | To |
 | --- | --- | --- |
 | `[MLOOP]` | `controller_type` | `learner` |
+| `[MLOOP]`, `[LEARNER.gaussian_process]` | `generation_size` | `batch_size` |
+
+`batch_size` does what `generation_size` did: it is the period of the Gaussian
+process's exploration schedule and how many new observations it accepts before
+refitting the kernel, which is what batch Bayesian optimisation calls a batch.
+The word `generation` belongs to differential evolution, where it names the
+population's step from one whole set of members to the next, and one document
+cannot hold two senses of it.
 
 Archive paths, `archive_type` and the other M-LOOP pass-through keys go the
 same way if you have them. There is no archive: if the worker dies, the

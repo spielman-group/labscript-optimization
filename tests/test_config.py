@@ -471,3 +471,30 @@ def test_the_example_configuration_loads_and_builds_its_learner():
     learner = learners.build(config)
     assert isinstance(learner, learners.TwoPhaseLearner)
     assert learner.num_training == 20
+
+
+# --- the Gaussian process's batch ------------------------------------------
+
+
+def test_batch_size_is_the_gaussian_process_knob():
+    config = config_module.loads(MINIMAL + '[MLOOP]\nbatch_size = 6\n')
+    assert learners.build(config).main.batch_size == 6
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        MINIMAL + '[MLOOP]\ngeneration_size = 4\n',
+        MINIMAL + '[LEARNER.gaussian_process]\ngeneration_size = 4\n',
+    ],
+    ids=['[MLOOP]', '[LEARNER.gaussian_process]'],
+)
+def test_the_gaussian_process_knob_is_not_spelt_generation_size(text):
+    """A generation is what differential evolution's population takes.
+
+    Accepted in either table it would be a setting the file states and
+    nothing reads, which is how a lab comes to believe a schedule is in force
+    when it is not.
+    """
+    with pytest.raises(ValueError, match='generation_size'):
+        config_module.loads(text)

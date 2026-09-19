@@ -9,14 +9,14 @@ Exploration comes from the acquisition, which minimises
     cost_bias * predicted_cost - uncer_bias * predicted_standard_deviation
 
 with the weight on the uncertainty stepping 0, 1, 2, ... across successive
-proposals and returning to zero every ``generation_size`` of them. One
-proposal per generation is therefore purely greedy and the rest trade
-predicted cost for a look somewhere less certain. The step is read off the
-history, so it advances with the proposals a session makes rather than with a
-point's position within a batch.
+proposals and returning to zero every ``batch_size`` of them. One proposal in
+each batch is therefore purely greedy and the rest trade predicted cost for a
+look somewhere less certain. The step is read off the history, so it advances
+with the proposals a session makes rather than with a point's position within
+the group of them asked for at once.
 
 Refitting the kernel hyperparameters is the expensive part, so it happens once
-per ``generation_size`` new observations rather than on every call; the
+per ``batch_size`` new observations rather than on every call; the
 posterior is refit to all the data every time.
 """
 
@@ -60,10 +60,10 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         cost_bias: Weight on predicted cost in the acquisition.
         uncer_bias: Weight on predicted uncertainty, one step of the
             exploration schedule described above. Raising it buys a wider look
-            without moving each generation's greedy proposal.
-        generation_size: How many proposals a generation holds: the period of
-            that schedule, and the number of new observations accepted before
-            the kernel hyperparameters are refit.
+            without moving each batch's greedy proposal.
+        batch_size: How many proposals a batch holds: the period of that
+            schedule, and the number of new observations accepted before the
+            kernel hyperparameters are refit.
         trust_region: Restrict the search to this distance around the best
             point seen.
         minimum_observations: Refuse to propose until the history holds this
@@ -82,7 +82,7 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         noise_level_bounds: Sequence[float] = (1e-5, 1e1),
         cost_bias: float = 1.0,
         uncer_bias: float = 1.0,
-        generation_size: int = 4,
+        batch_size: int = 4,
         trust_region=None,
         minimum_observations: int | None = None,
     ):
@@ -92,10 +92,10 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         self.noise_level_bounds = tuple(noise_level_bounds)
         self.cost_bias = float(cost_bias)
         self.uncer_bias = float(uncer_bias)
-        self.generation_size = int(generation_size)
-        if self.generation_size < 1:
+        self.batch_size = int(batch_size)
+        if self.batch_size < 1:
             raise ValueError(
-                f"generation_size must be at least 1, got {self.generation_size}"
+                f"batch_size must be at least 1, got {self.batch_size}"
             )
         self.trust_region = space.absolute_trust_region(trust_region)
         self.minimum_observations = (
@@ -162,11 +162,11 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         if len(seen) < self.minimum_observations:
             return False
 
-        # Hyperparameters come from whole generations, so that an instance that
+        # Hyperparameters come from whole batches, so that an instance that
         # has been fitting all session holds the kernel a fresh one handed the
         # same history computes, and what it keeps is a cache. Short of one
-        # generation there is nothing to hold back.
-        whole = len(seen) - len(seen) % self.generation_size
+        # batch there is nothing to hold back.
+        whole = len(seen) - len(seen) % self.batch_size
         prefix = seen[:whole] if whole else seen
         # Keyed on which observations they were fitted to and not how many: a
         # cost arriving late lands in proposal order and rewrites a prefix of
@@ -280,7 +280,7 @@ class GaussianProcessLearner(ParameterSpaceLearner):
             # as a counter over the batch would sit at its greedy first step
             # for ever in a session that settles into asking for one point at
             # a time, and uncer_bias would do nothing whatever.
-            step = (len(seen) + i) % self.generation_size
+            step = (len(seen) + i) % self.batch_size
             scaled = self.minimise_acquisition(
                 regressor, self.uncer_bias * step, best_params, lows, highs
             )

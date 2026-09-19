@@ -64,7 +64,7 @@ SHARED_LEARNER_KEYS = frozenset(
         "restart_tolerance",
         "cost_bias",
         "uncer_bias",
-        "generation_size",
+        "batch_size",
         "length_scale_bounds",
         "noise_level_bounds",
         "minimum_observations",

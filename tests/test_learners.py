@@ -469,9 +469,9 @@ def test_gaussian_process_finds_the_minimum(space, rng):
     np.testing.assert_allclose(best.params, [1.3, -2.1], atol=0.3)
 
 
-@pytest.mark.parametrize('generation_size, carried, count', [(4, 12, 15), (8, 6, 7)])
+@pytest.mark.parametrize('batch_size, carried, count', [(4, 12, 15), (8, 6, 7)])
 def test_gaussian_process_state_depends_only_on_the_history(
-    space, generation_size, carried, count
+    space, batch_size, carried, count
 ):
     """Two learners given the same history must hold the same model.
 
@@ -479,18 +479,18 @@ def test_gaussian_process_state_depends_only_on_the_history(
     function of the history alone: an instance that has been fitting all
     session must arrive at what a fresh one computes, not at a kernel fitted to
     however much it happened to hold when the cache was last filled. The second
-    case is a history short of one full generation, where there is no whole
-    generation to fit to and the cache has to give way on every arrival.
+    case is a history short of one full batch, where there is no whole batch
+    to fit to and the cache has to give way on every arrival.
     """
     history = gaussian_process_history(space, 9, count=count)
     all_session = GaussianProcessLearner(
-        space, np.random.default_rng(1), generation_size=generation_size
+        space, np.random.default_rng(1), batch_size=batch_size
     )
     all_session.fit(history[:carried])
     all_session.fit(history)
 
     fresh = GaussianProcessLearner(
-        space, np.random.default_rng(2), generation_size=generation_size
+        space, np.random.default_rng(2), batch_size=batch_size
     )
     fresh.fit(history)
 
@@ -504,9 +504,9 @@ def test_gaussian_process_state_depends_only_on_the_history(
     )
 
 
-#: The generation the exploration tests below configure, and so the number of
+#: The batch the exploration tests below configure, and so the number of
 #: proposals the schedule takes to come back round to its greedy step.
-GENERATION = 4
+BATCH = 4
 
 
 def exploring_and_greedy(space, count):
@@ -517,10 +517,10 @@ def exploring_and_greedy(space, count):
     """
     history = gaussian_process_history(space, 5, count=count)
     greedy = GaussianProcessLearner(
-        space, np.random.default_rng(3), uncer_bias=0.0, generation_size=GENERATION
+        space, np.random.default_rng(3), uncer_bias=0.0, batch_size=BATCH
     )
     explorer = GaussianProcessLearner(
-        space, np.random.default_rng(3), uncer_bias=50.0, generation_size=GENERATION
+        space, np.random.default_rng(3), uncer_bias=50.0, batch_size=BATCH
     )
     return float(
         np.linalg.norm(explorer.propose(history, 1)[0] - greedy.propose(history, 1)[0])
@@ -540,15 +540,15 @@ def test_the_exploration_weight_reaches_a_proposal_asked_for_on_its_own(space):
 
 @pytest.mark.parametrize('count', [12, 13, 14, 15, 16])
 def test_the_exploration_schedule_advances_as_observations_arrive(space, count):
-    """The weight steps once per proposal and cycles over a generation.
+    """The weight steps once per proposal and cycles over a batch.
 
-    One proposal in each generation is purely greedy and the rest look
-    progressively further afield, which is how M-LOOP spends a generation.
+    One proposal in each batch is purely greedy and the rest look
+    progressively further afield, which is how the schedule spends a batch.
     Reading the position off the history rather than a counter is what keeps
     a learner handed the same history proposing the same thing.
     """
     apart = exploring_and_greedy(space, count=count)
-    if count % GENERATION:
+    if count % BATCH:
         assert apart > 0.1
     else:
         # A weight of zero times anything is the greedy proposal itself.
@@ -563,11 +563,12 @@ def test_a_gaussian_process_batch_does_not_repeat_itself(space, rng):
     proposal is a wasted shot. The greedy pick is the exception and is left out
     below: at a weight of zero the acquisition is the posterior mean, and
     folding a point in at its own predicted cost leaves that mean where it was,
-    so a batch spanning two generations asks for the same greedy point twice.
+    so a run of proposals spanning two batches asks for the same greedy point
+    twice.
     """
-    learner = GaussianProcessLearner(space, rng, generation_size=GENERATION)
+    learner = GaussianProcessLearner(space, rng, batch_size=BATCH)
     history = gaussian_process_history(space, 5)
-    proposals = learner.propose(history, GENERATION + 2)
+    proposals = learner.propose(history, BATCH + 2)
     # Twelve observations in hand, so the weights run 0, 1, 2, 3, 0, 1 and the
     # sixth pick repeats the weight of the second. Nothing but the fold-in
     # keeps it off that point: without it the two land 4e-6 apart.
