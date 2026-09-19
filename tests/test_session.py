@@ -253,3 +253,20 @@ def test_a_queue_kept_topped_up_does_not_starve(runmanager):
         session.record(session.awaiting[0], 1.0, None, False)
         session.refill()
     assert session.status()['starved'] == 0
+
+
+def test_a_refused_submission_leaves_the_session_untouched(session, runmanager):
+    """submit_shots checks every entry before submitting any, so a refusal
+    means nothing was queued. Nothing here may be left thinking otherwise."""
+    def refuse(proposals):
+        raise RuntimeError(
+            'Cannot submit {...} as one shot: the globals as they stand '
+            'produce 3. Expanded by: height, width.'
+        )
+
+    runmanager.submit = refuse
+    with pytest.raises(RuntimeError, match='as one shot'):
+        session.refill()
+    assert session.proposals == {}
+    assert session.awaiting == []
+    assert session.history == []

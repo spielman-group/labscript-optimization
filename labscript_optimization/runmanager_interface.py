@@ -78,21 +78,17 @@ class RunmanagerInterface:
     def submit(self, proposals: Sequence[Sequence[float]]) -> list[str]:
         """Queue one shot per proposal. Returns their shot ids, in order.
 
-        A call that fails partway still reports the shots it did queue, so
-        their ids are never lost while the rows are live.
+        A refusal means nothing was queued: submit_shots checks every entry --
+        that the globals evaluate, and that each produces exactly one shot --
+        before submitting any of them. So a raise here leaves nothing behind to
+        account for, and the proposals are simply discarded. The learner is a
+        function of the history, which this has not touched, so there is no
+        state to unwind.
         """
         entries = [
             self.config.globals_for(np.asarray(p, dtype=float)) for p in proposals
         ]
-        answer = self.client.submit_shots(entries)
-        if isinstance(answer, dict):
-            descriptors, error = answer.get("descriptors", []), answer.get("error")
-        else:
-            descriptors, error = answer, None
-        ids = [d["shot_id"] for d in descriptors]
-        if error:
-            raise SubmissionFailed(error, ids)
-        return ids
+        return [d["shot_id"] for d in self.client.submit_shots(entries)]
 
     def pending(self, shot_ids: Iterable[str]) -> set[str]:
         """Which of these shots could still produce a cost.
@@ -106,14 +102,6 @@ class RunmanagerInterface:
             return set()
         status = self.client.shot_status(shot_ids)
         return {i for i in shot_ids if status.get(i, {}).get("pending", False)}
-
-
-class SubmissionFailed(RuntimeError):
-    """A submission stopped partway. ``shot_ids`` are the rows that do exist."""
-
-    def __init__(self, message, shot_ids):
-        super().__init__(message)
-        self.shot_ids = list(shot_ids)
 
 
 class MockInterface:
