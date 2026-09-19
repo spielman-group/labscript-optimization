@@ -170,7 +170,21 @@ A learner answers `propose` and carries a `last_phase` string and a
 a fixed size and only when none of its proposals is outstanding. Those three
 are `Learner`, which everything here inherits — the two-phase wrapper included, so
 a session cannot tell a wrapped learner from a plain one. Your own object is
-driven by those same two members whether or not it inherits anything.
+driven by those same three members whether or not it inherits anything.
+
+A learner that wraps another owes an answer for every attribute something
+outside a learner reads off it — `last_phase` and `generation`, which the
+session reads, and `minimum_observations`, which a wrapper reads to decide
+whether the handover it was configured for can happen. Three answers are
+honest: answer for itself, where the wrapper's own value is the true one; pass
+the wrapped learner's on, where the wrapper can hold what that value promises;
+or refuse to be built, where it cannot. Leaving one unanswered is none of the
+three — the reader's own default becomes the answer, and the wrapped learner's
+declaration is dropped with nothing said. The two-phase wrapper answers
+`last_phase` for itself, declares a `minimum_observations` of zero because its
+trainer is the fallback for anything its main learner cannot make, and refuses
+to wrap a learner declaring a `generation`, since a barrier cannot be held
+across two phases only one of which promises it.
 
 Being named in a configuration asks for more. Inherit `ParameterSpaceLearner`
 and add the class to the `LEARNERS` table, both from

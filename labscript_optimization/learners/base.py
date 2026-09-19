@@ -32,6 +32,18 @@ class Learner(ABC):
     Inheriting is not what makes an object usable -- a session proposes from
     anything carrying these three members -- but everything this package calls
     a learner is one.
+
+    A wrapper owes an answer for every attribute something outside a learner
+    reads off it: ``last_phase`` and ``generation`` here, read by the session,
+    and ``minimum_observations``, read by a wrapper deciding how long to train
+    and so carried only by the learners that refuse to propose without one.
+    Three answers are honest -- answer for itself, where the wrapper's own
+    value is the true one; pass the wrapped learner's on, where the wrapper
+    can hold what that value promises; or refuse to be built, where it cannot.
+    Leaving one unanswered is none of the three: the reader's own default
+    becomes the answer, and the wrapped learner's declaration is dropped with
+    nothing said. That is how a barrier gets lost behind a wrapper while
+    everything still runs.
     """
 
     #: Which of the learner's ways of proposing produced the last batch, which

@@ -25,7 +25,7 @@ House rules that apply to every slice:
 - [x] Slice 3: What the lab reads — `best_cost` units and cost ordering
 - [x] Slice 4: Textbook generational differential evolution
 - [ ] Slice 5: The greeting's deadline belongs to the question
-- [ ] Slice 6: A wrapper cannot silently drop a generation barrier
+- [x] Slice 6: A wrapper cannot silently drop a generation barrier
 - [ ] Slice 7: Benchmark the shipped DE
 - [ ] Slice 8: Test cleanup
 
@@ -475,12 +475,12 @@ against that rule at the same time, since the same argument applies to both.
 
 ### Acceptance criteria
 
-- [ ] A generational learner behind a trainer either keeps its barrier or is
+- [x] A generational learner behind a trainer either keeps its barrier or is
       refused at construction — mutation: whichever is chosen, the opposite
       behaviour passes silently today
-- [ ] The learner contract states what a wrapper owes an attribute the session
+- [x] The learner contract states what a wrapper owes an attribute the session
       acts on
-- [ ] `last_phase` and `minimum_observations` are checked against the same rule,
+- [x] `last_phase` and `minimum_observations` are checked against the same rule,
       and any gap is fixed or recorded
 
 ### Blocked by

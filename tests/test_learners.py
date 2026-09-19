@@ -1047,3 +1047,51 @@ def test_a_handover_that_works_is_not_warned_about(space, rng):
     with warnings.catch_warnings():
         warnings.simplefilter('error')
         TwoPhaseLearner(RandomLearner(space, rng), main, num_training=4)
+
+
+def test_a_two_phase_learner_reports_a_phase_before_it_has_proposed(space, rng):
+    """A session may report its status before it first refills the queue."""
+    learner = TwoPhaseLearner(RandomLearner(space, rng), Ready(), num_training=3)
+    assert learner.last_phase == 'training'
+
+
+def test_a_two_phase_learner_answers_for_the_observations_it_needs(space, rng):
+    """It never refuses to propose -- the trainer is the fallback for anything
+    the main learner cannot make -- so it absorbs its main learner's
+    requirement rather than passing it on. Declared, because an attribute read
+    off a learner with a default is the reader's answer and not the learner's.
+    """
+    main = GaussianProcessLearner(space, rng, minimum_observations=6)
+    learner = TwoPhaseLearner(RandomLearner(space, rng), main, num_training=6)
+    assert learner.minimum_observations == 0
+
+
+def test_a_generational_learner_cannot_be_put_behind_a_trainer(space, rng):
+    """Refused at construction, because the wrapper cannot hold the barrier.
+
+    A two-phase learner declares no generation of its own, so a session tops
+    its queue up whenever there is room: the population would be proposed in
+    pieces and judged before the generation was complete.
+    """
+    main = DifferentialEvolutionLearner(space, rng, population_size=4)
+    with pytest.raises(ValueError, match='whole generations of 4'):
+        TwoPhaseLearner(RandomLearner(space, rng), main, num_training=8)
+
+
+def test_a_generational_learner_cannot_be_the_trainer_either(space, rng):
+    """The same barrier reaches a session by the same route. Which phase the
+    learner proposes in changes nothing about what its declaration promises.
+    """
+    trainer = DifferentialEvolutionLearner(space, rng, population_size=4)
+    with pytest.raises(ValueError, match='whole generations of 4'):
+        TwoPhaseLearner(trainer, RandomLearner(space, rng), num_training=8)
+
+
+def test_a_learner_that_declares_no_barrier_is_wrapped(space, rng):
+    """What is refused is a barrier the wrapper cannot hold, not wrapping. The
+    wrapper's own ``generation`` is true of it because of that refusal.
+    """
+    learner = TwoPhaseLearner(
+        DirectedRandomLearner(space, rng), GaussianProcessLearner(space, rng), 8
+    )
+    assert learner.generation is None
