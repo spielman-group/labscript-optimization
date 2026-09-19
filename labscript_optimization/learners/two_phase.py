@@ -15,15 +15,17 @@ from typing import Sequence
 import numpy as np
 
 from ..observations import Observation, usable
-from .base import InsufficientData
+from .base import InsufficientData, Learner
 
 
-class TwoPhaseLearner:
+class TwoPhaseLearner(Learner):
     """Delegate to ``trainer`` while training, then to ``main``.
 
-    Not a :class:`~labscript_optimization.learners.base.Learner`: it searches
-    no space of its own, takes no ``space`` or ``rng``, and cannot be named in
-    a configuration. :func:`~labscript_optimization.learners.build` wraps one
+    A :class:`~labscript_optimization.learners.base.Learner` like the two it
+    wraps, so a session cannot tell it apart from either. Not a
+    :class:`~labscript_optimization.learners.base.ParameterSpaceLearner`,
+    though: it searches no space of its own and so cannot be named in a
+    configuration. :func:`~labscript_optimization.learners.build` wraps one
     around the two learners it builds instead.
 
     Args:

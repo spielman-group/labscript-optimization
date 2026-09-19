@@ -4,7 +4,7 @@ import inspect
 
 import numpy as np
 
-from .base import InsufficientData, Learner
+from .base import InsufficientData, Learner, ParameterSpaceLearner
 from .differential_evolution import DifferentialEvolutionLearner
 from .gaussian_process import GaussianProcessLearner
 from .random import DirectedRandomLearner, RandomLearner
@@ -16,6 +16,7 @@ __all__ = [
     "GaussianProcessLearner",
     "InsufficientData",
     "Learner",
+    "ParameterSpaceLearner",
     "RandomLearner",
     "TwoPhaseLearner",
     "build",

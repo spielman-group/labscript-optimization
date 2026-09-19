@@ -36,11 +36,11 @@ from ..observations import (
     uncers_array,
     usable,
 )
-from .base import InsufficientData, Learner
+from .base import InsufficientData, ParameterSpaceLearner
 from ..space import ParameterSpace
 
 
-class GaussianProcessLearner(Learner):
+class GaussianProcessLearner(ParameterSpaceLearner):
     """Fit a Gaussian process to the history and search its posterior.
 
     Args:

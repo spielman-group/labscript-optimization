@@ -18,6 +18,7 @@ from labscript_optimization.learners import (
     GaussianProcessLearner,
     InsufficientData,
     Learner,
+    ParameterSpaceLearner,
     RandomLearner,
     TwoPhaseLearner,
     build,
@@ -80,6 +81,19 @@ def test_a_learner_without_phases_of_its_own_still_reports_one(space, rng):
 # --- the interface ---------------------------------------------------------
 
 
+def test_every_learner_is_a_learner_including_the_wrapper(space, rng):
+    """The wrapper is what ``build`` returns for the default configuration.
+
+    A session holds it and proposes from it exactly as it does from the
+    learners it wraps, so it has to be substitutable for one. An interface the
+    most-used learner in the package cannot satisfy describes the wrong thing.
+    """
+    for cls in [*learners.LEARNERS.values(), TwoPhaseLearner]:
+        assert issubclass(cls, Learner), cls.__name__
+    for learner in every_learner(space, rng):
+        assert isinstance(learner, Learner), type(learner).__name__
+
+
 @pytest.mark.parametrize('name, cls', sorted(learners.LEARNERS.items()))
 def test_a_learner_named_in_a_configuration_takes_the_space_first(name, cls):
     """Building one is ``cls(space, rng, **options)``, the options matched by
@@ -87,7 +101,7 @@ def test_a_learner_named_in_a_configuration_takes_the_space_first(name, cls):
     round constructs happily and searches the wrong thing, and a knob with no
     default cannot be left out of a shared table that serves every learner.
     """
-    assert issubclass(cls, Learner)
+    assert issubclass(cls, ParameterSpaceLearner)
     params = list(inspect.signature(cls).parameters.values())
     assert [p.name for p in params[:2]] == ['space', 'rng']
     for knob in params[2:]:
@@ -101,21 +115,29 @@ def test_a_learner_handed_its_two_arguments_backwards_is_refused(space, rng):
 
 
 def test_a_learner_that_does_not_propose_cannot_be_built(space, rng):
+    """At either level, and when it is built rather than mid-experiment."""
+
     class Forgetful(Learner):
         last_phase = 'main'
 
+    class ForgetfulOverASpace(ParameterSpaceLearner):
+        last_phase = 'main'
+
     with pytest.raises(TypeError, match='propose'):
-        Forgetful(space, rng)
+        Forgetful()
+    with pytest.raises(TypeError, match='propose'):
+        ForgetfulOverASpace(space, rng)
 
 
 def test_there_is_no_last_phase_to_inherit(space, rng):
     """The other half of reporting the phase off the learner itself.
 
     A learner that grows phases and forgets to publish them has to fail, so
-    the base class declares the attribute without giving it a value.
+    the attribute is declared without a value. Read through the deeper class,
+    which finds a default given at either level.
     """
 
-    class Silent(Learner):
+    class Silent(ParameterSpaceLearner):
         def propose(self, history, k):
             return self.space.uniform(self.rng, k)
 
@@ -716,7 +738,7 @@ def test_a_learner_that_hides_its_knobs_in_kwargs_is_refused(space, monkeypatch)
     search the lab did not configure.
     """
 
-    class Swallower(Learner):
+    class Swallower(ParameterSpaceLearner):
         last_phase = 'main'
 
         def __init__(self, space, rng, **kwargs):

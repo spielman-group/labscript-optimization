@@ -14,10 +14,10 @@ import numpy as np
 
 from ..observations import Observation, costs_array, params_array, usable
 from ..space import ParameterSpace
-from .base import Learner, opening_batch, opening_point
+from .base import ParameterSpaceLearner, opening_batch, opening_point
 
 
-class RandomLearner(Learner):
+class RandomLearner(ParameterSpaceLearner):
     """Uniform random draws from the whole space.
 
     Args:
@@ -48,7 +48,7 @@ class RandomLearner(Learner):
         return self.space.uniform(self.rng, k)
 
 
-class DirectedRandomLearner(Learner):
+class DirectedRandomLearner(ParameterSpaceLearner):
     """Random draws centred on a previously seen point.
 
     Each proposal is either a pure random draw, with probability

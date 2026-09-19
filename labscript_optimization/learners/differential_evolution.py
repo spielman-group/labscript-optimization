@@ -17,7 +17,7 @@ import numpy as np
 
 from ..observations import Observation, usable
 from ..space import ParameterSpace
-from .base import Learner, opening_batch, opening_point
+from .base import ParameterSpaceLearner, opening_batch, opening_point
 
 #: The mutation strategies, and how many other population members each one
 #: draws on. The counts are read by :meth:`DifferentialEvolutionLearner._mutant`
@@ -25,7 +25,7 @@ from .base import Learner, opening_batch, opening_point
 STRATEGIES = {"best1": 2, "best2": 4, "rand1": 3, "rand2": 5}
 
 
-class DifferentialEvolutionLearner(Learner):
+class DifferentialEvolutionLearner(ParameterSpaceLearner):
     """Evolve a population of parameter vectors.
 
     Args:

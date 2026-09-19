@@ -132,14 +132,17 @@ for step in range(100):
 
 ### Writing your own
 
-A session proposes from anything that answers `propose` and carries a
-`last_phase` string, so an object driven from your own loop needs no base
-class. Naming one in a configuration does: inherit `Learner` from
-`labscript_optimization.learners` and add the class to its `LEARNERS` table.
-Every entry there is built as `cls(space, rng, **options)`, with the options
-matched by name against the signature — so `space` and `rng` come first, in
-that order, and each of the learner's own knobs is a keyword argument with a
-default.
+A learner answers `propose` and carries a `last_phase` string. That pair is
+`Learner`, which everything here inherits — the two-phase wrapper included, so
+a session cannot tell a wrapped learner from a plain one. Your own object is
+driven by those same two members whether or not it inherits anything.
+
+Being named in a configuration asks for more. Inherit `ParameterSpaceLearner`
+and add the class to the `LEARNERS` table, both from
+`labscript_optimization.learners`: every entry there is built as
+`cls(space, rng, **options)`, with the options matched by name against the
+signature — so `space` and `rng` come first, in that order, and each of the
+learner's own knobs is a keyword argument with a default.
 
 ## Failures
 
