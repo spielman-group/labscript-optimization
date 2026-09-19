@@ -85,10 +85,16 @@ rather than being waited on.
 See [`examples/config_example.toml`](examples/config_example.toml) for the
 configuration. It has the shape of an analysislib-mloop file, without the
 settings that belong to M-LOOP itself and without that package's alternate
-spellings: every key is read, and one this package does not act on stops the
-load with a message
-naming it, rather than being accepted and ignored — a setting nothing reads is
-one a lab believes is in force when it is not.
+spellings: every key must be one this package knows, and a spelling it does
+not stops the load with a message naming it, rather than being accepted and
+ignored — a setting nothing reads is one a lab believes is in force when it is
+not.
+
+Knowing a key is not the same as acting on it. The learner knobs in `[MLOOP]`
+cover every learner between them, and the learner you name is built with the
+ones its own constructor takes, so a file can carry the others and go on
+working when you switch learners. A `[LEARNER.<name>]` table names its learner,
+so its keys are held to that learner and each of them is acted on.
 
 An `mloop_config` file carried over therefore needs editing before it will
 load. Between them, analysislib-mloop's own two example files need the whole

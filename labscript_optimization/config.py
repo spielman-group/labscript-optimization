@@ -16,10 +16,16 @@ that is not listed is left out entirely; one with ``enable = false`` in a group
 that is listed is carried but not searched, and gets no mapping, so its
 runmanager global keeps whatever value it already holds.
 
-Every key is either acted on or rejected, so a file carried over from
-analysislib-mloop has to be cut down to the keys this module names before it
-will load. ``[LEARNER.<name>]`` is the exception: its contents belong to the
-learners, and the factory passes each the knobs its constructor takes.
+Every key must be one this package knows: a spelling it does not is refused
+rather than accepted and ignored, so a file carried over from analysislib-mloop
+has to be cut down to the keys named here before it will load.
+
+Known is not the same as acted on. The learner knobs in ``[MLOOP]`` are the
+union over every learner, and a learner is built with the ones its own
+constructor takes, so whichever learner is named leaves the rest of them
+unused -- which is what lets one file serve several. A ``[LEARNER.<name>]``
+table says which learner it is for, so its keys are held to that constructor
+and none of them goes unread.
 """
 
 import tomllib
@@ -249,10 +255,14 @@ def require_type(value: Any, kind: type, where: str) -> Any:
 
 
 def check_keys(raw: dict) -> None:
-    """Fail on a key nothing would act on, and on a required one left out.
+    """Fail on a key this package does not know, and on a required one left out.
 
     Accepting a key and ignoring it is how a lab comes to believe a setting is
-    in force when it is not, so a stale file is stopped at the door instead.
+    in force when it is not, so a stale file is stopped at the door instead. A
+    key that is known may still go unused: the learner knobs in ``[MLOOP]``
+    cover every learner between them and only the selected learner's are read,
+    which is the price of a file that keeps working when the learner changes.
+
     Parameter and global tables are checked whether or not their group is
     active: a typo left to load in a switched-off group waits for the day
     somebody switches the group on.
@@ -273,7 +283,9 @@ def check_keys(raw: dict) -> None:
                     require_type(entry["args"], list, f"{where} args")
                 if "enable" in entry:
                     require_type(entry["enable"], bool, f"{where} enable")
-    # [LEARNER.<name>] is left alone: those knobs are the learners' own.
+    # [LEARNER.<name>] is left to learners.validate_options, which is the only
+    # thing that knows one learner's keys: the table names its learner, so that
+    # learner's constructor is the schema for it.
 
 
 def loads(text: str) -> Config:
@@ -291,7 +303,7 @@ def from_dict(raw: dict) -> Config:
     """Build a :class:`Config` from already-parsed TOML.
 
     ``raw`` is the whole file as nested dictionaries, checked as strictly as
-    one read from disk: every key is either acted on or rejected.
+    one read from disk.
 
     Every complaint about the file is a :class:`ValueError`, a missing setting
     as much as a contradictory one, because ``KeyError`` reprs its argument and

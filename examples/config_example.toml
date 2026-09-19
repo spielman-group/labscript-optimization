@@ -2,9 +2,11 @@
 #
 # This has the shape of an analysislib-mloop file, but it is not one: the
 # settings that belong to M-LOOP itself are not here, and neither are that
-# package's alternate spellings. Every key here is read, and one this package
-# does not act on stops the load with a message naming it, rather than being
-# accepted and ignored.
+# package's alternate spellings. Every key must be one this package knows, and
+# a spelling it does not stops the load with a message naming it, rather than
+# being accepted and ignored. Knowing a key is not the same as acting on it:
+# the learner knobs below cover every learner between them, and the learner
+# named in [MLOOP] is built with the ones it takes.
 
 [ANALYSIS]
 # Which (routine, result) column of the lyse dataframe holds the cost. The

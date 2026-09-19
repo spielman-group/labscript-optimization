@@ -32,7 +32,7 @@ analysislib-mloop is imported any more, and `mloop` itself is not a dependency.
 
 ## 2. Cut the settings that no longer exist
 
-A key this package does not act on is now **refused**, naming the key, the
+A key this package does not know is now **refused**, naming the key, the
 table it was found in, and what that table accepts. A setting that is accepted
 and then quietly ignored is how a lab comes to believe an option is in force
 when it is not, so loading stops rather than carrying on.
