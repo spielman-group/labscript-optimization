@@ -1,7 +1,8 @@
 """The parameter space a learner searches.
 
-Holds the enabled parameters, their bounds, and the mapping onto the runmanager
-globals that carry them. Scaling to the unit cube lives here rather than in a
+Holds the enabled parameters and their bounds, and nothing about runmanager:
+which global carries which parameter is the configuration's business rather
+than this module's. Scaling to the unit cube lives here rather than in a
 learner so that every learner sees bounds the same way; it is a linear map onto
 the boundaries, not a fit to the data, so it does not change as observations
 arrive.
@@ -19,7 +20,6 @@ class Parameter:
 
     Args:
         name: The key this parameter has in the configuration.
-        global_name: The runmanager global that carries its value.
         minimum: Lower bound, in real units.
         maximum: Upper bound, in real units.
         start: Preferred first value, or ``None`` to start from a random draw.
@@ -27,7 +27,6 @@ class Parameter:
     """
 
     name: str
-    global_name: str
     minimum: float
     maximum: float
     start: float | None = None

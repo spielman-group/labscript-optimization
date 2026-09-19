@@ -319,7 +319,6 @@ def from_dict(raw: dict) -> Config:
             parameters.append(
                 Parameter(
                     name=name,
-                    global_name=entry.get("global_name", name),
                     minimum=float(entry["min"]),
                     maximum=float(entry["max"]),
                     start=None if entry.get("start") is None else float(entry["start"]),

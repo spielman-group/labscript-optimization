@@ -16,7 +16,7 @@ from labscript_optimization.space import Parameter, ParameterSpace
 def space():
     """A two-parameter space on [-5, 5]^2."""
     return ParameterSpace(
-        [Parameter('x', 'g_x', -5.0, 5.0), Parameter('y', 'g_y', -5.0, 5.0)]
+        [Parameter('x', -5.0, 5.0), Parameter('y', -5.0, 5.0)]
     )
 
 

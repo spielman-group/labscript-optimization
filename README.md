@@ -124,7 +124,7 @@ from labscript_optimization.learners import DifferentialEvolutionLearner
 from labscript_optimization.observations import Observation
 from labscript_optimization.space import Parameter, ParameterSpace
 
-space = ParameterSpace([Parameter('x', 'g_x', -5.0, 5.0)])
+space = ParameterSpace([Parameter('x', -5.0, 5.0)])
 learner = DifferentialEvolutionLearner(space, np.random.default_rng())
 
 history = []

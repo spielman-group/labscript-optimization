@@ -153,8 +153,8 @@ def started_space():
     """A space in which every parameter has a configured start."""
     return ParameterSpace(
         [
-            Parameter('x', 'g_x', -5.0, 5.0, start=1.5),
-            Parameter('y', 'g_y', -5.0, 5.0, start=-2.5),
+            Parameter('x', -5.0, 5.0, start=1.5),
+            Parameter('y', -5.0, 5.0, start=-2.5),
         ]
     )
 
@@ -342,7 +342,7 @@ SMALLEST_POPULATIONS = [('best1', 3), ('rand1', 4), ('best2', 5), ('rand2', 6)]
 
 def one_parameter_space():
     """A single parameter, so a population of any size is reachable."""
-    return ParameterSpace([Parameter('x', 'g_x', -5.0, 5.0)])
+    return ParameterSpace([Parameter('x', -5.0, 5.0)])
 
 
 @pytest.mark.parametrize('strategy', ['best1', 'best2', 'rand1', 'rand2'])

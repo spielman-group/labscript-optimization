@@ -7,8 +7,8 @@ from labscript_optimization.space import Parameter, ParameterSpace
 def test_disabled_parameters_are_not_searched():
     space = ParameterSpace(
         [
-            Parameter('a', 'g_a', 0.0, 1.0),
-            Parameter('b', 'g_b', 0.0, 1.0, enable=False),
+            Parameter('a', 0.0, 1.0),
+            Parameter('b', 0.0, 1.0, enable=False),
         ]
     )
     assert space.num_params == 1
@@ -17,7 +17,7 @@ def test_disabled_parameters_are_not_searched():
 
 def test_a_space_with_nothing_enabled_is_rejected():
     with pytest.raises(ValueError, match='no enabled parameters'):
-        ParameterSpace([Parameter('a', 'g_a', 0.0, 1.0, enable=False)])
+        ParameterSpace([Parameter('a', 0.0, 1.0, enable=False)])
 
 
 @pytest.mark.parametrize(
@@ -31,7 +31,7 @@ def test_a_space_with_nothing_enabled_is_rejected():
 )
 def test_impossible_parameters_are_rejected(kwargs, message):
     with pytest.raises(ValueError, match=message):
-        Parameter('p', 'g_p', **kwargs)
+        Parameter('p', **kwargs)
 
 
 def test_scaling_maps_the_bounds_onto_the_unit_cube(space):
@@ -60,21 +60,21 @@ def test_containment_is_answered_once_per_row(space):
 def test_a_start_is_only_offered_when_every_parameter_has_one():
     both = ParameterSpace(
         [
-            Parameter('a', 'g_a', 0.0, 1.0, start=0.5),
-            Parameter('b', 'g_b', 0.0, 1.0, start=0.25),
+            Parameter('a', 0.0, 1.0, start=0.5),
+            Parameter('b', 0.0, 1.0, start=0.25),
         ]
     )
     np.testing.assert_allclose(both.start, [0.5, 0.25])
 
     partial = ParameterSpace(
-        [Parameter('a', 'g_a', 0.0, 1.0, start=0.5), Parameter('b', 'g_b', 0.0, 1.0)]
+        [Parameter('a', 0.0, 1.0, start=0.5), Parameter('b', 0.0, 1.0)]
     )
     assert partial.start is None
 
 
 def test_a_fractional_trust_region_scales_with_each_parameter():
     space = ParameterSpace(
-        [Parameter('a', 'g_a', 0.0, 100.0), Parameter('b', 'g_b', 0.0, 1.0)]
+        [Parameter('a', 0.0, 100.0), Parameter('b', 0.0, 1.0)]
     )
     np.testing.assert_allclose(space.absolute_trust_region(0.05), [5.0, 0.05])
 

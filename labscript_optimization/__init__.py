@@ -7,7 +7,7 @@ threads, so they can be used on their own::
     from labscript_optimization.learners import GaussianProcessLearner
     from labscript_optimization.space import Parameter, ParameterSpace
 
-    space = ParameterSpace([Parameter('x', 'g_x', 0.0, 1.0)])
+    space = ParameterSpace([Parameter('x', 0.0, 1.0)])
     learner = GaussianProcessLearner(space, numpy.random.default_rng())
     proposals = learner.propose(history, k=4)
 
