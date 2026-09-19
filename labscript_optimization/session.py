@@ -13,7 +13,7 @@ import numpy as np
 
 from . import learners, observations
 from .observations import Observation
-from .runmanager_interface import UNKNOWN_SHOT_STATE
+from .runmanager_interface import BLOCKED_SHOT_STATE, UNKNOWN_SHOT_STATE
 
 
 class Session:
@@ -35,6 +35,7 @@ class Session:
         self.proposals: dict[str, np.ndarray] = {}
         self.results: dict[str, tuple[float, float | None, bool]] = {}
         self.dropped: set[str] = set()
+        self.blocked: set[str] = set()
         # Awaited shots runmanager had no row for at the last reconcile.
         self._unknown: set[str] = set()
         self.starved = 0
@@ -101,6 +102,7 @@ class Session:
             return False
         self.results[shot_id] = (float(cost), uncer, bool(bad))
         self.dropped.discard(shot_id)
+        self.blocked.discard(shot_id)
         self.check_stop()
         return True
 
@@ -138,6 +140,12 @@ class Session:
             if unknown and shot_id not in unknown_before:
                 self._unknown.add(shot_id)
                 continue
+            if answer.get("state") == BLOCKED_SHOT_STATE:
+                # Behind a row the queue will not hand over. Counted apart
+                # from the rest because every other way a shot stops coming
+                # is the apparatus getting on with things, and this one is
+                # somebody needing to go and look at the queue.
+                self.blocked.add(shot_id)
             gone.append(shot_id)
         self.dropped.update(gone)
         return gone
@@ -195,6 +203,7 @@ class Session:
             "completed": len(self.results),
             "awaiting": len(self.awaiting),
             "dropped": len(self.dropped),
+            "blocked": len(self.blocked),
             "starved": self.starved,
             "best_cost": None if best is None else best.cost,
             "best_params": None if best is None else best.params.tolist(),

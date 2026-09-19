@@ -232,7 +232,7 @@ def optimise(config_path, storage=None, dataframe=None):
         # until a reconcile quietly dropped it, understating the runs spent.
         to_worker.put(("observe", observation))
     else:
-        to_worker.put(("status", None))
+        to_worker.put(("shot", None))
 
     status = _drain(from_worker)
     # Only a shot the optimiser can claim carries the status. A shot with no

@@ -14,6 +14,11 @@ import numpy as np
 #: The state runmanager reports for a shot id it has no row for.
 UNKNOWN_SHOT_STATE = "unknown"
 
+#: A shot behind a row runmanager will not hand over -- a rejected head, or
+#: one whose compile failed. Nothing further happens to it until an operator
+#: moves what is in front of it.
+BLOCKED_SHOT_STATE = "blocked"
+
 #: What runmanager answers for a shot id in that state.
 UNKNOWN_SHOT_STATUS = {"pending": False, "state": UNKNOWN_SHOT_STATE}
 

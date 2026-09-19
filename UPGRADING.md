@@ -133,8 +133,8 @@ it comes back as dataframe columns under `labscript_optimization` —
 `best_cost`, `best_params`, `best_shot_id` and `stopped`. A key the session has
 nothing to report for yet reads as `NaN`.
 
-The session's counters — `submitted`, `completed`, `awaiting`, `dropped` and
-`starved` — are one answer for the whole run rather than anything about a shot,
+The session's counters — `submitted`, `completed`, `awaiting`, `dropped`,
+`blocked` and `starved` — are one answer for the whole run rather than anything about a shot,
 so they are not written onto every shot of it. `optimise` returns the whole
 status, so a routine that wants them prints it:
 
@@ -142,9 +142,16 @@ status, so a routine that wants them prints it:
 print(optimisation.optimise('mloop_config.toml'))
 ```
 
-`dropped` counts shots runmanager no longer expects to produce anything —
-cancelled, unable to compile, or gone. A few over a long run are ordinary; a
-number that climbs with `starved` is worth looking into.
+`dropped` counts shots runmanager no longer expects to produce anything. A few
+over a long run are ordinary: a shot that ran and left the queue is counted
+there too, because runmanager answers for it exactly as it does for one that
+was deleted.
+
+`blocked` is the part of that number worth acting on. It counts shots sitting
+behind a row the queue will not hand over — a rejected head, or one whose
+compile failed — and nothing moves them but an operator. Every other way a
+shot stops coming is the apparatus getting on with things; this one means go
+and look at the queue.
 
 ## Two failures worth recognising
 

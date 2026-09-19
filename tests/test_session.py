@@ -39,6 +39,7 @@ class FakeRunmanager:
     def __init__(self):
         self.submitted: list[str] = []
         self.cancelled: set[str] = set()
+        self.blocked: set[str] = set()
         self.finished: set[str] = set()
         self.labscript_changed = False
 
@@ -57,7 +58,9 @@ class FakeRunmanager:
     def shot_status(self, shot_ids):
         answers = {}
         for shot_id in shot_ids:
-            if shot_id in self.cancelled:
+            if shot_id in self.blocked:
+                answers[shot_id] = {'pending': False, 'state': 'blocked'}
+            elif shot_id in self.cancelled:
                 answers[shot_id] = {'pending': False, 'state': 'cancelled'}
             elif shot_id in self.finished or shot_id not in self.submitted:
                 answers[shot_id] = {'pending': False, 'state': 'unknown'}
@@ -402,3 +405,25 @@ def test_a_submission_that_returns_too_few_ids_fails_loudly(session, runmanager)
         session.refill()
     assert session.proposals == {}
     assert session.awaiting == []
+
+
+def test_a_shot_behind_a_row_nobody_can_move_is_counted_apart(session, runmanager):
+    """Every other way a shot stops coming is the apparatus getting on with
+    things. This one is somebody needing to go and look at the queue, and
+    counting the two together makes a jammed queue read like a finished run."""
+    session.refill()
+    runmanager.blocked.add('shot-0')
+    runmanager.cancelled.add('shot-1')
+    session.reconcile()
+
+    status = session.status()
+    assert status['blocked'] == 1
+    assert status['dropped'] == 2
+
+
+def test_a_cost_arriving_for_a_blocked_shot_clears_it(session, runmanager):
+    session.refill()
+    runmanager.blocked.add('shot-0')
+    session.reconcile()
+    session.record('shot-0', 1.0, None, False)
+    assert session.status()['blocked'] == 0

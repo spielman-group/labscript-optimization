@@ -133,7 +133,7 @@ def test_a_status_message_frees_the_places_of_lost_shots(config_file):
             }
 
     sent = run(
-        [('configure', config_file), ('status', None), ('status', None)],
+        [('configure', config_file), ('shot', None), ('shot', None)],
         LosesEverything,
     )
     # The reconciliation that dropped the first two shots ran after the second
@@ -163,7 +163,7 @@ def test_the_reply_is_sent_before_runmanager_is_asked_which_shots_remain(config_
             outbox_when_asked.append([kind for kind, _ in worker.to_parent.sent])
             return super().shot_status(shot_ids)
 
-    worker = driven([('configure', config_file), ('status', None)], NotesTheOutbox)
+    worker = driven([('configure', config_file), ('shot', None)], NotesTheOutbox)
     worker.run()
 
     # Configuring has nothing awaiting to ask about, so the one question comes
@@ -179,11 +179,11 @@ def test_a_runmanager_that_cannot_sustain_the_session_is_refused(config_file):
     assert 'error in its globals' in payload
 
 
-def test_a_status_before_configuring_is_answered_with_nothing(config_file):
+def test_a_shot_arriving_before_configuring_is_answered_with_nothing(config_file):
     """There is no session to report on yet, and the routine is waiting: an
     empty status is the answer, not an error and not silence.
     """
-    assert run([('status', None)]) == [('status', {})]
+    assert run([('shot', None)]) == [('status', {})]
 
 
 def test_an_observation_before_configuring_is_an_error(config_file):
@@ -207,7 +207,7 @@ def test_a_failure_stops_the_session_proposing(config_file):
         def submit(self, proposals):
             raise RuntimeError('runmanager went away')
 
-    sent = run([('configure', config_file), ('status', None)], FailsOnSubmit)
+    sent = run([('configure', config_file), ('shot', None)], FailsOnSubmit)
     assert [kind for kind, _ in sent] == ['status', 'error', 'status']
     assert 'runmanager went away' in sent[1][1]
     assert sent[-1][1]['stopped'] == 'stopped by an error'
@@ -234,7 +234,7 @@ def test_the_worker_starts_in_a_process_of_its_own(monkeypatch, tmp_path):
     worker = Worker(zprocess.ProcessTree(allow_insecure=True), startup_timeout=60)
     to_worker, from_worker = worker.start()
     try:
-        to_worker.put(('status', None))
+        to_worker.put(('shot', None))
         assert from_worker.get(timeout=60) == ('status', {})
     finally:
         to_worker.put(('quit', None))

@@ -63,7 +63,7 @@ class Worker(Process):
                             "got an observation before being configured"
                         )
                     session.record(*payload)
-                elif command == "status":
+                elif command == "shot":
                     if session is None:
                         self.to_parent.put(("status", {}))
                         continue
