@@ -26,8 +26,9 @@ House rules that apply to every slice:
 - [x] Slice 4: Textbook generational differential evolution
 - [ ] Slice 5: The greeting's deadline belongs to the question
 - [x] Slice 6: A wrapper cannot silently drop a generation barrier
-- [ ] Slice 7: Benchmark the shipped DE
-- [ ] Slice 8: Test cleanup
+- [ ] Slice 7: One deadline cannot outlive the one that contains it
+- [ ] Slice 8: Benchmark the shipped DE
+- [ ] Slice 9: Test cleanup
 
 ---
 
@@ -495,7 +496,62 @@ reachable, and that has landed.
 
 ---
 
-## Slice 7: Benchmark the shipped DE
+## Slice 7: One deadline cannot outlive the one that contains it
+
+### Type
+
+`AFK`
+
+### What to build
+
+Making the greeting's deadline configurable opened a hole that the constant
+closed, and nothing closes it now.
+
+`CONFIGURE_TIMEOUT` is a fixed 30 s in the routine: the whole of configuration,
+greeting included, must finish inside it or the worker is killed and the lab is
+told the worker was slow. The greeting's own deadline now comes from labconfig's
+`timeouts/liveness_timeout`. A lab that sets that key to 60 — entirely
+reasonable on a slow link, and the reason the key is configurable at all —
+reinstates precisely the defect this machinery exists to prevent: runmanager is
+still being waited on when the outer deadline expires, and the failure names the
+wrong cause.
+
+The relation `greeting < configure` used to be an invariant. It is now an
+invariant over the *fallback* only, which is the weakest place for it to hold.
+
+**Do not clamp with a silent `min()`.** Quietly ignoring the number a lab wrote
+is the same class of fault as accepting a setting and not acting on it, which
+this package refuses everywhere else. Derive the outer deadline from the inner
+one instead — the configure allowance is the greeting's deadline plus whatever
+the rest of configuration needs — so that raising one raises both and the lab's
+number is honoured.
+
+Note the two values are read in different processes: the routine holds
+`CONFIGURE_TIMEOUT` and the interface holds the greeting's, inside the worker.
+Both can read the same labconfig key; work out whether that is the right seam or
+whether the worker should report the deadline it intends to use.
+
+### Acceptance criteria
+
+- [ ] A lab that raises `liveness_timeout` past the shipped configure allowance
+      still gets "runmanager did not answer" rather than a worker timeout —
+      mutation: restore a fixed outer deadline; the wrong cause is reported
+- [ ] The lab's configured number is honoured, not silently reduced
+- [ ] No test asserts the relation between two constants where it could assert
+      the behaviour instead
+
+### Blocked by
+
+None - can start immediately.
+
+### User stories covered
+
+- Found while implementing Slice 5; the exposure is recorded in that slice's
+  code comments and is not otherwise closed.
+
+---
+
+## Slice 8: Benchmark the shipped DE
 
 ### Type
 
@@ -540,7 +596,7 @@ mutation strategy.
 
 ---
 
-## Slice 8: Test cleanup
+## Slice 9: Test cleanup
 
 ### Type
 
@@ -596,7 +652,7 @@ Three specific items carried forward from earlier slices:
 
 ### Blocked by
 
-- Slices 1 through 7
+- Slices 1 through 8
 
 ### User stories covered
 
