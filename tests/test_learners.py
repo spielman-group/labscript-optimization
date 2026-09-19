@@ -666,7 +666,7 @@ def a_config(space, learner, options):
         globals=(),
         cost_key=('routine', 'cost'),
         learner=learner,
-        learner_options={'shared': options},
+        shared_learner_options=options,
         seed=11,
     )
 

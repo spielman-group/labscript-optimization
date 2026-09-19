@@ -1,6 +1,8 @@
 """The configuration schema, and the keys it refuses."""
 
 import dataclasses
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -177,10 +179,22 @@ def test_a_file_that_sets_no_options_gets_exactly_the_dataclass_defaults():
         space=loaded.space,
         globals=loaded.globals,
         cost_key=loaded.cost_key,
+        shared_learner_options=loaded.shared_learner_options,
         learner_options=loaded.learner_options,
     )
     for f in dataclasses.fields(config_module.Config):
         assert getattr(loaded, f.name) == getattr(direct, f.name), f.name
+
+
+def test_loading_configuration_does_not_import_scientific_learners():
+    """A lyse routine that never starts a session pays no learner imports."""
+    script = (
+        "import sys\n"
+        "from labscript_optimization import config\n"
+        f"config.loads({MINIMAL!r})\n"
+        "assert not {'scipy', 'sklearn'} & sys.modules.keys()\n"
+    )
+    subprocess.run([sys.executable, '-c', script], check=True)
 
 
 def test_a_parameter_with_no_global_is_rejected():
@@ -426,14 +440,29 @@ def test_a_typo_in_a_group_nobody_switched_on_is_still_rejected():
         config_module.loads(MINIMAL + '[MLOOP_PARAMS.OFF.y]\nmin = 0.0\nmaxx = 1.0\n')
 
 
-def test_a_per_learner_table_may_carry_a_knob_that_learner_does_not_take():
-    """Those knobs are the learners', not this schema's.
+def test_a_per_learner_table_rejects_a_knob_that_learner_does_not_take():
+    """A named table has one constructor that can define its valid keys."""
+    with pytest.raises(ValueError, match=r'\[LEARNER\.random\].*cost_has_noise'):
+        config_module.loads(
+            MINIMAL + '[LEARNER.random]\ncost_has_noise = true\n'
+        )
 
-    The factory passes each learner the ones its constructor takes and drops
-    the rest, so that one lab's table serves whichever learner is selected.
-    """
-    config = config_module.loads(MINIMAL + '[LEARNER.random]\ncost_has_noise = true\n')
-    assert config.options_for('random') == {'cost_has_noise': True}
+
+def test_an_unknown_per_learner_table_is_rejected():
+    with pytest.raises(ValueError, match="unknown learner 'typo'"):
+        config_module.loads(MINIMAL + '[LEARNER.typo]\ntrust_region = 0.2\n')
+
+
+def test_a_learner_named_shared_is_not_confused_with_shared_defaults():
+    with pytest.raises(ValueError, match="unknown learner 'shared'"):
+        config_module.loads(MINIMAL + '[LEARNER.shared]\ntrust_region = 0.2\n')
+
+
+def test_a_per_learner_table_accepts_that_learners_knob():
+    config = config_module.loads(
+        MINIMAL + '[LEARNER.directed_random]\ntrust_region = 0.2\n'
+    )
+    assert config.options_for('directed_random') == {'trust_region': 0.2}
 
 
 def test_the_example_configuration_loads_and_builds_its_learner():

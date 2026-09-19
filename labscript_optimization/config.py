@@ -168,6 +168,7 @@ class Config:
     maximize: bool = False
     session: str = "default"
     learner: str = "gaussian_process"
+    shared_learner_options: dict[str, Any] = field(default_factory=dict)
     learner_options: dict[str, dict[str, Any]] = field(default_factory=dict)
     num_buffered_runs: int = 3
     num_training_runs: int = 5
@@ -188,7 +189,7 @@ class Config:
 
     def options_for(self, learner: str) -> dict[str, Any]:
         """Knobs for one learner: the shared ones, overridden per learner."""
-        options = dict(self.learner_options.get("shared", {}))
+        options = dict(self.shared_learner_options)
         options.update(self.learner_options.get(learner, {}))
         return options
 
@@ -396,11 +397,12 @@ def from_dict(raw: dict) -> Config:
 
     # Learner knobs written straight into [MLOOP] are the shared defaults, and
     # [LEARNER.<name>] overrides them for one learner.
-    learner_options: dict[str, dict[str, Any]] = {
-        "shared": {k: v for k, v in mloop.items() if k in SHARED_LEARNER_KEYS}
+    shared_learner_options = {
+        key: value for key, value in mloop.items() if key in SHARED_LEARNER_KEYS
     }
-    for name, table in raw.get("LEARNER", {}).items():
-        learner_options[name] = dict(table)
+    learner_options = {
+        name: dict(table) for name, table in raw.get("LEARNER", {}).items()
+    }
 
     settings: dict[str, Any] = {
         **present(analysis, ("maximize",)),
@@ -418,10 +420,17 @@ def from_dict(raw: dict) -> Config:
         ),
     }
 
-    return Config(
+    config = Config(
         space=ParameterSpace(parameters),
         globals=tuple(mappings),
         cost_key=cost_key,
+        shared_learner_options=shared_learner_options,
         learner_options=learner_options,
         **settings,
     )
+    # Learner constructors are the authoritative schema for their named
+    # tables. Import lazily so importing this module alone stays lightweight.
+    from .learners import validate_options
+
+    validate_options(config)
+    return config

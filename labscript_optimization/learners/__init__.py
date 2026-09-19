@@ -1,12 +1,13 @@
 """The learners, and how a configuration names one."""
 
 import inspect
+from collections.abc import MutableMapping
+from importlib import import_module
 
 import numpy as np
 
 from .base import InsufficientData, Learner, ParameterSpaceLearner
 from .differential_evolution import DifferentialEvolutionLearner
-from .gaussian_process import GaussianProcessLearner
 from .random import DirectedRandomLearner, RandomLearner
 from .two_phase import TwoPhaseLearner
 
@@ -21,33 +22,66 @@ __all__ = [
     "TwoPhaseLearner",
     "build",
     "make_learner",
+    "validate_options",
 ]
 
+
+class _LearnerRegistry(MutableMapping):
+    """Classes available by configuration name, imported when first needed."""
+
+    def __init__(self, entries):
+        self._entries = dict(entries)
+
+    def __getitem__(self, name):
+        entry = self._entries[name]
+        if isinstance(entry, tuple):
+            module_name, class_name = entry
+            entry = getattr(import_module(module_name, __name__), class_name)
+            self._entries[name] = entry
+        return entry
+
+    def __setitem__(self, name, cls):
+        self._entries[name] = cls
+
+    def __delitem__(self, name):
+        del self._entries[name]
+
+    def __iter__(self):
+        return iter(self._entries)
+
+    def __len__(self):
+        return len(self._entries)
+
+
 #: Learners that can be named in a configuration.
-LEARNERS = {
-    "random": RandomLearner,
-    "directed_random": DirectedRandomLearner,
-    "differential_evolution": DifferentialEvolutionLearner,
-    "gaussian_process": GaussianProcessLearner,
-}
+LEARNERS = _LearnerRegistry(
+    {
+        "random": RandomLearner,
+        "directed_random": DirectedRandomLearner,
+        "differential_evolution": DifferentialEvolutionLearner,
+        "gaussian_process": (".gaussian_process", "GaussianProcessLearner"),
+    }
+)
 
 #: Learners that need a training phase before their proposals mean anything,
 #: and the learner that provides it.
 NEEDS_TRAINING = {"gaussian_process": "directed_random"}
 
 
-def make_learner(name: str, space, rng, options):
+def __getattr__(name):
+    if name == "GaussianProcessLearner":
+        return LEARNERS["gaussian_process"]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def _option_names(name: str) -> set[str]:
+    """The configuration options accepted by one named learner."""
     try:
         cls = LEARNERS[name]
     except KeyError:
         raise ValueError(
             f"unknown learner {name!r}; choose one of {sorted(LEARNERS)}"
         ) from None
-    # A shared table carries knobs for every learner, so pass on the ones this
-    # learner actually takes. What it takes is its signature and nothing wider:
-    # a name the constructor happens to use as a local variable is not a knob,
-    # and letting one through blames the shared table for a collision the user
-    # cannot see.
     accepted = inspect.signature(cls).parameters
     if any(p.kind is p.VAR_KEYWORD for p in accepted.values()):
         raise TypeError(
@@ -55,6 +89,33 @@ def make_learner(name: str, space, rng, options):
             f"none of them, so every option would be dropped and the learner "
             f"built entirely from its defaults; spell the knobs out"
         )
+    return set(accepted) - {"space", "rng"}
+
+
+def validate_options(config) -> None:
+    """Reject a named learner table containing anything its learner ignores.
+
+    A ``[LEARNER.<name>]`` table has one constructor that defines its keys.
+    """
+    for name, options in config.learner_options.items():
+        accepted = _option_names(name)
+        unknown = sorted(set(options) - accepted)
+        if unknown:
+            raise ValueError(
+                f"[LEARNER.{name}] does not accept "
+                f"{', '.join(repr(key) for key in unknown)}. It accepts: "
+                f"{', '.join(sorted(accepted))}."
+            )
+
+
+def make_learner(name: str, space, rng, options):
+    accepted = _option_names(name)
+    cls = LEARNERS[name]
+    # A shared table carries knobs for every learner, so pass on the ones this
+    # learner actually takes. What it takes is its signature and nothing wider:
+    # a name the constructor happens to use as a local variable is not a knob,
+    # and letting one through blames the shared table for a collision the user
+    # cannot see.
     return cls(space, rng, **{k: v for k, v in options.items() if k in accepted})
 
 
@@ -66,6 +127,8 @@ def build(config, rng: np.random.Generator | None = None):
     the trainer named in :data:`NEEDS_TRAINING`, which is also the fallback for
     proposals the main learner cannot make.
     """
+    # Config objects may be constructed directly instead of parsed from TOML.
+    validate_options(config)
     if rng is None:
         rng = np.random.default_rng(config.seed)
 

@@ -122,7 +122,9 @@ own queued. If it keeps climbing, the fit is taking longer than a shot: raise
   now refused at construction, where M-LOOP quietly sorted it.
 - **Per-learner settings** may go under `[LEARNER.<name>]`, overriding the
   same keys in `[MLOOP]`. Knobs in `[MLOOP]` still apply to whichever learner
-  takes them, so nothing has to move.
+  takes them, so nothing has to move. A named learner table is strict: an
+  unknown learner or a key its constructor does not accept stops the file from
+  loading.
 - **`seed`** in `[MLOOP]` makes a run reproducible.
 
 ## What the routine reports
