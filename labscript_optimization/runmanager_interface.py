@@ -1,135 +1,152 @@
-"""Submitting proposals to runmanager.
+"""Submitting proposals to runmanager, and asking what became of them.
 
-runmanager never stops. ``engage()`` compiles whatever the globals currently
-expand to and appends the resulting shots to the running queue, so submitting
-is just setting values and engaging; there is no queue to start, drain or wait
-on. A shot is complete when runmanager sends it to lyse, which is the routine
-being called on it.
+runmanager never stops. Submitting appends to the running queue; there is no
+queue to start, drain or wait on. A shot is complete when runmanager sends it
+to lyse, which is the routine being called on it.
 
-Each shot is stamped with a tag global. That is what a cost is matched to a
-proposal by, which means shots can come back in any order, user shots can be
-mixed into the queue, and runmanager can mint default shots when the queue runs
-dry, without any of it needing to be accounted for here.
+Every shot carries the identifier runmanager minted for its queue row, written
+into the shot file. That is what a cost is matched to a proposal by, and what
+this module asks about when a cost has not arrived. Nothing here counts shots:
+whether a shot is still coming is runmanager's answer, not a number kept on
+this side.
 """
 
-from typing import Sequence
+from typing import Iterable, Sequence
 
 import numpy as np
 
-#: Global holding the session name, so a restart cannot be confused with the
-#: run before it.
-SESSION_GLOBAL = "mloop_session"
-
-#: Global holding the index of the shot within the session.
-ITERATION_GLOBAL = "mloop_iteration"
-
-
-def tag_for(session: str, iteration: int) -> str:
-    """The tag identifying one proposal."""
-    return f"{session}:{iteration}"
-
-
-def parse_tag(tag: str) -> tuple[str, int]:
-    """Split a tag back into its session and iteration."""
-    session, _, iteration = tag.rpartition(":")
-    return session, int(iteration)
+#: Attribute runmanager writes into each shot file it queues.
+SHOT_ID_ATTR = "shot_id"
 
 
 class RunmanagerInterface:
-    """Sets globals and engages runmanager for each proposal.
+    """Submits proposals and reports what became of them.
 
     Args:
         config: The session configuration.
         client: A ``runmanager.remote`` client, or ``None`` to make the default
-            one. Injected so the worker can be tested without runmanager.
+            one. Injected so the session can be tested without runmanager.
     """
 
     def __init__(self, config, client=None):
-        self.config = config
         if client is None:
             from runmanager import remote
 
             client = remote.Client()
+        self.config = config
         self.client = client
+        self.labscript_file = None
 
     def check_ready(self) -> None:
-        """Raise if runmanager cannot accept the globals this session needs.
+        """Raise unless runmanager can run this session to completion.
 
-        Failing here is the point: a missing global or a broken expression
-        should stop the session at the first shot, with a message naming what
-        is wrong, rather than quietly optimising the wrong thing.
+        Both checks are about silence rather than error. A queue that empties
+        under the 'nothing' policy produces no further shot, so nothing reaches
+        lyse, so the routine is never called again and the optimisation stops
+        without saying anything. And a labscript file changed underneath a
+        running session would optimise a different experiment without a word.
         """
         if self.client.error_in_globals():
             raise RuntimeError(
                 "runmanager reports an error in its globals; fix it before "
                 "starting an optimisation"
             )
-        present = set(self.client.get_globals())
-        required = {g.name for g in self.config.globals} | {
-            SESSION_GLOBAL,
-            ITERATION_GLOBAL,
-        }
-        missing = sorted(required - present)
-        if missing:
+
+        policy = self.client.get_empty_queue_policy()
+        if policy != "default_labscript":
             raise RuntimeError(
-                f"runmanager has no globals named {missing}. Create them in "
-                f"an active group; {SESSION_GLOBAL} and {ITERATION_GLOBAL} "
-                f"carry the tag that costs are matched by."
+                f"runmanager's empty-queue policy is {policy!r}. This session "
+                f"would stop silently the first time its queue emptied, "
+                f"because nothing would reach lyse to invoke the routine "
+                f"again. Set the policy to 'default_labscript' so the "
+                f"apparatus keeps running when the optimiser has nothing "
+                f"queued."
             )
 
-        # Every shot of one engage carries the same tag, so the first cost to
-        # arrive claims it and the rest are dropped. That is what makes
-        # multi-shot averaging work, but it is waste if it was not intended.
-        shots = self.client.n_shots()
-        if shots > 1 and not self.config.ignore_bad:
+        self.labscript_file = self.client.get_labscript_file()
+
+    def check_unchanged(self) -> None:
+        """Raise if the labscript file has changed since the session started."""
+        current = self.client.get_labscript_file()
+        if self.labscript_file is not None and current != self.labscript_file:
             raise RuntimeError(
-                f"runmanager would compile {shots} shots per engage, but "
-                f"ignore_bad is false, so only the first cost of each batch "
-                f"would be used and the rest discarded. Either disable the "
-                f"scan so one engage is one shot, or set ignore_bad = true "
-                f"and have your routine write NaN until it has averaged the "
-                f"repeats."
+                f"the labscript file changed from {self.labscript_file!r} to "
+                f"{current!r} while this session was running; its shots would "
+                f"no longer be the experiment it has been optimising"
             )
 
-    def submit(self, tag: str, params: Sequence[float]) -> None:
-        """Set the globals for one proposal and engage.
+    def submit(self, proposals: Sequence[Sequence[float]]) -> list[str]:
+        """Queue one shot per proposal. Returns their shot ids, in order.
 
-        One shot per engage. A batch could be submitted as a scan list in a
-        single engage, but runmanager expands independent scans as an outer
-        product, so a batch of k over n parameters would have to be zipped to
-        avoid compiling k**n shots. Engaging once per shot keeps that off the
-        table, and the batch sizes here are small.
+        A call that fails partway still reports the shots it did queue, so
+        their ids are never lost while the rows are live.
         """
-        session, iteration = parse_tag(tag)
-        values = self.config.globals_for(np.asarray(params, dtype=float))
-        values[SESSION_GLOBAL] = session
-        values[ITERATION_GLOBAL] = iteration
-        self.client.set_globals(values)
-        self.client.engage()
+        entries = [
+            self.config.globals_for(np.asarray(p, dtype=float)) for p in proposals
+        ]
+        answer = self.client.submit_shots(entries)
+        if isinstance(answer, dict):
+            descriptors, error = answer.get("descriptors", []), answer.get("error")
+        else:
+            descriptors, error = answer, None
+        ids = [d["shot_id"] for d in descriptors]
+        if error:
+            raise SubmissionFailed(error, ids)
+        return ids
+
+    def pending(self, shot_ids: Iterable[str]) -> set[str]:
+        """Which of these shots could still produce a cost.
+
+        An id runmanager no longer knows is not pending, which is how a shot
+        deleted by an operator, or lost to a runmanager restart, stops being
+        waited on.
+        """
+        shot_ids = list(shot_ids)
+        if not shot_ids:
+            return set()
+        status = self.client.shot_status(shot_ids)
+        return {i for i in shot_ids if status.get(i, {}).get("pending", False)}
+
+
+class SubmissionFailed(RuntimeError):
+    """A submission stopped partway. ``shot_ids`` are the rows that do exist."""
+
+    def __init__(self, message, shot_ids):
+        super().__init__(message)
+        self.shot_ids = list(shot_ids)
 
 
 class MockInterface:
     """Accepts proposals without a runmanager behind it.
 
-    Selected by ``[COMPILATION] mock = true``. Useful for checking that a
-    configuration loads, that the globals it computes are the ones intended,
-    and that the worker starts, without compiling anything.
+    Selected by ``[COMPILATION] mock = true``. Every shot it accepts stays
+    pending until a cost is recorded for it, so a session driven against this
+    behaves as though the apparatus never loses one.
     """
 
     def __init__(self, config):
         self.config = config
         self.submitted: list[tuple[str, dict]] = []
+        self.labscript_file = "mock"
 
     def check_ready(self) -> None:
         pass
 
-    def submit(self, tag: str, params: Sequence[float]) -> None:
-        session, iteration = parse_tag(tag)
-        values = self.config.globals_for(np.asarray(params, dtype=float))
-        values[SESSION_GLOBAL] = session
-        values[ITERATION_GLOBAL] = iteration
-        self.submitted.append((tag, values))
-        print(f"mock submit {tag}: {values}", flush=True)
+    def check_unchanged(self) -> None:
+        pass
+
+    def submit(self, proposals) -> list[str]:
+        ids = []
+        for p in proposals:
+            shot_id = f"mock-{len(self.submitted)}"
+            values = self.config.globals_for(np.asarray(p, dtype=float))
+            self.submitted.append((shot_id, values))
+            ids.append(shot_id)
+            print(f"mock submit {shot_id}: {values}", flush=True)
+        return ids
+
+    def pending(self, shot_ids) -> set[str]:
+        return set(shot_ids)
 
 
 def interface_for(config):

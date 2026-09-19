@@ -20,11 +20,15 @@ lyse routine ──observation──▶ worker ──set_globals + engage──�
      └──────────── shot with its cost ◀────────────────────────────┘
 ```
 
-Each proposal is stamped with a tag global. A cost is matched to the proposal
-it answers by that tag, so shots can come back in any order, your own shots can
-be mixed into the queue, and runmanager can mint default shots when the queue
-runs dry — none of it needs to be accounted for. runmanager is never stopped or
-waited on; a shot is finished when it reaches lyse.
+Each shot is identified by the id runmanager mints for its queue row, written
+into the shot file. A cost is matched to the proposal it answers by that id, so
+shots can come back in any order and your own shots can be mixed into the
+queue. runmanager is never stopped or waited on.
+
+There is no count of shots in flight. Whether a shot is still coming is
+runmanager's answer, asked afresh each time the routine runs, so a shot that is
+aborted, cancelled, or deleted stops being waited on instead of holding its
+place for ever.
 
 The routine returns immediately. Fitting and submitting happen in the worker,
 because lyse runs multishot routines inline and a slow one delays every shot
@@ -44,12 +48,14 @@ Adding the routine starts the session; removing it, restarting it, or reaching
 the run budget stops it. Progress comes back as the routine's results: the best
 cost so far, how many shots are in flight, and which phase the learner is in.
 
-Your runmanager globals must include `mloop_session` and `mloop_iteration`,
-which carry the tag, alongside the globals being optimised.
+runmanager's empty-queue policy must be `default_labscript`. The session
+refuses to start otherwise: a queue that empties under the `nothing` policy
+produces no further shot, so nothing would reach lyse to invoke the routine
+again and the optimisation would stop without saying so.
 
 You compute the cost yourself, in your own lyse routine, into the column named
-by `cost_key`. Writing `NaN` means "no cost yet", which is how a routine that
-averages several repeats holds the optimiser until it has enough of them.
+by `cost_key`. A shot whose cost is `NaN` is recorded as a bad observation
+rather than being waited on.
 
 See [`examples/config_example.toml`](examples/config_example.toml) for the
 configuration, which is the schema analysislib-mloop used: an existing
@@ -93,9 +99,16 @@ for step in range(100):
 ## Failures
 
 Failures stop the session and are reported through lyse's normal error path:
-runmanager unreachable, a missing or broken global, or a learner raising. There
-are no retries, timeouts or watchdogs. A shot whose cost never arrives simply
-holds its slot.
+runmanager unreachable, a broken global, a labscript file changed underneath a
+running session, or a learner raising. There are no retries, timeouts or
+watchdogs.
+
+One failure stops the optimisation and cannot be reported from here: a shot
+that fails to compile stays at the head of runmanager's queue until someone
+deletes it, and nothing behind it runs. Nothing then reaches lyse, so the
+routine is never called again. The row is red in runmanager and the queue has
+visibly halted, which is where that failure belongs — the apparatus cannot
+proceed, and an optimiser that stops is behaving correctly.
 
 If the worker dies, the history dies with it. There is no archive and no
 persistence layer; a new session starts from nothing.

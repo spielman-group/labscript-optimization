@@ -19,7 +19,7 @@ import os
 
 import numpy as np
 
-from .runmanager_interface import ITERATION_GLOBAL, SESSION_GLOBAL, tag_for
+from .runmanager_interface import SHOT_ID_ATTR
 
 WORKER_PATH = os.path.join(os.path.dirname(__file__), "worker.py")
 
@@ -27,11 +27,10 @@ WORKER_PATH = os.path.join(os.path.dirname(__file__), "worker.py")
 def latest(dataframe, key):
     """The most recent value of one column, or ``None`` if there is no such column.
 
-    lyse pads its column labels into a MultiIndex, so a runmanager global named
-    ``x`` is really the column ``('x', '')`` while an analysis result is
-    ``('routine', 'result')``. Indexing by the bare name then gives a frame
-    rather than a value. Accepting both shapes keeps this usable against a
-    plain dataframe in a test.
+    lyse pads its column labels into a MultiIndex, so an analysis result is the
+    column ``('routine', 'result')``. Indexing by a bare name then gives a
+    frame rather than a value. Accepting both shapes keeps this usable against
+    a plain dataframe in a test.
     """
     if key not in dataframe:
         return None
@@ -43,11 +42,32 @@ def latest(dataframe, key):
     return column.iloc[-1]
 
 
-def extract(dataframe, config):
-    """Read the tag and cost of the most recent shot.
+def shot_id_of(filepath) -> str | None:
+    """The identifier runmanager wrote into a shot file, if it wrote one.
 
-    Returns ``(tag, cost, uncer, bad)``, or ``None`` when the shot carries no
-    tag and so belongs to somebody else.
+    lyse does not carry this into its dataframe, so it is read from the file.
+    A shot without it is not one this optimiser submitted -- a user's own, or
+    one of runmanager's default shots, which deliberately carry none.
+    """
+    import h5py
+
+    try:
+        with h5py.File(filepath, "r") as f:
+            shot_id = f.attrs.get(SHOT_ID_ATTR)
+    except OSError:
+        return None
+    if shot_id is None:
+        return None
+    if isinstance(shot_id, bytes):
+        shot_id = shot_id.decode()
+    return str(shot_id)
+
+
+def extract(dataframe, config):
+    """Read the shot id and cost of the most recent shot.
+
+    Returns ``(shot_id, cost, uncer, bad)``, or ``None`` when the shot carries
+    no identifier and so belongs to somebody else.
 
     The sign flip for ``maximize`` happens here, once, so that everything
     downstream minimises.
@@ -55,18 +75,11 @@ def extract(dataframe, config):
     if not len(dataframe):
         return None
 
-    session = latest(dataframe, SESSION_GLOBAL)
-    iteration = latest(dataframe, ITERATION_GLOBAL)
-    if session is None or iteration is None:
+    filepath = latest(dataframe, "filepath")
+    if filepath is None:
         return None
-    try:
-        if np.isnan(iteration):
-            return None
-    except (TypeError, ValueError):
-        pass
-    try:
-        tag = tag_for(str(session), int(iteration))
-    except (TypeError, ValueError):
+    shot_id = shot_id_of(filepath)
+    if shot_id is None:
         return None
 
     cost, uncer = float("nan"), None
@@ -80,7 +93,7 @@ def extract(dataframe, config):
     bad = not np.isfinite(cost)
     if not bad and config.maximize:
         cost = -cost
-    return tag, cost, uncer, bad
+    return shot_id, cost, uncer, bad
 
 
 def start_worker(config_path, process_tree=None):
@@ -157,12 +170,12 @@ def optimise(config_path, storage=None, dataframe=None):
 
     observation = extract(dataframe, config)
     if observation is not None:
-        tag, cost, uncer, bad = observation
+        shot_id, cost, uncer, bad = observation
         # A shot with no cost yet is not an observation. Leaving it
         # unreported is what lets a multishot routine average several
         # repeats and only then produce a number.
         if not (bad and config.ignore_bad):
-            to_worker.put(("observe", (tag, cost, uncer, bad)))
+            to_worker.put(("observe", (shot_id, cost, uncer, bad)))
         else:
             to_worker.put(("status", None))
     else:

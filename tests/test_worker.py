@@ -1,12 +1,13 @@
 """The worker's message loop, driven through fake pipes.
 
-The loop is exercised directly rather than through a spawned process, so these
-tests say what the protocol is without depending on zprocess being able to
-start anything.
+Exercised directly rather than through a spawned process, so these tests say
+what the protocol is without depending on zprocess starting anything.
 """
 
 import os
 import queue
+import subprocess
+import sys
 
 import pytest
 
@@ -49,18 +50,27 @@ class FakeInterface:
     def __init__(self, config):
         self.config = config
         self.submitted = []
+        self.gone = set()
         FakeInterface.instances.append(self)
 
     def check_ready(self):
         pass
 
-    def submit(self, tag, params):
-        self.submitted.append(tag)
+    def check_unchanged(self):
+        pass
+
+    def submit(self, proposals):
+        ids = [f'shot-{len(self.submitted) + i}' for i in range(len(proposals))]
+        self.submitted.extend(ids)
+        return ids
+
+    def pending(self, shot_ids):
+        return {i for i in shot_ids if i not in self.gone}
 
 
 class RefusingInterface(FakeInterface):
     def check_ready(self):
-        raise RuntimeError('runmanager has an error in its globals')
+        raise RuntimeError("runmanager's empty-queue policy is 'nothing'")
 
 
 @pytest.fixture
@@ -77,86 +87,77 @@ def clear_instances():
     FakeInterface.instances.clear()
 
 
-def run(messages, config_file, interface=FakeInterface):
+def run(messages, interface=FakeInterface):
     to_parent = Pipe()
     serve(Pipe(list(messages) + [('quit', None)]), to_parent, interface)
     return to_parent.sent
 
 
 def test_configuring_fills_the_queue(config_file):
-    sent = run([('configure', config_file)], config_file)
+    sent = run([('configure', config_file)])
     assert [kind for kind, _ in sent] == ['status']
-    assert FakeInterface.instances[0].submitted == ['s:0', 's:1']
+    assert FakeInterface.instances[0].submitted == ['shot-0', 'shot-1']
 
 
 def test_an_observation_is_answered_before_the_next_shots_are_proposed(config_file):
     """The reply must not wait on a fit, or lyse waits with it."""
     sent = run(
-        [('configure', config_file), ('observe', ('s:0', 1.0, None, False))],
-        config_file,
+        [('configure', config_file), ('observe', ('shot-0', 1.0, None, False))]
     )
-    kinds = [kind for kind, _ in sent]
-    assert kinds == ['status', 'status']
-    # The status answering the observation was sent before the refill, so it
-    # still reports the shot as outstanding.
+    assert [kind for kind, _ in sent] == ['status', 'status']
     assert sent[1][1]['completed'] == 1
-    assert FakeInterface.instances[0].submitted == ['s:0', 's:1', 's:2']
+    assert FakeInterface.instances[0].submitted == ['shot-0', 'shot-1', 'shot-2']
 
 
-def test_a_status_request_changes_nothing(config_file):
-    sent = run([('configure', config_file), ('status', None)], config_file)
-    assert sent[-1][1]['proposed'] == 2
-    assert FakeInterface.instances[0].submitted == ['s:0', 's:1']
+def test_a_status_message_frees_the_places_of_lost_shots(config_file):
+    class LosesEverything(FakeInterface):
+        def pending(self, shot_ids):
+            return set()
+
+    sent = run([('configure', config_file), ('status', None)], LosesEverything)
+    assert sent[-1][1]['dropped'] == 2
+    # Having dropped them, it refilled rather than waiting on them for ever.
+    assert FakeInterface.instances[0].submitted == ['shot-0', 'shot-1', 'shot-2', 'shot-3']
 
 
-def test_a_runmanager_that_is_not_ready_is_reported_loudly(config_file):
-    sent = run([('configure', config_file)], config_file, RefusingInterface)
+def test_a_runmanager_that_cannot_sustain_the_session_is_refused(config_file):
+    sent = run([('configure', config_file)], RefusingInterface)
     kind, payload = sent[-1]
     assert kind == 'error'
-    assert 'error in its globals' in payload
+    assert 'empty-queue policy' in payload
 
 
 def test_an_observation_before_configuring_is_an_error(config_file):
-    sent = run([('observe', ('s:0', 1.0, None, False))], config_file)
+    sent = run([('observe', ('shot-0', 1.0, None, False))])
     assert sent[-1][0] == 'error'
     assert 'before being configured' in sent[-1][1]
 
 
 def test_an_unknown_command_is_an_error(config_file):
-    sent = run([('configure', config_file), ('nonsense', None)], config_file)
+    sent = run([('configure', config_file), ('nonsense', None)])
     assert sent[-1][0] == 'error'
 
 
 def test_a_failure_stops_the_session_proposing(config_file):
     class FailsOnSubmit(FakeInterface):
-        def submit(self, tag, params):
+        def submit(self, proposals):
             raise RuntimeError('runmanager went away')
 
-    sent = run(
-        [('configure', config_file), ('observe', ('s:0', 1.0, None, False))],
-        config_file,
-        FailsOnSubmit,
-    )
+    sent = run([('configure', config_file)], FailsOnSubmit)
     assert any(kind == 'error' for kind, _ in sent)
-    statuses = [p for k, p in sent if k == 'status']
-    # Whatever else happens, the session must not keep handing out shots.
-    assert statuses[-1]['stopped'] is None or 'error' in str(statuses[-1]['stopped'])
 
 
 def test_quit_returns_without_replying(config_file):
-    assert run([], config_file) == []
+    assert run([]) == []
 
 
 def test_the_worker_runs_as_a_script():
     """zprocess executes the worker file directly, with no package around it.
 
-    Relative imports fail in that situation, and the failure looks like the
-    child never connecting rather than like an import error, so it is worth
-    pinning here where the message is plain.
+    Relative imports fail there, and the failure looks like the child never
+    connecting rather than like an import error, so it is pinned here where
+    the message is plain.
     """
-    import subprocess
-    import sys
-
     from labscript_optimization.worker import __file__ as worker_file
 
     finished = subprocess.run(
@@ -166,41 +167,5 @@ def test_the_worker_runs_as_a_script():
         timeout=120,
         env={**os.environ, 'LABSCRIPT_NO_ERROR_DIALOG': '1'},
     )
-    # It should get all the way to looking for its parent and not find one.
     assert 'ZPROCESS_PARENTINFO' in finished.stderr, finished.stderr
     assert 'ImportError' not in finished.stderr, finished.stderr
-
-
-def test_a_scan_left_enabled_is_refused_unless_repeats_are_expected():
-    """One engage that makes many shots gives them all the same tag.
-
-    The first cost to arrive claims the tag and the rest are dropped. That is
-    exactly how averaging repeats is meant to work, so it is only an error
-    when the configuration is not expecting repeats.
-    """
-    from labscript_optimization import config as config_module
-    from labscript_optimization.runmanager_interface import RunmanagerInterface
-
-    class Runmanager:
-        def __init__(self, shots):
-            self.shots = shots
-
-        def error_in_globals(self):
-            return False
-
-        def get_globals(self):
-            return {'gx': 0.0, 'mloop_session': '', 'mloop_iteration': 0}
-
-        def n_shots(self):
-            return self.shots
-
-    strict = config_module.loads(CONFIG)
-    with pytest.raises(RuntimeError, match='would compile 4 shots'):
-        RunmanagerInterface(strict, Runmanager(4)).check_ready()
-
-    RunmanagerInterface(strict, Runmanager(1)).check_ready()
-
-    averaging = config_module.loads(
-        CONFIG.replace('[ANALYSIS]', '[ANALYSIS]\nignore_bad = true')
-    )
-    RunmanagerInterface(averaging, Runmanager(4)).check_ready()

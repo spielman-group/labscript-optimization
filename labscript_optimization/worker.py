@@ -50,20 +50,23 @@ def serve(from_parent, to_parent, interface_factory=interface_for) -> None:
                 interface = interface_factory(config)
                 interface.check_ready()
                 session = Session(config, interface)
-                to_parent.put(("status", session.status()))
-                session.refill()
             elif command == "observe":
                 if session is None:
                     raise RuntimeError("got an observation before being configured")
                 session.record(*payload)
-                to_parent.put(("status", session.status()))
-                session.refill()
             elif command == "status":
-                to_parent.put(
-                    ("status", {} if session is None else session.status())
-                )
+                if session is None:
+                    to_parent.put(("status", {}))
+                    continue
             else:
                 raise ValueError(f"unknown command {command!r}")
+
+            # Every invocation reconciles, not only those that submit. The
+            # routine may not be called again for a long time, and a shot that
+            # is no longer coming must not go on holding its place until it is.
+            session.reconcile()
+            to_parent.put(("status", session.status()))
+            session.refill()
         except Exception:
             # Fail loudly and stop proposing, rather than carrying on with a
             # learner or a runmanager that is not doing what it should.
