@@ -20,6 +20,24 @@ def test_a_space_with_nothing_enabled_is_rejected():
         ParameterSpace([Parameter('a', 0.0, 1.0, enable=False)])
 
 
+def test_two_searched_parameters_cannot_share_a_name():
+    """A name identifies a dimension, so two of them is a malformed space.
+
+    Nothing about a configuration is needed to see it: a learner handed this
+    space searches two dimensions that are read back out as one value.
+    """
+    with pytest.raises(ValueError, match="'a' names more than one enabled"):
+        ParameterSpace([Parameter('a', 0.0, 1.0), Parameter('a', 5.0, 6.0)])
+
+
+def test_a_name_reused_by_a_parameter_left_out_of_the_search_is_no_collision():
+    """Only the searched parameters have dimensions to confuse."""
+    space = ParameterSpace(
+        [Parameter('a', 0.0, 1.0), Parameter('a', 5.0, 6.0, enable=False)]
+    )
+    assert [(p.name, p.maximum) for p in space.parameters] == [('a', 1.0)]
+
+
 @pytest.mark.parametrize(
     'kwargs, message',
     [

@@ -316,7 +316,7 @@ def test_a_list_written_as_a_bare_string_is_rejected(text, named):
 @pytest.mark.parametrize(
     'text, named',
     [
-        (MINIMAL.replace('groups', 'maximize = "false"\ngroups'), 'ANALYSIS.maximize'),
+        (MINIMAL.replace('groups', 'maximize = "false"\ngroups'), 'maximize'),
         (
             MINIMAL.replace('min = 0.0', 'enable = "false"\nmin = 0.0'),
             'MLOOP_PARAMS.G.x',
@@ -331,13 +331,12 @@ def test_a_quoted_boolean_is_rejected(text, named):
 
 
 def test_a_run_count_that_is_not_a_number_is_rejected():
-    """Carried through as written it would reach the session as a string.
-
-    ``int()`` raises on its own; what is under test is the wrapping that names
-    the setting, because its own message names only the value.
-    """
-    with pytest.raises(ValueError, match='max_num_runs must be readable as int'):
+    """Carried through as written it would reach the session as a string."""
+    with pytest.raises(ValueError) as raised:
         config_module.loads(MINIMAL + '[MLOOP]\nmax_num_runs = "many"\n')
+    assert str(raised.value) == (
+        "max_num_runs must be written as a whole number, got 'many'."
+    )
 
 
 @pytest.mark.parametrize(
@@ -523,3 +522,273 @@ def test_a_budget_below_two_whole_generations_is_refused(written, refused, accep
     assert config_module.loads(
         DE + written + f'max_num_runs = {accepted}\n'
     ).max_num_runs == accepted
+
+
+# --- what a setting may be -------------------------------------------------
+#
+# Config.__post_init__ is the single authority for the dataclass's own fields,
+# so these hold for a Config written out in a script as much as for a file.
+
+
+@pytest.mark.parametrize(
+    'setting, written',
+    [
+        ('num_buffered_runs', '2.9'),
+        ('num_training_runs', '19.5'),
+        ('max_num_runs', '400.5'),
+        ('max_num_runs_without_better_params', '80.5'),
+        ('seed', '1.9'),
+    ],
+)
+def test_a_whole_number_setting_written_as_a_fraction_is_refused(setting, written):
+    """Coerced, it would reach the session as the truncated value.
+
+    ``seed = 1.9`` is the one that shows what that costs: the run it makes
+    reproducible is not the run the file asks for, and nothing says so.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(MINIMAL + f'[MLOOP]\n{setting} = {written}\n')
+    assert str(raised.value) == (
+        f'{setting} must be written as a whole number, got {float(written)!r}.'
+    )
+
+
+@pytest.mark.parametrize(
+    'setting',
+    ['num_buffered_runs', 'num_training_runs', 'max_num_runs', 'seed'],
+)
+def test_a_whole_number_setting_written_as_a_boolean_is_refused(setting):
+    """``isinstance(True, int)`` is True, so a bare integer check takes it as 1.
+
+    Which is a plausible number for every one of these, and so a session that
+    runs on a setting nobody wrote.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(MINIMAL + f'[MLOOP]\n{setting} = true\n')
+    assert str(raised.value) == (
+        f'{setting} must be written as a whole number, got True.'
+    )
+
+
+@pytest.mark.parametrize('setting', ['learner', 'session'])
+def test_a_string_setting_written_as_a_number_is_refused(setting):
+    """``str()`` coercion has the flaw ``int()`` coercion has.
+
+    A session labelled 2026 would come back through lyse as the string
+    "2026", which is not what the file says and not what a lab filtering on
+    the label would write.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(MINIMAL + f'[MLOOP]\n{setting} = 2026\n')
+    assert str(raised.value) == f'{setting} must be written as a string, got 2026.'
+
+
+@pytest.mark.parametrize(
+    'setting, refused, accepted',
+    [
+        ('num_buffered_runs', 0, 1),
+        ('num_training_runs', -1, 0),
+        ('seed', -1, 0),
+        ('max_num_runs', 0, 1),
+        ('max_num_runs_without_better_params', 0, 1),
+    ],
+)
+def test_a_setting_below_its_floor_is_refused_and_the_floor_itself_loads(
+    setting, refused, accepted
+):
+    """The floors stand between a file and a session that says nothing.
+
+    ``max_num_runs = 0`` is not a clean stop: check_stop is reached only from
+    record, so a session that submits nothing never reaches it and never
+    explains itself. tests/test_session.py shows what that looks like.
+    """
+    with pytest.raises(ValueError, match=f'{setting} must be at least'):
+        config_module.loads(MINIMAL + f'[MLOOP]\n{setting} = {refused}\n')
+    loaded = config_module.loads(MINIMAL + f'[MLOOP]\n{setting} = {accepted}\n')
+    assert getattr(loaded, setting) == accepted
+
+
+@pytest.mark.parametrize(
+    'written', ['[1, 2]', '["r", "c", "extra"]', '["r"]'],
+)
+def test_a_cost_key_that_is_not_two_names_is_refused(written):
+    """Two strings, or the uncertainty column is built out of whatever it is.
+
+    ``cost_key = [1, 2]`` gives an uncertainty_key of ``(1, 'u_2')``, and a
+    column nothing in the dataframe answers to.
+    """
+    with pytest.raises(ValueError, match='cost_key must be two strings'):
+        config_module.loads(
+            MINIMAL.replace('cost_key = ["r", "c"]', f'cost_key = {written}')
+        )
+
+
+def test_a_misspelled_learner_is_refused_while_the_file_is_being_read():
+    """Not at build(), which is worker configure with the session starting.
+
+    The per-table check looks at the [LEARNER.<name>] tables, and a file that
+    has none of them names its learner only in [MLOOP].
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(MINIMAL + '[MLOOP]\nlearner = "gaussain_process"\n')
+    message = str(raised.value)
+    assert "unknown learner 'gaussain_process'" in message
+    assert 'gaussian_process' in message
+
+
+# --- one name for one thing ------------------------------------------------
+
+
+TWO_GROUPS = """
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = {groups}
+[MLOOP_PARAMS.GA.x]
+global_name = "ga"
+min = 0.0
+max = 1.0
+[MLOOP_PARAMS.GB.x]
+global_name = "gb"
+min = 5.0
+max = 6.0
+"""
+
+
+def test_one_name_for_two_searched_parameters_is_refused():
+    """Both globals would be set from whichever parameter is looked up last.
+
+    Here that drives ``ga``, bounded [0, 1], to a value drawn for ``gb``'s
+    range: a shot outside the bounds the file declares.
+    """
+    with pytest.raises(ValueError, match="'x' names more than one enabled parameter"):
+        config_module.loads(TWO_GROUPS.format(groups='["GA", "GB"]'))
+
+
+def test_a_name_repeated_in_a_group_nobody_switched_on_still_loads():
+    """Switching between groups is what the group names are for.
+
+    Two groups holding a parameter of the same name are two settings for one
+    knob, one of which is in force; only having both switched on at once is a
+    collision.
+    """
+    config = config_module.loads(TWO_GROUPS.format(groups='["GB"]'))
+    assert [p.name for p in config.space.parameters] == ['x']
+    assert config.globals_for([5.5]) == {'gb': 5.5}
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        MINIMAL + '[RUNMANAGER_GLOBALS.G.gx]\nexpr = "lambda v: 2 * v"\nargs = ["x"]\n',
+        """
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = ["G"]
+[MLOOP_PARAMS.G.x]
+global_name = "gx"
+min = 0.0
+max = 1.0
+[MLOOP_PARAMS.G.y]
+global_name = "gx"
+min = 0.0
+max = 1.0
+""",
+    ],
+    ids=['an expression over a parameter already mapped directly', 'two parameters'],
+)
+def test_one_runmanager_global_set_from_two_places_is_refused(text):
+    """A global is set once per shot, so the second mapping is the only one
+    that happens, and one of the searched dimensions never reaches the
+    apparatus at all."""
+    with pytest.raises(ValueError, match="'gx' names more than one runmanager global"):
+        config_module.loads(text)
+
+
+# --- an expression and the arguments it is given ---------------------------
+
+
+@pytest.mark.parametrize(
+    'text, named',
+    [
+        (MINIMAL + '[RUNMANAGER_GLOBALS.G.empty]\nargs = []\n', 'names 0'),
+        (
+            """
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = ["G"]
+[MLOOP_PARAMS.G.x]
+min = 0.0
+max = 1.0
+[MLOOP_PARAMS.G.y]
+min = 0.0
+max = 1.0
+[RUNMANAGER_GLOBALS.G.pair]
+args = ["x", "y"]
+""",
+            'names 2',
+        ),
+    ],
+    ids=['none', 'two'],
+)
+def test_a_global_with_no_expression_takes_exactly_one_parameter(text, named):
+    """With no expr the global is its one argument, passed through.
+
+    Given none it raises an IndexError inside globals_for, mid-session; given
+    two it drops the second, so a searched parameter goes nowhere.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(text)
+    assert named in str(raised.value)
+
+
+def test_an_expression_that_cannot_take_its_parameters_stops_the_load():
+    """Which is the whole reason the expression is compiled while reading.
+
+    Left to the first proposal, this is a TypeError out of globals_for hours
+    later, through the worker's error path.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(
+            """
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = ["G"]
+[MLOOP_PARAMS.G.x]
+min = 0.0
+max = 1.0
+[MLOOP_PARAMS.G.y]
+min = 0.0
+max = 1.0
+[RUNMANAGER_GLOBALS.G.pair]
+expr = "lambda a: a"
+args = ["x", "y"]
+"""
+        )
+    message = str(raised.value)
+    assert 'pair' in message
+    assert 'lambda a: a' in message
+
+
+def test_an_expression_whose_signature_cannot_be_read_is_taken_as_written():
+    """``inspect.signature`` has no answer for some callables.
+
+    Refusing on the absence of an answer would refuse a mapping that works,
+    so the arity check stands aside where it cannot see.
+    """
+    config = config_module.loads(
+        """
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = ["G"]
+[MLOOP_PARAMS.G.x]
+min = 0.0
+max = 1.0
+[MLOOP_PARAMS.G.y]
+min = 0.0
+max = 1.0
+[RUNMANAGER_GLOBALS.G.larger]
+expr = "max"
+args = ["x", "y"]
+"""
+    )
+    assert config.globals_for([0.1, 0.9]) == {'larger': 0.9}

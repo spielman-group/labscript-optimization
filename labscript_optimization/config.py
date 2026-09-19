@@ -24,13 +24,20 @@ Known is not the same as acted on. The learner knobs in ``[MLOOP]`` are the
 union over every learner, and a learner is built with the ones its own
 constructor takes, so whichever learner is named leaves the rest of them
 unused -- which is what lets one file serve several. A ``[LEARNER.<name>]``
-table says which learner it is for, so its keys are held to that constructor
-and none of them goes unread.
+table is held to the constructor of the learner it names, so every key in it
+is a knob that learner takes; whether it is acted on still depends on which
+learner ``[MLOOP] learner`` selects, since the tables for the others are not
+read.
+
+A parameter name and a global name are each unique across the active groups:
+both are looked up by name when a proposal is turned into runmanager globals,
+so a repeat would quietly give one value to two places.
 """
 
+import inspect
 import tomllib
 from dataclasses import dataclass, field
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 from .space import Parameter, ParameterSpace
 
@@ -72,7 +79,8 @@ SHARED_LEARNER_KEYS = frozenset(
 )
 
 #: The session settings ``[MLOOP]`` carries, alongside the learner knobs in
-#: :data:`SHARED_LEARNER_KEYS`.
+#: :data:`SHARED_LEARNER_KEYS`. Each is the name of a :class:`Config` field and
+#: is handed over under that name, so the two lists cannot drift apart.
 MLOOP_KEYS = frozenset(
     {
         "learner",
@@ -83,6 +91,32 @@ MLOOP_KEYS = frozenset(
         "seed",
         "session",
     }
+)
+
+#: The whole-number settings of :class:`Config`, the smallest value each one
+#: accepts, and why that is the floor. Most of these floors stand between a
+#: file and a session that dies without saying anything: it refills empty for
+#: as long as it is asked to, counts no starvation, and leaves no stop reason,
+#: because ``check_stop`` is reached only from ``record`` and nothing is ever
+#: recorded to reach it with.
+INTEGER_SETTINGS = {
+    "num_buffered_runs": (1, "a queue holding none of our shots is never refilled"),
+    "num_training_runs": (0, "a negative number of training shots is not a number"),
+    "seed": (0, "numpy's generator is seeded from a non-negative integer"),
+    "max_num_runs": (
+        1,
+        "a budget of no runs is a session that never starts rather than one "
+        "that stops, and nothing is ever submitted to stop it",
+    ),
+    "max_num_runs_without_better_params": (
+        1,
+        "the run that sets the best cost always has no runs after it",
+    ),
+}
+
+#: Of those, the ones a session may leave unset.
+OPTIONAL_INTEGER_SETTINGS = frozenset(
+    {"max_num_runs", "max_num_runs_without_better_params", "seed"}
 )
 
 #: The keys one ``[MLOOP_PARAMS.<group>.<name>]`` table carries.
@@ -125,9 +159,18 @@ class GlobalMapping:
         """Build ``expr``'s callable now, so a bad one raises here.
 
         Left until a proposal needs it, a mistyped lambda would first be found
-        mid-session, out through the worker's error path.
+        mid-session, out through the worker's error path. The arguments are
+        held to the same moment: a callable that cannot take the ones it is
+        configured with fails in exactly that place otherwise.
         """
         if self.expr is None:
+            if len(self.args) != 1:
+                raise ValueError(
+                    f"global {self.name!r} has no expr, so its value is the "
+                    f"one parameter it takes; it names {len(self.args)}: "
+                    f"{list(self.args)}. Give it an expr taking them all, or "
+                    f"name one parameter."
+                )
             return
         try:
             # The expression comes from the lab's own configuration file,
@@ -143,6 +186,21 @@ class GlobalMapping:
                 f"the expr for global {self.name!r} is not callable: "
                 f"{self.expr!r}. It must be a lambda taking args in order."
             )
+        try:
+            signature = inspect.signature(function)
+        except (TypeError, ValueError):
+            # Some callables do not expose one. Refusing on a signature that
+            # cannot be read would reject a mapping that works.
+            signature = None
+        if signature is not None:
+            try:
+                signature.bind(*self.args)
+            except TypeError as error:
+                raise ValueError(
+                    f"the expr for global {self.name!r} cannot take the "
+                    f"{len(self.args)} parameters it is given "
+                    f"({list(self.args)}): {self.expr!r} ({error})"
+                ) from error
         object.__setattr__(self, "function", function)
 
     def evaluate(self, values: dict[str, float]) -> Any:
@@ -181,6 +239,54 @@ class Config:
     max_num_runs_without_better_params: int | None = None
     seed: int | None = None
 
+    def __post_init__(self) -> None:
+        """Hold every field to what it is allowed to be.
+
+        This is the one authority for them, so a :class:`Config` written out
+        in a script or a test is checked exactly as one parsed from a file:
+        :func:`from_dict` hands over what the file said, and this decides
+        whether it can be run.
+        """
+        for key, (floor, why) in INTEGER_SETTINGS.items():
+            value = getattr(self, key)
+            if value is None and key in OPTIONAL_INTEGER_SETTINGS:
+                continue
+            # ``isinstance(True, int)`` is True, so bool is excluded by name:
+            # a bare integer check reads ``true`` as a budget of one run.
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(
+                    f"{key} must be written as a whole number, got {value!r}."
+                )
+            if value < floor:
+                raise ValueError(f"{key} must be at least {floor}, got {value}: {why}.")
+
+        if not isinstance(self.maximize, bool):
+            raise ValueError(
+                f"maximize must be written as true or false, unquoted, not "
+                f"{self.maximize!r}."
+            )
+        for key in ("learner", "session"):
+            value = getattr(self, key)
+            if not isinstance(value, str):
+                raise ValueError(f"{key} must be written as a string, got {value!r}.")
+
+        named = all(isinstance(key, str) for key in self.cost_key)
+        if len(self.cost_key) != 2 or not named:
+            raise ValueError(
+                f"cost_key must be two strings, [routine_name, result_name], "
+                f"got {list(self.cost_key)!r}."
+            )
+
+        names = [g.name for g in self.globals]
+        repeated = sorted({name for name in names if names.count(name) > 1})
+        if repeated:
+            raise ValueError(
+                f"{', '.join(repr(n) for n in repeated)} names more than one "
+                f"runmanager global. Each global is set once per shot, so the "
+                f"last mapping written would be the only one that took effect; "
+                f"the globals set are {names}"
+            )
+
     @property
     def uncertainty_key(self) -> tuple[str, str]:
         """The column holding the uncertainty on the cost, by convention."""
@@ -199,24 +305,17 @@ class Config:
         return {g.name: g.evaluate(values) for g in self.globals}
 
 
-def present(
-    table: dict, keys: Sequence[str], convert: Callable[[Any], Any] | None = None
-) -> dict[str, Any]:
-    """The ``keys`` this table actually carries, coerced by ``convert``.
+def present(table: dict, keys: Iterable[str]) -> dict[str, Any]:
+    """The ``keys`` this table actually carries, exactly as they were written.
 
     A key the file leaves out is left out of the result, so :class:`Config`
     supplies it from the field's own default. No default is written here: each
-    one lives on the dataclass and nowhere else, so none can drift.
+    one lives on the dataclass and nowhere else, so none can drift. Nothing is
+    coerced either: what a setting may be is
+    :meth:`Config.__post_init__`'s to say, and a value converted on the way
+    past would reach it as something nobody wrote.
     """
-    found: dict[str, Any] = {}
-    for key in (k for k in keys if k in table):
-        try:
-            found[key] = table[key] if convert is None else convert(table[key])
-        except (TypeError, ValueError) as error:
-            raise ValueError(
-                f"{key} must be readable as {convert.__name__}, got {table[key]!r}"
-            ) from error
-    return found
+    return {key: table[key] for key in keys if key in table}
 
 
 def reject_unknown(table: dict, allowed: frozenset[str], where: str) -> None:
@@ -316,8 +415,6 @@ def from_dict(raw: dict) -> Config:
     analysis = raw.get("ANALYSIS", {})
     mloop = raw.get("MLOOP", {})
 
-    if "maximize" in analysis:
-        require_type(analysis["maximize"], bool, "ANALYSIS.maximize")
     active_groups = require_type(analysis.get("groups", []), list, "ANALYSIS.groups")
 
     parameters: list[Parameter] = []
@@ -388,12 +485,11 @@ def from_dict(raw: dict) -> Config:
 
     if "cost_key" not in analysis:
         raise ValueError("ANALYSIS.cost_key is required: [routine_name, result_name]")
+    # A bare string is a sequence of its own characters, so the list check is
+    # what stops ``cost_key = "rc"`` passing for a pair of one-letter names.
+    # What that pair may hold is Config's to say.
     require_type(analysis["cost_key"], list, "ANALYSIS.cost_key")
     cost_key = tuple(analysis["cost_key"])
-    if len(cost_key) != 2:
-        raise ValueError(
-            f"ANALYSIS.cost_key must be [routine_name, result_name], got {cost_key!r}"
-        )
 
     # Learner knobs written straight into [MLOOP] are the shared defaults, and
     # [LEARNER.<name>] overrides them for one learner.
@@ -406,18 +502,7 @@ def from_dict(raw: dict) -> Config:
 
     settings: dict[str, Any] = {
         **present(analysis, ("maximize",)),
-        **present(mloop, ("learner", "session"), str),
-        **present(
-            mloop,
-            (
-                "max_num_runs",
-                "max_num_runs_without_better_params",
-                "num_buffered_runs",
-                "num_training_runs",
-                "seed",
-            ),
-            int,
-        ),
+        **present(mloop, MLOOP_KEYS),
     }
 
     config = Config(

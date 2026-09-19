@@ -40,6 +40,12 @@ class _LearnerRegistry(MutableMapping):
             self._entries[name] = entry
         return entry
 
+    def __contains__(self, name):
+        # Answered from the names alone. The mapping default asks
+        # ``__getitem__``, which would import the module and the whole
+        # scientific stack under it just to say whether a name is spelt right.
+        return name in self._entries
+
     def __setitem__(self, name, cls):
         self._entries[name] = cls
 
@@ -108,10 +114,16 @@ def _option_names(name: str) -> set[str]:
 def validate_options(config) -> None:
     """Hold a configuration to the learner it names.
 
-    A ``[LEARNER.<name>]`` table has one constructor that defines its keys, so
-    anything else in it is a knob that learner ignores. And a budget is
-    measured against the population the selected learner will evolve.
+    The learner has to be one of :data:`LEARNERS`, or the misspelling is found
+    at ``build()`` -- which is worker configure, with the session already
+    starting. A ``[LEARNER.<name>]`` table has one constructor that defines its
+    keys, so anything else in it is a knob that learner ignores. And a budget
+    is measured against the population the selected learner will evolve.
     """
+    if config.learner not in LEARNERS:
+        raise ValueError(
+            f"unknown learner {config.learner!r}; choose one of {sorted(LEARNERS)}"
+        )
     for name, options in config.learner_options.items():
         accepted = _option_names(name)
         unknown = sorted(set(options) - accepted)

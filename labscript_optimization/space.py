@@ -51,12 +51,28 @@ class Parameter:
 
 
 class ParameterSpace:
-    """The enabled parameters, in a fixed order, with their bounds."""
+    """The enabled parameters, in a fixed order, with their bounds.
+
+    Each carries a name of its own: the names are how a parameter vector is
+    read back out as values, so they identify the dimensions.
+    """
 
     def __init__(self, parameters: Sequence[Parameter]):
         self.parameters = tuple(p for p in parameters if p.enable)
         if not self.parameters:
             raise ValueError("no enabled parameters to optimise")
+        # A name is how a proposal's coordinates are read back out, so two
+        # dimensions answering to one name is a malformed space whatever built
+        # it: the second silently takes the first's value everywhere the
+        # parameters are looked up by name.
+        names = [p.name for p in self.parameters]
+        repeated = sorted({name for name in names if names.count(name) > 1})
+        if repeated:
+            raise ValueError(
+                f"{', '.join(repr(n) for n in repeated)} names more than one "
+                f"enabled parameter. Each searched parameter needs a name of "
+                f"its own; the names given are {names}"
+            )
         self.minimum = np.array([p.minimum for p in self.parameters], dtype=float)
         self.maximum = np.array([p.maximum for p in self.parameters], dtype=float)
         self.extent = self.maximum - self.minimum
