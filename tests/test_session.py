@@ -174,6 +174,19 @@ def test_a_cost_arriving_after_a_shot_was_dropped_is_still_taken(session, runman
     assert session.best.shot_id == 'shot-0'
 
 
+def test_a_late_cost_stops_its_shot_counting_as_dropped(session, runmanager):
+    """``dropped`` is what a user reads to see whether shots are being lost, so
+    a shot that did report must not be left standing in it.
+    """
+    session.refill()
+    runmanager.lose('shot-0')
+    session.reconcile()
+    assert session.status()['dropped'] == 1
+
+    session.record('shot-0', 2.0, None, False)
+    assert session.status()['dropped'] == 0
+
+
 def test_reconciling_asks_only_about_shots_still_awaited(session, runmanager):
     session.refill()
     session.record('shot-0', 1.0, None, False)

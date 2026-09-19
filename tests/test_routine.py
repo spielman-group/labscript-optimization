@@ -356,6 +356,22 @@ def test_a_worker_that_does_not_answer_in_time_is_given_up_on(
     assert status is None and time.monotonic() - started < 5.0
 
 
+def test_an_answer_still_on_its_way_is_left_for_the_next_shot(session, shot):
+    """Behind this shot's answer only what is already waiting is swept up.
+
+    That is how an error from the slow work behind an earlier reply arrives
+    without being waited for. Waiting for more would hand lyse back the delay
+    the worker exists to absorb, once per shot.
+    """
+    straggler = threading.Timer(
+        1.0, session.worker.from_worker.incoming.put, [('status', {'answered': 99})]
+    )
+    straggler.daemon = True
+    straggler.start()
+    status = routine_module.optimise(session.path, session.storage, frame([shot()]))
+    assert status == {'answered': 1}
+
+
 def status(**overrides):
     """A status of the shape the session sends, with nothing found yet."""
     return {
@@ -387,8 +403,10 @@ def results():
     from labscript_utils.properties import get_attributes
 
     def read(row):
+        # Spelt out rather than read back from the module that wrote it: the
+        # group name is the promise, df[('labscript_optimization', ...)].
         with h5py.File(row['filepath'], 'r') as f:
-            return get_attributes(f[f'results/{routine_module.RESULTS_GROUP}'])
+            return get_attributes(f['results/labscript_optimization'])
 
     return read
 

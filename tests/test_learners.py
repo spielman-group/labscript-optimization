@@ -530,6 +530,28 @@ def test_a_gaussian_process_describes_the_real_data_after_a_proposal_fails(
     np.testing.assert_allclose(learner.predict(probe), before)
 
 
+def test_a_gaussian_process_waits_for_twice_as_many_points_as_parameters(space, rng):
+    """Its default patience, and what a two-phase wrapper trains through."""
+    history = gaussian_process_history(space, 3, count=2 * space.num_params)
+    learner = GaussianProcessLearner(space, rng)
+    with pytest.raises(InsufficientData):
+        learner.propose(history[:-1], 1)
+    assert space.contains(learner.propose(history, 1)).all()
+
+
+def test_a_batch_is_proposed_from_a_history_whose_points_carry_uncertainties(
+    space, rng
+):
+    """Each point of the batch is folded into the fit before the next is
+    picked, and a fit holding a variance per point needs one for the invented
+    point too, or it is handed one fewer variance than it has points.
+    """
+    points = space.uniform(np.random.default_rng(7), 12)
+    history = [observe(i, p, offset_sphere(p), uncer=0.1) for i, p in enumerate(points)]
+    proposals = GaussianProcessLearner(space, rng).propose(history, 3)
+    assert space.contains(proposals).all()
+
+
 def test_gaussian_process_uses_per_point_uncertainties(space, rng):
     """A noisy point should be trusted less than an exact one."""
     points = space.uniform(np.random.default_rng(7), 12)
@@ -578,6 +600,24 @@ def test_a_learner_is_built_from_a_table_holding_other_learners_knobs(space):
         },
     )
     assert build(config).num_members == 4 * space.num_params
+
+
+def test_the_default_learner_comes_back_wrapped_in_its_training_phase(space):
+    """A Gaussian process has nothing to say until it has a spread of points,
+    so the learner a file gets by saying nothing runs directed_random first.
+    """
+    config = Config(
+        space=space,
+        globals=(),
+        cost_key=('routine', 'cost'),
+        num_training_runs=7,
+        seed=11,
+    )
+    learner = build(config)
+    assert isinstance(learner, TwoPhaseLearner)
+    assert isinstance(learner.trainer, DirectedRandomLearner)
+    assert isinstance(learner.main, GaussianProcessLearner)
+    assert learner.num_training == 7
 
 
 def test_a_shared_knob_is_matched_against_arguments_not_constructor_locals(

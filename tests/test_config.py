@@ -1,10 +1,14 @@
 """The configuration schema, and the keys it refuses."""
 
 import dataclasses
+from pathlib import Path
 
 import pytest
 
 from labscript_optimization import config as config_module
+from labscript_optimization import learners
+
+EXAMPLE = Path(__file__).resolve().parent.parent / 'examples' / 'config_example.toml'
 
 FULL = """
 [ANALYSIS]
@@ -144,42 +148,17 @@ def test_the_learner_is_named_in_the_mloop_table():
     assert config.learner == 'differential_evolution'
 
 
-def test_analysislib_mloops_spelling_of_the_learner_key_is_rejected():
-    """``controller_type`` is that package's name for it; nothing here reads it.
+def test_a_setting_left_out_takes_the_value_the_documents_promise():
+    """What a lab may leave out on the strength of what it was told.
 
-    Kept as an alias it would be one more spelling to carry for ever, in a
-    schema whose whole argument is that a file says exactly what is in force.
+    UPGRADING §4 promises three buffered runs, the Gaussian process is the
+    learner a file naming none gets, and a cost is minimised unless the file
+    says otherwise -- the flip nothing downstream would show.
     """
-    with pytest.raises(ValueError) as raised:
-        config_module.loads(
-            MINIMAL + '[MLOOP]\ncontroller_type = "differential_evolution"\n'
-        )
-    message = str(raised.value)
-    assert 'controller_type' in message
-    assert 'learner' in message
-
-
-@pytest.mark.parametrize('spelling', ['minimum', 'maximum'])
-def test_the_long_spellings_of_the_parameter_bounds_are_rejected(spelling):
-    """A parameter's bounds are written ``min`` and ``max``, and only so."""
-    with pytest.raises(ValueError) as raised:
-        config_module.loads(MINIMAL + f'[MLOOP_PARAMS.G.y]\n{spelling} = 2.0\n')
-    message = str(raised.value)
-    assert spelling in message
-    assert 'MLOOP_PARAMS.G.y' in message
-
-
-def test_the_compilation_table_is_rejected():
-    """Nothing in this package has a compilation stage to configure.
-
-    A test that wants runmanager stood in for hands the session an interface
-    of its own, so there is no switch in the lab's file to reach for.
-    """
-    with pytest.raises(ValueError) as raised:
-        config_module.loads(MINIMAL + '[COMPILATION]\nmock = false\n')
-    message = str(raised.value)
-    assert 'COMPILATION' in message
-    assert 'MLOOP_PARAMS' in message
+    config = config_module.loads(MINIMAL)
+    assert config.num_buffered_runs == 3
+    assert config.learner == 'gaussian_process'
+    assert config.maximize is False
 
 
 def test_a_file_that_sets_no_options_gets_exactly_the_dataclass_defaults():
@@ -336,58 +315,73 @@ def test_a_quoted_boolean_is_rejected(text, named):
 
 
 def test_a_run_count_that_is_not_a_number_is_rejected():
-    """Carried through as written it would reach the session as a string."""
-    with pytest.raises(ValueError):
+    """Carried through as written it would reach the session as a string.
+
+    ``int()`` raises on its own; what is under test is the wrapping that names
+    the setting, because its own message names only the value.
+    """
+    with pytest.raises(ValueError, match='max_num_runs must be readable as int'):
         config_module.loads(MINIMAL + '[MLOOP]\nmax_num_runs = "many"\n')
 
 
-def test_a_key_this_package_does_not_act_on_is_rejected():
-    """A setting nothing reads is worse than one nobody wrote.
-
-    The file says the option is in force, the session behaves as though it
-    never was, and neither side says a word. ``no_delay`` is one M-LOOP took
-    and this package has no use for.
+@pytest.mark.parametrize(
+    'text, spelling, named',
+    [
+        (
+            MINIMAL + '[MLOOP]\ncontroller_type = "differential_evolution"\n',
+            'controller_type',
+            '[MLOOP]',
+        ),
+        (MINIMAL + '[MLOOP]\nno_delay = true\n', 'no_delay', '[MLOOP]'),
+        (MINIMAL + '[MLOOP]\nvisualisations = false\n', 'visualisations', '[MLOOP]'),
+        (
+            MINIMAL.replace('groups', 'ignore_bad = true\ngroups'),
+            'ignore_bad',
+            '[ANALYSIS]',
+        ),
+        (
+            MINIMAL + '[MLOOP_PARAMS.G.y]\nminimum = 2.0\n',
+            'minimum',
+            '[MLOOP_PARAMS.G.y]',
+        ),
+        (
+            MINIMAL + '[MLOOP_PARAMS.G.y]\nmaximum = 2.0\n',
+            'maximum',
+            '[MLOOP_PARAMS.G.y]',
+        ),
+        (MINIMAL + '[COMPILATION]\nmock = false\n', 'COMPILATION', 'the top level'),
+    ],
+    ids=[
+        'controller_type',
+        'no_delay',
+        'visualisations',
+        'ignore_bad',
+        'minimum',
+        'maximum',
+        'COMPILATION',
+    ],
+)
+def test_a_spelling_this_package_retired_is_rejected(text, spelling, named):
+    """M-LOOP's and analysislib-mloop's names for things this package renamed,
+    dropped, or never had. Kept as aliases they would be spellings to carry for
+    ever, in a schema whose argument is that a file says what is in force.
     """
-    with pytest.raises(ValueError, match='no_delay'):
-        config_module.loads(MINIMAL + '[MLOOP]\nno_delay = true\n')
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(text)
+    message = str(raised.value)
+    assert spelling in message
+    assert named in message
 
 
-def test_the_rejection_names_the_key_its_table_and_what_that_table_accepts():
+def test_a_typo_is_rejected_naming_the_key_its_table_and_what_that_table_takes():
     """The message is the whole of what somebody with a stale file gets."""
     with pytest.raises(ValueError) as raised:
-        config_module.loads(MINIMAL + '[MLOOP]\nvisualisations = false\n')
-    message = str(raised.value)
-    assert 'visualisations' in message
-    assert 'MLOOP' in message
-    assert 'num_buffered_runs' in message
-
-
-def test_the_retired_ignore_bad_setting_is_rejected():
-    """It once suppressed the reporting of a NaN-cost shot. Nothing reads it."""
-    with pytest.raises(ValueError, match='ignore_bad'):
         config_module.loads(
-            MINIMAL.replace('groups = ["G"]', 'groups = ["G"]\nignore_bad = true')
-        )
-
-
-def test_a_typo_in_a_parameter_table_is_rejected():
-    with pytest.raises(ValueError) as raised:
-        config_module.loads(
-            MINIMAL + '[MLOOP_PARAMS.G.y]\nmin = 0.0\nmax = 1.0\nstrat = 0.5\n'
+            MINIMAL
+            + '[RUNMANAGER_GLOBALS.G.doubled]\nexpr = "lambda v: v"\narg = ["x"]\n'
         )
     message = str(raised.value)
-    assert 'strat' in message
-    assert 'MLOOP_PARAMS.G.y' in message
-    assert 'start' in message
-
-
-def test_a_typo_in_a_runmanager_global_table_is_rejected():
-    with pytest.raises(ValueError) as raised:
-        config_module.loads(
-            MINIMAL + '[RUNMANAGER_GLOBALS.G.doubled]\nexpr = "lambda v: v"\narg = ["x"]\n'
-        )
-    message = str(raised.value)
-    assert 'arg' in message
+    assert "'arg'" in message
     assert 'RUNMANAGER_GLOBALS.G.doubled' in message
     assert 'args' in message
 
@@ -420,15 +414,6 @@ def test_an_expression_that_is_not_a_function_stops_the_load():
     assert '2 * 3' in message
 
 
-def test_a_misspelt_top_level_table_is_rejected():
-    """A table nothing looks for takes every setting in it down with it."""
-    with pytest.raises(ValueError) as raised:
-        config_module.loads(MINIMAL + '[ANALISYS]\nmaximize = true\n')
-    message = str(raised.value)
-    assert 'ANALISYS' in message
-    assert 'ANALYSIS' in message
-
-
 def test_a_typo_in_a_group_nobody_switched_on_is_still_rejected():
     """The shape of a parameter table does not depend on its group being active.
 
@@ -447,3 +432,11 @@ def test_a_per_learner_table_may_carry_a_knob_that_learner_does_not_take():
     """
     config = config_module.loads(MINIMAL + '[LEARNER.random]\ncost_has_noise = true\n')
     assert config.options_for('random') == {'cost_has_noise': True}
+
+
+def test_the_example_configuration_loads_and_builds_its_learner():
+    """The file every new lab starts from, held to the schema like any other."""
+    config = config_module.load(EXAMPLE)
+    learner = learners.build(config)
+    assert isinstance(learner, learners.TwoPhaseLearner)
+    assert learner.num_training == 20

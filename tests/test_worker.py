@@ -173,6 +173,13 @@ def test_a_runmanager_that_cannot_sustain_the_session_is_refused(config_file):
     assert 'empty-queue policy' in payload
 
 
+def test_a_status_before_configuring_is_answered_with_nothing(config_file):
+    """There is no session to report on yet, and the routine is waiting: an
+    empty status is the answer, not an error and not silence.
+    """
+    assert run([('status', None)]) == [('status', {})]
+
+
 def test_an_observation_before_configuring_is_an_error(config_file):
     sent = run([('observe', ('shot-0', 1.0, None, False))])
     assert sent[-1][0] == 'error'
