@@ -12,7 +12,9 @@ import pytest
 
 from labscript_optimization import learners
 from labscript_optimization.config import Config
+from labscript_optimization.learners.differential_evolution import STRATEGIES
 from labscript_optimization.observations import COMPLETE, DROPPED
+from labscript_optimization.session import Session
 from labscript_optimization.learners import (
     DifferentialEvolutionLearner,
     DirectedRandomLearner,
@@ -26,7 +28,7 @@ from labscript_optimization.learners import (
 )
 from labscript_optimization.space import Parameter, ParameterSpace
 
-from conftest import observe, run_loop
+from conftest import FakeRunmanager, observe, run_loop
 
 
 def sphere(params):
@@ -488,6 +490,102 @@ def test_a_trial_is_bred_from_the_member_holding_its_own_block_position(rng):
         assert shared == space.num_params - 1, slot
 
 
+def test_every_proposal_keeps_the_role_its_position_gave_it(rng):
+    """Roles assigned at proposal are the roles read at replay, however the
+    costs come back: out of order, not at all, without a usable value, or
+    after the generation that would have used them.
+
+    Checked at every refill and after every arrival, not once at the end. A
+    final replay is order-independent by construction and reports nothing
+    wrong however broken the walk was on the way there, so what is inspected
+    is the decision the learner makes right then: with crossover off a trial
+    shares all but one coordinate with the member it was bred from, which
+    names the slot it was drawn for.
+    """
+    space = walk_space()
+    size = 4
+    learner = DifferentialEvolutionLearner(
+        space, np.random.default_rng(3), population_size=size,
+        cross_over_probability=0.0,
+    )
+    runmanager = FakeRunmanager()
+    session = Session(
+        Config(space=space, globals=(), cost_key=('r', 'c')), runmanager, learner
+    )
+
+    def population(history):
+        """What holds each slot: the cheapest usable result at its position."""
+        members = [None] * size
+        for position, record in enumerate(history):
+            slot = position % size
+            if record.usable and (
+                members[slot] is None or record.cost < members[slot].cost
+            ):
+                members[slot] = record
+        return members
+
+    def bred_from(proposal, members):
+        """The one slot whose member this proposal was crossed with."""
+        named = [
+            slot
+            for slot, record in enumerate(members)
+            if record is not None
+            and int(np.isclose(proposal, record.params).sum()) == space.num_params - 1
+        ]
+        return named[0] if len(named) == 1 else None
+
+    def check(proposal, position, members):
+        slot = position % size
+        held = sum(record is not None for record in members)
+        if members[slot] is None or held <= STRATEGIES['best1']:
+            # No incumbent, or too little population to breed from: the
+            # proposal is drawn founder-style and names no slot.
+            return
+        assert bred_from(proposal, members) == slot, position
+
+    def probe():
+        """The role the learner would give its very next proposal."""
+        history = session.history
+        members = population(history)
+        check(np.atleast_2d(learner.propose(history, 1))[0], len(history), members)
+
+    late, lost, unusable = [], 0, 0
+    for _ in range(12):
+        first = len(session.history)
+        members = population(session.history)
+        submitted = session.refill()
+        assert len(submitted) == size
+        for offset, shot_id in enumerate(submitted):
+            check(session.proposals[shot_id], first + offset, members)
+
+        # The operator cleared the red row: the shots behind it have run, and
+        # their costs land now, after this generation was built without them.
+        for shot_id in late:
+            session.record(shot_id, float(rng.uniform(0, 10)), None, False)
+            probe()
+
+        late = []
+        arriving = list(submitted)
+        rng.shuffle(arriving)
+        for shot_id in arriving:
+            roll = rng.random()
+            if roll < 0.2:
+                runmanager.lose(shot_id)
+                session.reconcile()
+                late.append(shot_id)
+                lost += 1
+            elif roll < 0.35:
+                session.record(shot_id, float('nan'), None, False)
+                unusable += 1
+            else:
+                session.record(shot_id, float(rng.uniform(0, 10)), None, False)
+            probe()
+
+    # The run has to have taken all four paths, or it proved only the easy one.
+    assert lost and unusable
+    assert session.status()['completed'] == len(session.proposals) - len(late)
+
+
 def test_a_slot_whose_founder_produced_nothing_is_drawn_founder_style(rng):
     """There is no incumbent in an empty slot, so there is nothing to cross
     over with: the proposal for it is a fresh point rather than a trial.
@@ -829,23 +927,6 @@ def test_a_learner_is_built_from_a_table_holding_other_learners_knobs(space):
     # And population_size is the number of members, not a multiplier on the
     # parameter count: fifteen here, over however many parameters.
     assert build(config).population_size == 15
-
-
-def test_the_learners_with_a_population_are_the_ones_named_as_such(space):
-    """The budget check reads a list of names rather than the signatures.
-
-    It has to: resolving the selected learner's class to read its signature is
-    the import the registry's laziness exists to avoid. So the two are held to
-    each other here instead -- a learner with a population left off the list
-    has its budget unchecked, and a name on the list that takes no population
-    raises at load.
-    """
-    with_a_population = {
-        name
-        for name in learners.LEARNERS
-        if 'population_size' in learners._option_names(name)
-    }
-    assert with_a_population == learners.POPULATION_LEARNERS
 
 
 def test_the_default_learner_comes_back_wrapped_in_its_training_phase(space):

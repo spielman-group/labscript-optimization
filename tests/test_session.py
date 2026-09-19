@@ -7,6 +7,8 @@ from labscript_optimization import config as config_module
 from labscript_optimization.observations import COMPLETE, DROPPED, PENDING, usable
 from labscript_optimization.session import Session
 
+from conftest import FakeRunmanager
+
 BASE = """
 [ANALYSIS]
 cost_key = ["r", "c"]
@@ -24,6 +26,21 @@ max = 1.0
 """
 
 
+GENERATIONAL = """
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = ["G"]
+[MLOOP]
+session = "s"
+learner = "differential_evolution"
+population_size = 4
+[MLOOP_PARAMS.G.x]
+global_name = "gx"
+min = 0.0
+max = 1.0
+"""
+
+
 def make_config(buffered=3, maximize=False, **extra):
     lines = '\n'.join(f'{k} = {v}' for k, v in extra.items())
     return config_module.loads(
@@ -31,61 +48,6 @@ def make_config(buffered=3, maximize=False, **extra):
             buffered=buffered, extra=lines, maximize='true' if maximize else 'false'
         )
     )
-
-
-class FakeRunmanager:
-    """Stands in for runmanager, and decides what is still coming.
-
-    It answers as runmanager does: one ``{'pending', 'state'}`` per id asked
-    about. A cancelled shot keeps its row and says so, while a shot that has
-    run leaves the queue and becomes indistinguishable from an id runmanager
-    never had -- both are ``unknown``.
-    """
-
-    def __init__(self):
-        self.submitted: list[str] = []
-        self.cancelled: set[str] = set()
-        self.blocked: set[str] = set()
-        self.finished: set[str] = set()
-        self.labscript_changed = False
-
-    def check_ready(self):
-        pass
-
-    def check_unchanged(self):
-        if self.labscript_changed:
-            raise RuntimeError('the labscript file changed')
-
-    def submit(self, proposals):
-        ids = [f'shot-{len(self.submitted) + i}' for i in range(len(proposals))]
-        self.submitted.extend(ids)
-        return ids
-
-    def shot_status(self, shot_ids):
-        answers = {}
-        for shot_id in shot_ids:
-            if shot_id in self.blocked:
-                answers[shot_id] = {'pending': False, 'state': 'blocked'}
-            elif shot_id in self.cancelled:
-                answers[shot_id] = {'pending': False, 'state': 'cancelled'}
-            elif shot_id in self.finished or shot_id not in self.submitted:
-                answers[shot_id] = {'pending': False, 'state': 'unknown'}
-            else:
-                answers[shot_id] = {'pending': True, 'state': 'running'}
-        return answers
-
-    def lose(self, *shot_ids):
-        """An operator disposes of these shots, so they will never run."""
-        self.cancelled.update(shot_ids)
-
-    def finish(self, *shot_ids):
-        """These shots run and leave the queue, as every healthy shot does."""
-        self.finished.update(shot_ids)
-
-
-@pytest.fixture
-def runmanager():
-    return FakeRunmanager()
 
 
 @pytest.fixture
@@ -478,6 +440,36 @@ def test_an_empty_queue_at_refill_is_counted(runmanager):
         for shot_id in session.refill():
             session.record(shot_id, 1.0, None, False)
     assert session.status()['starved'] == 2
+
+
+def test_a_generation_goes_out_whole_and_waits_to_be_answered_for(runmanager):
+    """The learner is never asked while any of its proposals is outstanding,
+    which is what stops a trial being bred against a half-built population.
+    """
+    session = Session(config_module.loads(GENERATIONAL), runmanager)
+
+    assert len(session.refill()) == 4
+    assert session.refill() == []
+    for shot_id in list(session.awaiting)[:3]:
+        session.record(shot_id, 1.0, None, False)
+    assert session.refill() == []
+
+    session.record(session.awaiting[0], 1.0, None, False)
+    assert len(session.refill()) == 4
+
+
+def test_a_generational_run_counts_no_starvation(runmanager):
+    """A generational learner empties the queue once per generation, by
+    design, and a counter that fires by design is noise in the one number the
+    documentation tells a lab to watch.
+    """
+    session = Session(config_module.loads(GENERATIONAL), runmanager)
+    for _ in range(5):
+        for shot_id in session.refill():
+            session.record(shot_id, 1.0, None, False)
+
+    assert len(runmanager.submitted) == 20
+    assert session.status()['starved'] == 0
 
 
 def test_a_queue_kept_topped_up_does_not_starve(runmanager):

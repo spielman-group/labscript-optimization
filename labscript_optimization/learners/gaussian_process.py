@@ -18,15 +18,18 @@ the group of them asked for at once.
 Refitting the kernel hyperparameters is the expensive part, so it happens once
 per ``batch_size`` new observations rather than on every call; the
 posterior is refit to all the data every time.
+
+scikit-learn and scipy are imported where they are used rather than at the top
+of this module. Loading a configuration resolves the class of the learner it
+names, to hold the file's knobs to the constructor and to ask whether the
+learner proposes whole generations -- and that happens in the lyse routine's
+own process, which never builds a learner and should not pay several seconds
+to import the scientific stack.
 """
 
 from typing import Sequence
 
 import numpy as np
-from scipy.optimize import minimize
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, WhiteKernel
-from sklearn.preprocessing import StandardScaler
 
 from ..observations import (
     Observation,
@@ -111,6 +114,8 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         self._cost_scaler = None
 
     def new_kernel(self):
+        from sklearn.gaussian_process.kernels import RBF, WhiteKernel
+
         kernel = RBF(
             length_scale=np.ones(self.space.num_params),
             length_scale_bounds=self.length_scale_bounds,
@@ -142,6 +147,9 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         rng, which would make the search depend on how much this instance had
         already proposed.
         """
+        from sklearn.gaussian_process import GaussianProcessRegressor
+        from sklearn.preprocessing import StandardScaler
+
         costs = costs_array(prefix).reshape(-1, 1)
         scaler = StandardScaler().fit(costs)
         regressor = GaussianProcessRegressor(
@@ -158,6 +166,8 @@ class GaussianProcessLearner(ParameterSpaceLearner):
 
     def fit(self, history: Sequence[Observation]) -> bool:
         """Fit the regressor to ``history``. Returns whether a fit was possible."""
+        from sklearn.gaussian_process import GaussianProcessRegressor
+
         seen = usable(history)
         if len(seen) < self.minimum_observations:
             return False
@@ -209,6 +219,7 @@ class GaussianProcessLearner(ParameterSpaceLearner):
 
         ``lows`` and ``highs`` are the search bounds, already scaled.
         """
+        from scipy.optimize import minimize
 
         def acquisition(u):
             mean, std = regressor.predict(np.atleast_2d(u), return_std=True)
@@ -242,6 +253,8 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         learner and :meth:`predict` describes the measured data however a batch
         turns out.
         """
+        from sklearn.gaussian_process import GaussianProcessRegressor
+
         mean = regressor.predict(np.atleast_2d(scaled_point))
         alpha = regressor.alpha
         if not np.isscalar(alpha):

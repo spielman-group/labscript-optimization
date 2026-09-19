@@ -50,7 +50,7 @@ Delete these from your configuration:
 | `[MLOOP]` | `no_delay` | The Gaussian process runs in a worker process that never blocks the routine, so there is no delay to avoid. |
 | `[MLOOP]` | `visualisations` | No plots and no GUI. Progress comes back as the routine's results. |
 | `[MLOOP]` | `console_log_level`, `console_log_string` | As above. |
-| `[MLOOP]`, `[LEARNER.differential_evolution]` | `restart_tolerance` | The population is no longer re-seeded when its costs converge. That decision was taken at a generation boundary from the costs resolved by then, so a cost arriving afterwards could change it and turn a block generated as trials into founders of a new epoch; and within a lab's budget it re-seeded populations that had converged to within a fraction of their initial spread but not to the minimum. `max_num_runs_without_better_params` is the stop to use instead. |
+| `[MLOOP]`, `[LEARNER.differential_evolution]` | `restart_tolerance` | The population is not re-seeded when its costs converge. That decision was taken at a generation boundary from the costs resolved by then, so a cost arriving afterwards could change it and turn a block generated as trials into founders of a new epoch; and within a lab's budget it re-seeded populations that had converged to within a fraction of their initial spread but not to the minimum. `max_num_runs_without_better_params` is the stop to use instead. |
 | whole table | `[COMPILATION]` | Its only key was `mock`, which selected a dry-run interface that has been removed. |
 
 And rename two:
@@ -96,6 +96,13 @@ The status counts a `starved` for each time the routine found nothing of its
 own queued. If it keeps climbing, the fit is taking longer than a shot: raise
 `num_buffered_runs`.
 
+**`differential_evolution` refuses the key.** It proposes one whole population
+at a time and is not asked again until every member has been answered for, so
+its queue depth is `population_size`; a second setting for the same number is
+one that can disagree with it. Delete `num_buffered_runs` from a file that
+names that learner. The queue empties once per generation there, by design,
+and nothing counts a `starved` for it.
+
 ## 5. Read `population_size` again
 
 **`population_size` is the number of members in the differential evolution
@@ -112,6 +119,9 @@ with.
 A budget has to cover two whole generations of that population, so
 `max_num_runs` below `2 × population_size` is refused: the first generation is
 the population itself and the second is the first to evolve it.
+
+The same number is how many shots are in the queue at once, since a generation
+goes out whole.
 
 ## What stays the same
 
@@ -157,6 +167,16 @@ the population itself and the second is the first to evolve it.
   takes them, so nothing has to move. A named learner table is strict: an
   unknown learner or a key its constructor does not accept stops the file from
   loading.
+- **Differential evolution is generational**, which is what the textbook
+  algorithm and scipy's deferred updating are. A whole population is proposed
+  at once and none of its trials is judged until the generation is complete,
+  so the incumbent a trial competes against is the one it was bred from. A
+  proposal's position in the history is its role -- founders fill the first
+  population, and every block after them is a generation of trials, one to a
+  slot -- so a shot that never reports leaves its slot empty rather than
+  shifting every role after it. The barrier costs some sample efficiency
+  against an asynchronous variant, and does not stop costing it at longer
+  budgets; the name has to be true.
 - **`seed`** in `[MLOOP]` makes a run reproducible.
 
 ## What the routine reports
@@ -202,3 +222,13 @@ queue moves.
 **The session stops if the labscript file changes underneath it.** Its shots
 would no longer be the experiment it has been optimising, so it says so rather
 than carrying on.
+
+## One thing that looks like a failure and is not
+
+A cost that arrives after the generation it belonged to. The shots behind a red
+row are given up on and counted in `dropped`, and the search moves on without
+them; you delete the row, they run, and their costs come back for a generation
+that has already been replaced. Each is still taken and competes for its own
+slot and no other -- which is what differential evolution would have done with
+it had it arrived in time. Two generations of the optimiser's shots sit in the
+queue while it catches up, and `awaiting` reads high for as long as they do.

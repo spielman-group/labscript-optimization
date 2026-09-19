@@ -165,6 +165,10 @@ class Session:
     def refill(self) -> list[str]:
         """Submit enough proposals to keep the queue topped up.
 
+        A learner declaring a generation is asked for a whole one, and only
+        once nothing of this session's is outstanding; any other learner is
+        topped up to ``num_buffered_runs``.
+
         Returns the shot ids submitted, which is empty once the session has
         stopped. Raises unless the interface answers with one shot id per
         proposal.
@@ -172,13 +176,20 @@ class Session:
         if self.stopped:
             return []
         awaiting = len(self.awaiting)
-        if awaiting == 0 and self.proposals:
-            # Nothing of ours was queued when this ran, so runmanager gave
-            # BLACS a default shot instead: the apparatus staying busy rather
-            # than a fault, but a shot the optimiser did not get. A session
-            # that starves wants a larger num_buffered_runs.
-            self.starved += 1
-        wanted = self.config.num_buffered_runs - awaiting
+        generation = self.learner.generation
+        if generation is not None:
+            # The queue emptying is how one generation ends and the next
+            # begins, so it is not counted as starvation: a counter that fires
+            # by design says nothing about the run it is meant to describe.
+            wanted = generation if awaiting == 0 else 0
+        else:
+            if awaiting == 0 and self.proposals:
+                # Nothing of ours was queued when this ran, so runmanager gave
+                # BLACS a default shot instead: the apparatus staying busy
+                # rather than a fault, but a shot the optimiser did not get. A
+                # session that starves wants a larger num_buffered_runs.
+                self.starved += 1
+            wanted = self.config.num_buffered_runs - awaiting
         if self.config.max_num_runs is not None:
             # Dropped shots are not charged against the budget: they produced
             # nothing, so replacing one is not spending a run.

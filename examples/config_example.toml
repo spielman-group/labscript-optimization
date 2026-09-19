@@ -44,6 +44,9 @@ learner = "gaussian_process"
 # gives BLACS a default shot instead. At one buffered run roughly every second
 # shot is a default one. Raise it if the "starved" count the routine returns
 # keeps climbing: the fit is taking longer than a shot.
+#
+# Not accepted with differential_evolution, which proposes one whole population
+# at a time and waits for all of it: its queue depth is population_size.
 num_buffered_runs = 3
 
 # How many shots the trainer runs before the Gaussian process takes over.

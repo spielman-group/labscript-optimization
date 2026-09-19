@@ -186,12 +186,28 @@ def test_a_file_that_sets_no_options_gets_exactly_the_dataclass_defaults():
         assert getattr(loaded, f.name) == getattr(direct, f.name), f.name
 
 
-def test_loading_configuration_does_not_import_scientific_learners():
-    """A lyse routine that never starts a session pays no learner imports."""
+@pytest.mark.parametrize(
+    'load',
+    [
+        f'config.loads({MINIMAL!r})',
+        f'config.loads({MINIMAL + "[LEARNER.gaussian_process]\nbatch_size = 4\n"!r})',
+        f'config.load({str(EXAMPLE)!r})',
+    ],
+    ids=['a minimal file', 'a table naming the gaussian process', 'the example'],
+)
+def test_loading_configuration_does_not_import_scientific_learners(load):
+    """A lyse routine that never starts a session pays no learner imports.
+
+    Every file here resolves a learner class -- the selected one always, and a
+    named table's own as well -- because a constructor is the schema for its
+    table and because a learner proposing whole generations has to say so
+    before the queue depth is settled. So the property is about what a learner
+    module imports when it is imported, not about which of them are reached.
+    """
     script = (
         "import sys\n"
         "from labscript_optimization import config\n"
-        f"config.loads({MINIMAL!r})\n"
+        f"{load}\n"
         "assert not {'scipy', 'sklearn'} & sys.modules.keys()\n"
     )
     subprocess.run([sys.executable, '-c', script], check=True)
@@ -503,6 +519,19 @@ def test_the_gaussian_process_knob_is_not_spelt_generation_size(text):
 
 
 DE = MINIMAL + '[MLOOP]\nlearner = "differential_evolution"\n'
+
+
+def test_a_generational_learner_will_not_take_a_queue_depth_as_well():
+    """Its queue depth is its population, so a second setting for the same
+    number is one that can disagree with it.
+    """
+    with pytest.raises(ValueError, match='num_buffered_runs') as raised:
+        config_module.loads(DE + 'num_buffered_runs = 3\n')
+    assert 'population_size' in str(raised.value)
+
+    # A learner asked for any number of proposals at a time still takes one.
+    other = config_module.loads(MINIMAL + '[MLOOP]\nnum_buffered_runs = 3\n')
+    assert other.num_buffered_runs == 3
 
 
 @pytest.mark.parametrize(

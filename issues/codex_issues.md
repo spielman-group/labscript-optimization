@@ -23,7 +23,7 @@ House rules that apply to every slice:
 - [x] Slice 1: Routine hands over every shot lyse analysed
 - [x] Slice 2: Configuration is validated at load
 - [x] Slice 3: What the lab reads — `best_cost` units and cost ordering
-- [ ] Slice 4: Textbook generational differential evolution
+- [x] Slice 4: Textbook generational differential evolution
 - [ ] Slice 5: The greeting's deadline belongs to the question
 - [ ] Slice 6: Benchmark the shipped DE
 - [ ] Slice 7: Test cleanup

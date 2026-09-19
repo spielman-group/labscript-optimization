@@ -12,6 +12,61 @@ from labscript_optimization.observations import COMPLETE, Observation
 from labscript_optimization.space import Parameter, ParameterSpace
 
 
+class FakeRunmanager:
+    """Stands in for runmanager, and decides what is still coming.
+
+    It answers as runmanager does: one ``{'pending', 'state'}`` per id asked
+    about. A cancelled shot keeps its row and says so, while a shot that has
+    run leaves the queue and becomes indistinguishable from an id runmanager
+    never had -- both are ``unknown``.
+    """
+
+    def __init__(self):
+        self.submitted: list[str] = []
+        self.cancelled: set[str] = set()
+        self.blocked: set[str] = set()
+        self.finished: set[str] = set()
+        self.labscript_changed = False
+
+    def check_ready(self):
+        pass
+
+    def check_unchanged(self):
+        if self.labscript_changed:
+            raise RuntimeError('the labscript file changed')
+
+    def submit(self, proposals):
+        ids = [f'shot-{len(self.submitted) + i}' for i in range(len(proposals))]
+        self.submitted.extend(ids)
+        return ids
+
+    def shot_status(self, shot_ids):
+        answers = {}
+        for shot_id in shot_ids:
+            if shot_id in self.blocked:
+                answers[shot_id] = {'pending': False, 'state': 'blocked'}
+            elif shot_id in self.cancelled:
+                answers[shot_id] = {'pending': False, 'state': 'cancelled'}
+            elif shot_id in self.finished or shot_id not in self.submitted:
+                answers[shot_id] = {'pending': False, 'state': 'unknown'}
+            else:
+                answers[shot_id] = {'pending': True, 'state': 'running'}
+        return answers
+
+    def lose(self, *shot_ids):
+        """An operator disposes of these shots, so they will never run."""
+        self.cancelled.update(shot_ids)
+
+    def finish(self, *shot_ids):
+        """These shots run and leave the queue, as every healthy shot does."""
+        self.finished.update(shot_ids)
+
+
+@pytest.fixture
+def runmanager():
+    return FakeRunmanager()
+
+
 @pytest.fixture
 def space():
     """A two-parameter space on [-5, 5]^2."""

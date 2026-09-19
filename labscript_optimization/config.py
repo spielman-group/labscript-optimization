@@ -227,6 +227,11 @@ class Config:
     learner: str = "gaussian_process"
     shared_learner_options: dict[str, Any] = field(default_factory=dict)
     learner_options: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: How many of this session's shots to keep in runmanager's queue. Read
+    #: for a learner asked for any number of proposals at a time; a learner
+    #: declaring a generation sets its own depth from its population, and a
+    #: file writing this beside one is refused rather than left with two
+    #: settings for the same number.
     num_buffered_runs: int = 3
     num_training_runs: int = 5
     max_num_runs: int | None = None
@@ -514,7 +519,18 @@ def from_dict(raw: dict) -> Config:
     )
     # Learner constructors are the authoritative schema for their named
     # tables. Import lazily so importing this module alone stays lightweight.
-    from .learners import validate_options
+    from .learners import LEARNERS, validate_options
 
     validate_options(config)
+    # Read off the class, which says how many proposals it is asked for at a
+    # time, as a number or -- where that is the population the file sizes --
+    # as a property over its own settings.
+    if "num_buffered_runs" in mloop and LEARNERS[config.learner].generation is not None:
+        raise ValueError(
+            f"num_buffered_runs is not accepted with learner "
+            f"{config.learner!r}, which proposes one whole generation at a "
+            f"time and waits for all of it. Its queue depth is therefore "
+            f"population_size, and a second setting for the same number is "
+            f"one that can disagree with it: delete num_buffered_runs."
+        )
     return config

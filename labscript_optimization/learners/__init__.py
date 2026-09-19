@@ -1,13 +1,12 @@
 """The learners, and how a configuration names one."""
 
 import inspect
-from collections.abc import MutableMapping
-from importlib import import_module
 
 import numpy as np
 
 from .base import InsufficientData, Learner, ParameterSpaceLearner
 from .differential_evolution import DifferentialEvolutionLearner
+from .gaussian_process import GaussianProcessLearner
 from .random import DirectedRandomLearner, RandomLearner
 from .two_phase import TwoPhaseLearner
 
@@ -26,66 +25,22 @@ __all__ = [
 ]
 
 
-class _LearnerRegistry(MutableMapping):
-    """Classes available by configuration name, imported when first needed."""
-
-    def __init__(self, entries):
-        self._entries = dict(entries)
-
-    def __getitem__(self, name):
-        entry = self._entries[name]
-        if isinstance(entry, tuple):
-            module_name, class_name = entry
-            entry = getattr(import_module(module_name, __name__), class_name)
-            self._entries[name] = entry
-        return entry
-
-    def __contains__(self, name):
-        # Answered from the names alone. The mapping default asks
-        # ``__getitem__``, which would import the module and the whole
-        # scientific stack under it just to say whether a name is spelt right.
-        return name in self._entries
-
-    def __setitem__(self, name, cls):
-        self._entries[name] = cls
-
-    def __delitem__(self, name):
-        del self._entries[name]
-
-    def __iter__(self):
-        return iter(self._entries)
-
-    def __len__(self):
-        return len(self._entries)
-
-
-#: Learners that can be named in a configuration.
-LEARNERS = _LearnerRegistry(
-    {
-        "random": RandomLearner,
-        "directed_random": DirectedRandomLearner,
-        "differential_evolution": DifferentialEvolutionLearner,
-        "gaussian_process": (".gaussian_process", "GaussianProcessLearner"),
-    }
-)
+#: Learners that can be named in a configuration. Every class here is
+#: resolved whenever a configuration is loaded -- its constructor is the
+#: schema for its own table, and it says whether it proposes whole
+#: generations -- so none of them may import the scientific stack to be
+#: imported itself; see
+#: :mod:`labscript_optimization.learners.gaussian_process`.
+LEARNERS = {
+    "random": RandomLearner,
+    "directed_random": DirectedRandomLearner,
+    "differential_evolution": DifferentialEvolutionLearner,
+    "gaussian_process": GaussianProcessLearner,
+}
 
 #: Learners that need a training phase before their proposals mean anything,
 #: and the learner that provides it.
 NEEDS_TRAINING = {"gaussian_process": "directed_random"}
-
-#: Learners that evolve a population, and whose budget therefore has to cover
-#: more than one of it. Written out rather than read off the selected learner's
-#: signature, because reading a signature resolves that learner's class: the
-#: registry is lazy so that the lyse process, which loads the configuration and
-#: never builds a learner, does not pay for the scientific stack. The two are
-#: held to each other by a test rather than by one deriving from the other.
-POPULATION_LEARNERS = frozenset({"differential_evolution"})
-
-
-def __getattr__(name):
-    if name == "GaussianProcessLearner":
-        return LEARNERS["gaussian_process"]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _constructor_parameters(name: str):
@@ -134,9 +89,10 @@ def validate_options(config) -> None:
                 f"{', '.join(sorted(accepted))}."
             )
 
-    if config.max_num_runs is None or config.learner not in POPULATION_LEARNERS:
+    accepted = _constructor_parameters(config.learner)
+    if config.max_num_runs is None or "population_size" not in accepted:
         return
-    default = _constructor_parameters(config.learner)["population_size"].default
+    default = accepted["population_size"].default
     size = int(config.options_for(config.learner).get("population_size", default))
     if config.max_num_runs < 2 * size:
         raise ValueError(

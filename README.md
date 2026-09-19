@@ -81,6 +81,13 @@ one buffered run roughly every second shot is a default one. The status counts
 a `starved` for each time the routine found nothing of its own queued; raise
 `num_buffered_runs` if it keeps climbing.
 
+A learner that proposes whole generations sets its own depth and does not take
+that setting — `differential_evolution` refuses it, because the depth is the
+population size and a second setting for the same number is one that can
+disagree with it. Such a learner empties the queue once per generation, by
+design, so nothing counts a `starved` there: a number that fires every
+generation says nothing about the run.
+
 Those default shots are also what keeps the routine running while the optimiser
 waits. They go to BLACS already compiled, so runmanager never writes a shot id
 into them, and they deliberately never become the sequence anchor.
@@ -126,7 +133,7 @@ not read either.
 | --- | --- |
 | `random` | Uniform draws. The reference the others are measured against. |
 | `directed_random` | Draws near a previously seen point, chosen from a band of middling costs rather than from the best one, so it explores rather than refines. |
-| `differential_evolution` | Evolves a population. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds: around eight searches well, and a budget over a thousand shots is worth sixteen. |
+| `differential_evolution` | Evolves a population, one whole generation at a time: it proposes `population_size` shots together and is not asked again until all of them have been answered for. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds — around eight searches well, and a budget over a thousand shots is worth sixteen — and it is the queue depth too, so `num_buffered_runs` is not accepted beside it. |
 | `gaussian_process` | Fits a Gaussian process and searches its posterior. Runs `directed_random` for its training shots first, and falls back to it for any proposal it cannot make. |
 
 A learner is a function from the proposal history to `k` proposals:
@@ -158,8 +165,10 @@ for step in range(100):
 
 ### Writing your own
 
-A learner answers `propose` and carries a `last_phase` string. That pair is
-`Learner`, which everything here inherits — the two-phase wrapper included, so
+A learner answers `propose` and carries a `last_phase` string and a
+`generation`, which is `None` unless the learner proposes only whole groups of
+a fixed size and only when none of its proposals is outstanding. Those three
+are `Learner`, which everything here inherits — the two-phase wrapper included, so
 a session cannot tell a wrapped learner from a plain one. Your own object is
 driven by those same two members whether or not it inherits anything.
 
@@ -185,6 +194,16 @@ deletes it, and nothing behind it runs. Nothing then reaches lyse, so the
 routine is never called again. The row is red in runmanager and the queue has
 visibly halted, which is where that failure belongs — the apparatus cannot
 proceed, and an optimiser that stops is behaving correctly.
+
+A cost can arrive after the generation it belonged to, and that is an ordinary
+operator path rather than a failure. The shots behind such a row are given up
+on, so the search moves on without them; delete the row and they run, and their
+costs come back for a generation that has already been replaced. Each of them
+is still taken and competes for its own slot and no other, which is what
+differential evolution would have done with it had it arrived in time. While
+the queue catches up, two generations of the optimiser's shots sit in it and
+`awaiting` reads high. Neither that nor the `dropped` those shots were counted
+in is a fault to chase.
 
 If the worker dies, the history dies with it. There is no archive and no
 persistence layer; a new session starts from nothing.

@@ -30,8 +30,8 @@ class Learner(ABC):
     wrapped one without knowing it.
 
     Inheriting is not what makes an object usable -- a session proposes from
-    anything carrying these two members -- but everything this package calls a
-    learner is one.
+    anything carrying these three members -- but everything this package calls
+    a learner is one.
     """
 
     #: Which of the learner's ways of proposing produced the last batch, which
@@ -39,6 +39,15 @@ class Learner(ABC):
     #: phases and forgets to publish them then fails, rather than being
     #: reported as the main one for a whole run.
     last_phase: str
+
+    #: How many proposals this learner is asked for at a time, or ``None`` for
+    #: any number. A learner that declares one proposes only whole groups of
+    #: that many, and only when none of its proposals is outstanding, so a
+    #: session asks it for a whole generation or for nothing at all. A
+    #: declaration of the same kind as :attr:`last_phase`, not a delivery
+    #: policy: ``propose`` is unchanged, and whether anything is outstanding
+    #: stays runmanager's answer rather than a count kept anywhere here.
+    generation: int | None = None
 
     @abstractmethod
     def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
