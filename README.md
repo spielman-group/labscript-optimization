@@ -142,6 +142,12 @@ proceed, and an optimiser that stops is behaving correctly.
 If the worker dies, the history dies with it. There is no archive and no
 persistence layer; a new session starts from nothing.
 
+## Coming from M-LOOP
+
+An existing `mloop_config` file needs a handful of settings cut and one
+renamed before it will load, and the two tag globals the old plugin needed can
+be deleted from runmanager. [UPGRADING.md](UPGRADING.md) is the step-by-step.
+
 ## Installing
 
 ```
