@@ -393,12 +393,24 @@ def status(**overrides):
         'completed': 0,
         'awaiting': 1,
         'dropped': 0,
+        'blocked': 0,
         'starved': 0,
         'best_cost': None,
         'best_params': None,
         'best_shot_id': None,
         'stopped': None,
     } | overrides
+
+
+def test_the_stand_in_status_carries_the_keys_the_session_sends(config):
+    """Every test below reads the worker's reply out of that fixture, so a key
+    the session gained and the fixture did not is a key nothing here ever sees
+    the routine handle -- and save_status walks its keys by name.
+    """
+    from labscript_optimization.session import Session
+
+    session = Session(config, None, learner=types.SimpleNamespace(last_phase='main'))
+    assert set(status()) == set(session.status())
 
 
 @pytest.fixture
