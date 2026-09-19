@@ -115,8 +115,11 @@ class DirectedRandomLearner(ParameterSpaceLearner):
     def centre(self, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
         """Pick the point to draw around.
 
-        With nothing inside the band -- which includes the case of a single
-        observation -- the best point is used.
+        The band is a slice out of the middle of the observed cost range, so a
+        history whose costs all lie outside it -- two observations, one at each
+        end -- leaves nothing to choose from, and the best point is used. A
+        single observation is not that case: it is both best and worst, which
+        collapses the band onto it.
         """
         best, worst = costs.min(), costs.max()
         high = worst + (best - worst) * self.trust_range[0]
