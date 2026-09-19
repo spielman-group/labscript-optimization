@@ -37,6 +37,13 @@ The routine returns immediately. Fitting and submitting happen in the worker,
 because lyse runs multishot routines inline and a slow one delays every shot
 behind it.
 
+lyse runs a multishot routine once per drained batch of singleshot analyses
+rather than once per shot. Where analysis keeps up that is one shot an
+invocation; where it does not — a shot arriving while the one before it is
+still being analysed, analysis paused and resumed, or lyse started with shots
+already in the box — it is several. Each invocation hands over every shot
+analysed since the one before it, so a batch costs the optimiser nothing.
+
 ## Using it
 
 Add a routine to lyse containing:
@@ -181,15 +188,21 @@ be deleted from runmanager. [UPGRADING.md](UPGRADING.md) is the step-by-step.
 
 ## Installing
 
+Install it into the environment lyse itself runs in, the same way the rest of
+the suite is installed there:
+
 ```
-pip install -e .
+pip install -e /path/to/labscript-optimization
 ```
+
+The routine runs inside a lyse analysis subprocess, so an installation
+anywhere else is one lyse cannot import.
 
 Needs Python 3.11 or newer, numpy, scipy and scikit-learn. The lyse routine
 additionally needs `lyse`, `runmanager` and `labscript_utils`, which a labscript
 suite installation already provides. It reads lyse's `shot_id` column and asks
-for one shot at a time, so it needs a lyse that has both; an older one refuses
-the request and says so.
+for a bounded number of recent shots rather than the whole dataframe, so it
+needs a lyse that has both; an older one refuses the request and says so.
 
 ## Tests
 

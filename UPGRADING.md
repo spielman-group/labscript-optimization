@@ -14,6 +14,10 @@ tell whether it applies to your lab.
 pip install -e /path/to/labscript-optimization
 ```
 
+Run that against the Python environment lyse itself runs in, the one holding
+the rest of your suite: the routine runs inside a lyse analysis subprocess, so
+an installation anywhere else is one lyse cannot import.
+
 Needs Python 3.11 or newer, and numpy, scipy and scikit-learn. There is no
 tensorflow: the neural-network learner is gone, and with it M-LOOP's hard
 import of tensorflow through every other learner.
