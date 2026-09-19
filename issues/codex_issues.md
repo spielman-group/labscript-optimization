@@ -18,18 +18,28 @@ House rules that apply to every slice:
   at load, naming the key and what is accepted instead.
 - Branch is `Development`. Baseline is 224 tests; recount before relying on it.
 
+**Revised after a fourth review round.** Slices 5, 7, 8 and 9 below replace what
+was filed earlier. The cause was a defect found while checking Ian's assertion
+that nothing in this package times out on the experiment cycling — true, and
+enumerating the five timeouts to confirm it showed that the one remaining bound
+misattributes results under ordinary load. That finding reorders the rest: the
+runmanager `Client.with_timeout` change is **not** being pursued as a statement
+of work, because no defect depends on it; it is a tidy-up for runmanager's own
+backlog, which would also let BLACS stop mutating a client's deadline per call.
+
 ## Checklist
 
 - [x] Slice 1: Routine hands over every shot lyse analysed
 - [x] Slice 2: Configuration is validated at load
 - [x] Slice 3: What the lab reads — `best_cost` units and cost ordering
 - [x] Slice 4: Textbook generational differential evolution
-- [ ] Slice 5: The greeting's deadline belongs to the question
+- [ ] Slice 5: The greeting's deadline is a constant again
 - [x] Slice 6: A wrapper cannot silently drop a generation barrier
-- [ ] Slice 7: One deadline cannot outlive the one that contains it
-- [ ] Slice 8: A barrier declared the ordinary way is not seen
-- [ ] Slice 9: Benchmark the shipped DE
-- [ ] Slice 10: Test cleanup
+- [ ] Slice 7: A reply says which request it answers
+- [ ] Slice 8: The configure deadline covers the waits inside it
+- [ ] Slice 9: A learner's declarations are facts about an instance
+- [ ] Slice 10: Benchmark the shipped DE
+- [ ] Slice 11: Test cleanup
 
 ---
 
@@ -387,58 +397,44 @@ starvation and outstanding-shot prose must not call it one.
 
 ---
 
-## Slice 5: The greeting's deadline belongs to the question
+## Slice 5: The greeting's deadline is a constant again
 
 ### Type
 
-`AFK`, and partly in another repository.
+`AFK`
 
 ### What to build
 
-`check_ready` holds the injected runmanager client to a short deadline for the
-greeting by swapping its `timeout` attribute and restoring it in a `finally`.
-That works and is tested, but it temporarily reconfigures an object the caller
-owns — a design issue in production code, not merely a smell.
+Revert the labconfig read introduced when this slice was first implemented. The
+greeting's deadline goes back to a constant.
 
-The cause is an API gap: `runmanager.remote.Client` takes `timeout` at
-construction and `request()` reads `self.timeout` on every call, so there is no
-per-request deadline. BLACS does the same thing for the same reason
-(`blacs/shot_execution.py:290-291` assigns `client.timeout` per call), so this
-is a suite-wide workaround rather than a local shortcut.
+The reasoning that put it there was mine and does not survive scrutiny. BLACS
+reads `timeouts/liveness_timeout` because it probes runmanager **once per
+shot**, so the key is a real trade for it: a longer probe costs cycle time on
+every shot, a shorter one gives false "runmanager unavailable" on a slow link.
+This package greets **once per session**, over a round trip that is sub-second
+on any lab link. There is no trade to make, so the knob buys nothing — and a
+lab that raises the number for BLACS's sake, which is the only reason it is
+configurable, silently reinstates the failure the greeting exists to prevent.
 
-Two parts:
+Keep a comment saying the key exists, that BLACS reads it, and why this greeting
+does not: one number per session against one per shot.
 
-- **In runmanager**, add `Client.with_timeout(seconds)` returning a sibling
-  client for the same host and port with a different deadline, passing all
-  three arguments so the sibling is built without a labconfig read. Leave
-  `request` and the wire format alone: a keyword `timeout` would collide with
-  any server command that takes one. That work goes through the runmanager
-  session; a statement of work is drafted and awaiting Ian.
-- **Here**, once it exists, `check_ready` becomes
-  `self.client.with_timeout(GREETING_TIMEOUT).say_hello()` — the deadline on
-  the question, one injection point, no mutation. The fake client implements
-  `with_timeout` by recording the deadline and returning itself.
-
-Independent of runmanager, and worth doing first: take the greeting's value
-from labconfig's `timeouts/liveness_timeout`, keeping the constant as the
-fallback. BLACS already reads that key for its own liveness probe, deliberately
-separate from `communication_timeout` because one measures a round trip and the
-other allows for work. A lab on a slow link should set one number and have both
-applications honour it.
+The interim that holds the injected client to a short deadline stays, with its
+comment naming `Client.with_timeout`. That is filed for runmanager's backlog and
+is not blocking anything.
 
 ### Acceptance criteria
 
-- [x] The greeting's deadline comes from labconfig, with the constant as
-      fallback, and matches the key BLACS reads
-- [ ] No production code assigns to a client's `timeout`
-- [x] The interim carries a comment naming the runmanager change it waits on,
-      for as long as it remains the interim
+- [ ] The greeting's deadline is a constant; nothing reads labconfig for it
+- [ ] A comment says the key exists, that BLACS reads it, and why this does not
+- [ ] The tests and fixtures added for the configurable value are removed, not
+      left asserting a path that no longer exists
+- [ ] `tests/` no longer imports `labscript_utils` unless something else needs it
 
 ### Blocked by
 
-None for the labconfig key — it can start immediately. The `with_timeout` half
-waits on the runmanager session; the statement of work is drafted and awaiting
-Ian, and until it lands the interim stays in place with its comment.
+None - can start immediately.
 
 ### User stories covered
 
@@ -497,7 +493,7 @@ reachable, and that has landed.
 
 ---
 
-## Slice 7: One deadline cannot outlive the one that contains it
+## Slice 7: A reply says which request it answers
 
 ### Type
 
@@ -505,41 +501,100 @@ reachable, and that has landed.
 
 ### What to build
 
-Making the greeting's deadline configurable opened a hole that the constant
-closed, and nothing closes it now.
+**The largest remaining slice, and the one a lab would feel.** The routine and
+the worker exchange messages with nothing saying which reply answers which
+request; they rely on order. Order is not reliable, and under generational
+differential evolution it is routinely wrong.
 
-`CONFIGURE_TIMEOUT` is a fixed 30 s in the routine: the whole of configuration,
-greeting included, must finish inside it or the worker is killed and the lab is
-told the worker was slow. The greeting's own deadline now comes from labconfig's
-`timeouts/liveness_timeout`. A lab that sets that key to 60 — entirely
-reasonable on a slow link, and the reason the key is configurable at all —
-reinstates precisely the defect this machinery exists to prevent: runmanager is
-still being waited on when the outer deadline expires, and the failure names the
-wrong cause.
+Reproduced against the shipped code, driving the real worker with trailing work
+of five seconds and shots arriving every 0.4 s:
 
-The relation `greeting < configure` used to be an invariant. It is now an
-invariant over the *fallback* only, which is the weakest place for it to hold.
+```
+  inv      handed over   verdict
+    1           shot-1      None
+    2           shot-2      None
+    3    SOMEONE-ELSES      True  <-- a shot the session never proposed
+    4           shot-4      None
+    5           shot-5      True
+```
 
-**Do not clamp with a silent `min()`.** Quietly ignoring the number a lab wrote
-is the same class of fault as accepting a setting and not acting on it, which
-this package refuses everywhere else. Derive the outer deadline from the inner
-one instead — the configure allowance is the greeting's deadline plus whatever
-the rest of configuration needs — so that raising one raises both and the lab's
-number is honoured.
+The third invocation hands over a shot the session never proposed and receives
+`True`, so the optimiser's results are written onto somebody else's shot. The
+session's own shots receive no verdict and are not written to at all. This is
+the defect Slice 1 closed, reached by a second route.
 
-Note the two values are read in different processes: the routine holds
-`CONFIGURE_TIMEOUT` and the interface holds the greeting's, inside the worker.
-Both can read the same labconfig key; work out whether that is the right seam or
-whether the worker should report the deadline it intends to use.
+**Why it fires in ordinary operation.** The worker replies *before* its trailing
+work, so a late reply never means a dead worker — it means the worker is still
+inside the previous request's `reconcile` and `refill`. Under generational
+submission that trailing work is `submit_shots` for a whole population once per
+generation, with runmanager evaluating and writing N files through its GUI
+thread: many seconds, by construction. A Gaussian process fit on a long history
+is the second such case. And it does not self-correct: while the load lasts,
+every invocation times out and every verdict lands one shot late.
+
+**Why an unbounded wait is not enough on its own**, both verified by reading the
+worker:
+
+- An error from trailing work is sent *after* the reply it follows, so the
+  stream can read `status_k, error_k, status_k+1`. A reader that takes the first
+  message as its answer raises on a healthy shot and leaves the real reply in
+  the pipe.
+- A request whose handling raises before the reply produces an error and **no**
+  status. The reader then waits forever on a worker that is alive, so a liveness
+  check does not fire either.
+
+So: number the requests. Every message the routine sends carries a request
+number — a counter in the routine's storage, not the shot id, which is absent
+for a no-observation message and can legitimately repeat when BLACS re-runs a
+file. Every message the worker sends carries the number of the request it
+belongs to. The reply to a request is the first `status` or `error` carrying its
+number; a later error carrying that number is trailing work that failed, raised
+when it is seen and naming which request it came from.
+
+The worker owes exactly one `status` per request, unless the request itself
+failed, in which case the error is the reply.
+
+**The wait learns to tell dead from busy.** The drain takes the worker's process
+handle and polls it between short waits, so a worker that has died is reported
+as dead within about a second rather than at whatever deadline is set — and the
+deadline is then only ever reached by a live worker doing slow work.
+
+**Late verdicts land on the right shot.** The routine remembers the filepath
+against the request number for requests it stopped waiting on — a handful at
+most — and when that status arrives during a later drain, writes it onto *that*
+file if the session took it.
+
+**The bound itself is then a policy choice, not a correctness one.** With
+numbering and the poll, a bounded wait can neither misattribute nor mistake busy
+for dead; all it decides is how long lyse's analysis pipeline waits for a busy
+worker before a shot's status is deferred to a later invocation. Keep it
+bounded and generous, a few seconds: the observation is never at risk either way
+because the worker records the cost whether or not the routine waits, and a
+stalled analysis pipeline is the worse failure for someone watching lyse — M-LOOP
+behaved the other way and analysislib-mloop grew a `no_delay` setting because of
+it. Ian has the final word on that number and it is one constant; the design is
+correct either way.
+
+Say in the README that a shot's progress columns may appear an invocation or two
+late when the worker is busy, and that the cost itself is never affected.
 
 ### Acceptance criteria
 
-- [ ] A lab that raises `liveness_timeout` past the shipped configure allowance
-      still gets "runmanager did not answer" rather than a worker timeout —
-      mutation: restore a fixed outer deadline; the wrong cause is reported
-- [ ] The lab's configured number is honoured, not silently reduced
-- [ ] No test asserts the relation between two constants where it could assert
-      the behaviour instead
+- [ ] With trailing work longer than the bound, every status is written onto the
+      shot that produced it, and a shot the session never proposed is never
+      written to — mutation: attribute by arrival order; the table above
+      reproduces
+- [ ] A request whose handling raises still yields exactly one message carrying
+      its number — mutation: drop the guarantee; the wait for that request never
+      ends
+- [ ] An error from trailing work is raised when seen, names the request it came
+      from, and is not mistaken for the next request's reply — mutation: treat
+      any first message as the answer; a healthy shot raises
+- [ ] A worker whose child has exited is reported as dead within about a second,
+      and the message says the worker died rather than that it was slow —
+      mutation: remove the poll; the test waits out the bound
+- [ ] The README states that progress columns may lag by an invocation under
+      load, and that the cost is not affected
 
 ### Blocked by
 
@@ -547,12 +602,12 @@ None - can start immediately.
 
 ### User stories covered
 
-- Found while implementing Slice 5; the exposure is recorded in that slice's
-  code comments and is not otherwise closed.
+- PRD "Issue 1 — worker reply offset". The PRD treats the offset as closed; it
+  is closed only for the startup case, and this is the general one.
 
 ---
 
-## Slice 8: A barrier declared the ordinary way is not seen
+## Slice 8: The configure deadline covers the waits inside it
 
 ### Type
 
@@ -560,48 +615,122 @@ None - can start immediately.
 
 ### What to build
 
-The refusal that stops `num_buffered_runs` being set beside a generational
-learner reads `generation` **off the class**. That works for the one learner
-that has one today only because its `generation` is a `property`, so the class
-attribute is a truthy property object. A learner that declares the barrier the
-ordinary way — `self.generation = ...` in `__init__` — is invisible to it.
+An outer deadline set below the sum of the bounded waits inside it will always
+fire first and name the wrong cause. That is the shape of the original defect,
+and it is still present after the greeting fix.
 
-Reproduced against `7b6ec7b` with a learner whose `__init__` sets
-`self.generation`:
+Verified: after the greeting restores the client's own deadline, `check_ready`
+calls `error_in_globals()` and then `get_labscript_file()`, each at the client's
+full `communication_timeout` — 60 s by labconfig default — underneath a 30 s
+configure deadline. A runmanager that says hello and then stops answering, its
+GUI thread inside a compile or behind a modal dialog somebody left open, is an
+ordinary lab state and produces exactly the original failure: the worker killed
+mid-wait, the lab told the worker was slow.
 
-```
-class-level read sees: None
-RESULT: num_buffered_runs was ACCEPTED -> 3
-        the barrier is real (the instance has generation = 8)
-```
+Derive the configure deadline from what it must cover — the greeting's deadline
+plus the client's own deadline for each further request `check_ready` makes,
+plus a margin — reading the client's number the way `runmanager.remote.Client`
+reads it, since that is the number the worker's client will actually use.
+Document it as the sum, so that adding a third request to `check_ready` is
+visibly a reason to change it.
 
-So the file loads, the session runs with a queue depth the learner never asked
-for, `refill` tops the queue up mid-generation, and — because starvation is not
-counted for a generational learner — the default shots runmanager hands BLACS at
-each of those drains are missing from the one number a lab is told to watch.
-Nothing reports any of it.
-
-**This was believed to be guarded and is not.** The test named as the guard
-exercises only the learner whose attribute is a property, so it passes while the
-mechanism it is supposed to protect does not work. That is the third finding of
-this exact shape in this batch — an attribute read the wrong way, a case that
-happens to work, and a clean-looking check — and the pattern is worth naming in
-whatever it teaches the contract.
-
-Settle what a learner owes and enforce it, rather than patching the read. Two
-shapes worth weighing: require `generation` to be a class-level declaration and
-hold every registered learner to that, or stop reading it off the class at all.
-Whichever is chosen, the guard must be one that would have failed against the
-reproduction above — a test over the registry rather than over one learner.
+With defaults that is a long time for a stalled routine to wait, which is
+exactly why this slice follows the one that teaches the drain to tell a dead
+worker from a slow one: a generous backstop is cheap once a dead worker is
+reported in a second.
 
 ### Acceptance criteria
 
-- [ ] A learner declaring `generation` in `__init__` is treated the same as one
-      declaring it on the class — mutation: the reproduction above is accepted
-      again
-- [ ] The guard covers every registered learner, not one of them
-- [ ] The learner contract says how a barrier must be declared, if that is the
-      answer chosen
+- [ ] The derived deadline grows when the client's deadline grows — mutation:
+      restore a constant; a labconfig giving a larger value leaves it unchanged
+- [ ] A runmanager that greets and then times out on a later request surfaces
+      that request's own failure, naming it — mutation: set the outer deadline
+      below the client's; the routine reports its own timeout instead
+- [ ] The relation "the greeting's deadline lies inside the configure deadline"
+      still holds and is still tested
+
+### Blocked by
+
+- Slice 7: A reply says which request it answers — the drain's liveness poll is
+  what makes a generous deadline acceptable, and both change the same function.
+
+### User stories covered
+
+- PRD "Issue 1 — worker reply offset", the residue subsection
+
+---
+
+## Slice 9: A learner's declarations are facts about an instance
+
+### Type
+
+`AFK`
+
+### What to build
+
+Four places read a fact about a learner from something standing in for the
+learner, and each agrees with the truth only in the single case that exists
+today.
+
+- The refusal of `num_buffered_runs` beside a generational learner reads
+  `generation` **off the class**. Differential evolution declares it as a
+  `property`, so the class attribute is a truthy property object and the check
+  passes by accident. A learner setting `self.generation` in `__init__` — the
+  ordinary way — shows the base class's `None` and is invisible. Reproduced: the
+  file loads, the session runs at a queue depth the learner never asked for, the
+  queue is topped up mid-generation, and because starvation is deliberately not
+  counted for a generational learner, the resulting default shots are missing
+  from the one number the README tells a lab to watch.
+- The budget refusal reads the constructor's **signature default** and the
+  file's option to predict what an instance's population will be. Today the
+  prediction matches. The day a learner clamps or derives its population, the
+  check and the instance disagree with nothing said.
+- Slice 4's defect was a **count** standing for a position.
+- Slice 6's was a **wrapper** standing for the learner it wraps.
+
+**The pattern, and the rule that closes it:** a fact about an object read from a
+proxy for it — a count for a position, a wrapper for the wrapped, a class or a
+signature for the instance. State in the learner contract, beside the rule Slice
+6 added: *a learner's declarations are facts about an instance; nothing outside
+a learner reads them from a class, a signature, a registry entry or a count — it
+asks an instance.*
+
+**Stop predicting: build the learner at load and ask it.** Configuration loading
+already imports the selected learner's module to inspect its constructor, so
+building it costs a constructor call and nothing else — no fitting happens at
+construction. Then both refusals read the instance, and the budget check becomes
+two whole generations of whatever the instance actually declares, which is the
+same number for differential evolution and the right generalisation. Both
+class-level reads go.
+
+A bonus worth knowing: building at load wraps the Gaussian process in its
+two-phase learner, so Slice 6's refusal of a wrapped generational learner starts
+firing at load instead of at worker configure, with the apparatus already
+running.
+
+**Do not require a class-level declaration instead.** Differential evolution's
+generation depends on `population_size`, which comes from the file, so a
+class-level flag would need a second instance-level number beside it — two
+declarations for one fact, which is the shape just removed from
+`population_size`.
+
+Add a registry contract test: construct every registered learner over a
+one-parameter space with defaults, and assert its phase is a string and its
+generation is either nothing or a positive whole number. That holds a future
+learner to the declaration however it chooses to make it.
+
+### Acceptance criteria
+
+- [ ] A learner that declares its generation in `__init__` is refused a queue
+      depth exactly as one declaring it on the class — mutation: restore the
+      class-level read; the reproduction above is accepted again
+- [ ] The budget refusal reads the built learner, not a signature default —
+      mutation: restore the signature read; a learner that derives its own
+      population is checked against the wrong number
+- [ ] The registry contract test covers every registered learner — mutations:
+      register a learner whose generation is zero, and one with no phase; each
+      must fail this test and no other
+- [ ] The learner contract states the rule
 
 ### Blocked by
 
@@ -609,11 +738,13 @@ None - can start immediately.
 
 ### User stories covered
 
-- Introduced by Slice 4's load-time refusal; found while validating Slice 6.
+- Found while validating Slices 4 and 6; not in the PRD, which did not
+  anticipate reading a learner's declarations off anything but a learner.
 
 ---
 
-## Slice 9: Benchmark the shipped DE
+
+## Slice 10: Benchmark the shipped DE
 
 ### Type
 
@@ -658,7 +789,7 @@ mutation strategy.
 
 ---
 
-## Slice 10: Test cleanup
+## Slice 11: Test cleanup
 
 ### Type
 
@@ -714,7 +845,7 @@ Three specific items carried forward from earlier slices:
 
 ### Blocked by
 
-- Slices 1 through 9
+- Slices 1 through 10
 
 ### User stories covered
 
