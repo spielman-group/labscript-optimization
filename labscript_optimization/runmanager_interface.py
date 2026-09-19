@@ -11,12 +11,6 @@ from typing import Iterable, Sequence
 
 import numpy as np
 
-#: Attribute runmanager writes into each shot file it queues. Its
-#: ``submit_shots`` reply spells its own key the same way, which
-#: :meth:`RunmanagerInterface.submit` reads as a literal: two namespaces that
-#: agree, not one constant covering both.
-SHOT_ID_ATTR = "shot_id"
-
 #: The state runmanager reports for a shot id it has no row for.
 UNKNOWN_SHOT_STATE = "unknown"
 
@@ -43,28 +37,17 @@ class RunmanagerInterface:
         self.labscript_file = None
 
     def check_ready(self) -> None:
-        """Raise unless runmanager can run this session to completion.
+        """Raise if runmanager cannot start a session, and pin its labscript file.
 
-        Both checks are against silence rather than error. An empty-queue
-        policy of 'nothing' produces no further shot once the queue empties, so
-        nothing reaches lyse and the routine is never called again; it also
-        lets go of the sequence being continued. Under 'default_labscript'
-        runmanager fills the gap with a shot of its own, which never becomes
-        the sequence anchor.
+        A global that does not evaluate is a shot that will not compile, and
+        every shot this session submits would be one. The file pinned here is
+        what :meth:`check_unchanged` compares against for the rest of the
+        session.
         """
         if self.client.error_in_globals():
             raise RuntimeError(
                 "runmanager reports an error in its globals; fix it before "
                 "starting an optimisation"
-            )
-
-        policy = self.client.get_empty_queue_policy()
-        if policy != "default_labscript":
-            raise RuntimeError(
-                f"runmanager's empty-queue policy is {policy!r}. Set it to "
-                f"'default_labscript': otherwise the session stops silently "
-                f"the first time the queue empties, and every submission "
-                f"starts a sequence of its own."
             )
 
         self.labscript_file = self.client.get_labscript_file()

@@ -22,9 +22,10 @@ lyse routine ──observation──▶ worker ──set_globals + engage──�
 ```
 
 Each shot is identified by the id runmanager mints for its queue row, written
-into the shot file. A cost is matched to the proposal it answers by that id, so
-shots can come back in any order and your own shots can be mixed into the
-queue. runmanager is never stopped or waited on.
+into the shot file and read back by lyse as the `shot_id` column. A cost is
+matched to the proposal it answers by that id, so shots can come back in any
+order and your own shots can be mixed into the queue. runmanager is never
+stopped or waited on.
 
 There is no count of shots in flight. Whether a shot is still coming is
 runmanager's answer, asked afresh each time the routine runs, so a shot that is
@@ -49,26 +50,26 @@ Adding the routine starts the session; removing it, restarting it, or reaching
 the run budget stops it. Progress is saved onto each shot the optimiser can
 claim, under the results group `labscript_optimization`, so it comes back as
 dataframe columns: `df[('labscript_optimization', 'best_cost')]` is the best
-cost so far, beside the parameters that produced it, how many shots are in
-flight, and which phase the learner is in. Anything the session does not have
-yet reads as `NaN`. Shots that are not the optimiser's own — yours, and
+cost so far, beside the parameters and the shot that produced it, which phase
+the learner is in, and why the session stopped. Anything the session does not
+have yet reads as `NaN`. Shots that are not the optimiser's own — yours, and
 runmanager's default shots — are left alone.
+
+The session's own counters are one answer for the whole run rather than
+anything about a shot, so they are not written onto every shot of it.
+`optimise` returns the whole status, which a routine that wants them prints:
+
+```python
+print(optimisation.optimise('mloop_config.toml'))
+```
 
 `num_buffered_runs` is usually set above one. BLACS asks for its next shot as
 soon as it finishes the last, which is before this optimiser has seen the cost
 and proposed a replacement — so a queue holding only one of our shots is empty
 at precisely that moment, and runmanager hands BLACS a default shot instead. At
-one buffered run roughly every second shot is a default one. The routine
-reports a `starved` count for the times it found nothing of its own queued;
-raise `num_buffered_runs` if it keeps climbing.
-
-runmanager's empty-queue policy must be `default_labscript`. The session
-refuses to start otherwise: a queue that empties under the `nothing` policy
-produces no further shot, so nothing would reach lyse to invoke the routine
-again and the optimisation would stop without saying so. It also keeps a run
-in one sequence: runmanager lets go of the sequence it is continuing as soon as
-BLACS finds the queue empty, so under `nothing` every submission would start a
-sequence of its own.
+one buffered run roughly every second shot is a default one. The status counts
+a `starved` for each time the routine found nothing of its own queued; raise
+`num_buffered_runs` if it keeps climbing.
 
 Those default shots are also what keeps the routine running while the optimiser
 waits. They carry no shot id, so they are not mistaken for its own, and they
@@ -177,7 +178,9 @@ pip install -e .
 
 Needs Python 3.11 or newer, numpy, scipy and scikit-learn. The lyse routine
 additionally needs `lyse`, `runmanager` and `labscript_utils`, which a labscript
-suite installation already provides.
+suite installation already provides. It reads lyse's `shot_id` column and asks
+for one shot at a time, so it needs a lyse that has both; an older one refuses
+the request and says so.
 
 ## Tests
 

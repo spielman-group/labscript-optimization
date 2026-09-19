@@ -75,7 +75,7 @@ class FakeInterface:
 
 class RefusingInterface(FakeInterface):
     def check_ready(self):
-        raise RuntimeError("runmanager's empty-queue policy is 'nothing'")
+        raise RuntimeError('runmanager reports an error in its globals')
 
 
 @pytest.fixture
@@ -176,7 +176,7 @@ def test_a_runmanager_that_cannot_sustain_the_session_is_refused(config_file):
     sent = run([('configure', config_file)], RefusingInterface)
     kind, payload = sent[-1]
     assert kind == 'error'
-    assert 'empty-queue policy' in payload
+    assert 'error in its globals' in payload
 
 
 def test_a_status_before_configuring_is_answered_with_nothing(config_file):

@@ -61,27 +61,13 @@ history dies with it and a new session starts from nothing.
 `min` and `max` in a parameter table keep those spellings; `minimum` and
 `maximum` are not accepted.
 
-## 3. Remove the tag globals, and set the empty-queue policy
+## 3. Remove the tag globals
 
 **Delete `mloop_session` and `mloop_iteration` from runmanager.** The old
 plugin stamped them on every shot so it could recognise its own results. A
 shot is now identified by the id runmanager mints for its queue row and writes
-into the shot file, so there is nothing for you to create and nothing to keep
-in step.
-
-**Set runmanager's empty-queue policy to "default labscript".** A session
-refuses to start otherwise, and says so. Two things go wrong under the
-"nothing" policy, and only the first is obvious:
-
-- Nothing reaches lyse the first time the queue empties, so the routine is
-  never invoked again and the optimisation stops without saying so.
-- runmanager lets go of the sequence it is continuing as soon as BLACS finds
-  the queue empty, so every submission would start a sequence of its own and
-  a run would be scattered across one sequence per shot.
-
-This also means default shots run between your optimiser's shots, which is
-what keeps the apparatus busy and the routine running while the optimiser
-waits. They carry no shot id, so they are never mistaken for its own.
+into the shot file, which lyse reads as the `shot_id` column, so there is
+nothing for you to create and nothing to keep in step.
 
 ## 4. Check `num_buffered_runs`
 
@@ -90,9 +76,10 @@ want. BLACS asks for its next shot as soon as it finishes the last, which is
 before the optimiser has seen the cost and proposed a replacement — so a queue
 holding only one of its shots is empty at precisely that moment and runmanager
 gives BLACS a default shot instead. At one buffered run roughly every second
-shot is a default one.
+shot is a default one. Those shots carry no shot id, so they are never
+mistaken for the optimiser's own.
 
-The routine reports a `starved` count for the times it found nothing of its
+The status counts a `starved` for each time the routine found nothing of its
 own queued. If it keeps climbing, the fit is taking longer than a shot: raise
 `num_buffered_runs`.
 
@@ -140,12 +127,20 @@ own queued. If it keeps climbing, the fit is taking longer than a shot: raise
 
 ## What the routine reports
 
-Written onto each shot the optimiser owns, so they come back as dataframe
-columns under `labscript_optimization` — `df[('labscript_optimization',
-'best_cost')]` and so on. The keys are `session`, `phase`, `submitted`,
-`completed`, `awaiting`, `dropped`, `starved`, `best_cost`, `best_params`,
-`best_shot_id` and `stopped`. A key the session has nothing to report for yet
-reads as `NaN`.
+Where the search has got to is written onto each shot the optimiser owns, so
+it comes back as dataframe columns under `labscript_optimization` —
+`df[('labscript_optimization', 'best_cost')]` and so on. The keys are `phase`,
+`best_cost`, `best_params`, `best_shot_id` and `stopped`. A key the session has
+nothing to report for yet reads as `NaN`.
+
+The session's counters — `submitted`, `completed`, `awaiting`, `dropped` and
+`starved` — are one answer for the whole run rather than anything about a shot,
+so they are not written onto every shot of it. `optimise` returns the whole
+status, so a routine that wants them prints it:
+
+```python
+print(optimisation.optimise('mloop_config.toml'))
+```
 
 `dropped` counts shots runmanager no longer expects to produce anything —
 cancelled, unable to compile, or gone. A few over a long run are ordinary; a

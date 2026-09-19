@@ -1,9 +1,8 @@
 """Reading a cost out of the lyse dataframe, and handing it to the worker.
 
 lyse labels its columns with a MultiIndex, so an analysis result is the column
-``('routine', 'result')``. The shot's identifier is not a column at all: lyse
-does not carry it into the dataframe, so it is read from the shot file that
-``filepath`` names.
+``('routine', 'result')``. The shot's identifier is a column of its own, empty
+for a shot runmanager did not queue.
 
 What the routine then does with that cost is the other half. Those tests drive
 the entry point against a pair of fake pipes and a fake process, so they say
@@ -78,16 +77,20 @@ def frame(rows):
 
 @pytest.fixture
 def shot(tmp_path):
-    """Make a dataframe row with a real shot file behind it."""
+    """Make a dataframe row with a real shot file behind it.
+
+    lyse reads the identifier runmanager wrote into the file as a column, and
+    an empty one for a shot that carries none, so the row is where the routine
+    reads it. The file itself is there for the results written back onto it.
+    """
     made = []
 
     def build(shot_id='row-3', cost=7.0, uncer=None, with_cost=True):
         path = tmp_path / f'shot{len(made)}.h5'
         made.append(path)
-        with h5py.File(path, 'w') as f:
-            if shot_id is not None:
-                f.attrs['shot_id'] = shot_id
-        row = {'filepath': str(path)}
+        with h5py.File(path, 'w'):
+            pass
+        row = {'filepath': str(path), 'shot_id': shot_id}
         if with_cost:
             row[('zTOF', 'Nb')] = cost
         if uncer is not None:
@@ -136,18 +139,18 @@ def test_the_most_recent_shot_is_the_one_read(config, shot):
 
 
 def test_a_shot_carrying_no_identifier_is_not_ours(config, shot):
-    """A user's own shot, or one of runmanager's defaults, has no shot_id."""
-    assert extract(frame([shot(shot_id=None)]), config) is None
+    """A user's own shot, or one of runmanager's defaults, reads as empty.
+
+    Empty rather than missing: lyse writes the column for every shot.
+    """
+    assert extract(frame([shot(shot_id='')]), config) is None
 
 
-def test_a_shot_whose_file_has_gone_is_not_ours(config, shot, tmp_path):
-    row = shot()
-    (tmp_path / 'shot0.h5').unlink()
-    assert extract(frame([row]), config) is None
-
-
-def test_a_dataframe_with_no_filepath_yields_nothing(config):
-    assert extract(frame([{('zTOF', 'Nb'): 5.0}]), config) is None
+def test_a_dataframe_with_no_shot_id_column_yields_nothing(config):
+    """A dataframe without the column claims nothing, rather than claiming
+    every shot and matching costs to proposals at random.
+    """
+    assert extract(frame([{'filepath': '/p', ('zTOF', 'Nb'): 5.0}]), config) is None
 
 
 def test_an_empty_dataframe_yields_nothing(config, shot):
@@ -169,22 +172,6 @@ def test_a_shot_carrying_images_deepens_every_column_label(config, shot):
     row[('side', 'atoms', 'exposure_time')] = 0.01
     shot_id, cost, _, _ = extract(frame([row]), config)
     assert shot_id == 'row-3' and cost == -7.0
-
-
-@pytest.mark.parametrize('failure', [OSError, KeyError, RuntimeError, ValueError])
-def test_an_unreadable_shot_file_is_not_ours(config, shot, monkeypatch, failure):
-    """A damaged or half-written shot file cannot be identified either.
-
-    h5py has several ways of saying so, and none of them is a reason to take
-    the whole session down through lyse's error path.
-    """
-
-    def damaged(*args, **kwargs):
-        raise failure('the shot file cannot be read')
-
-    row = shot()
-    monkeypatch.setattr(h5py, 'File', damaged)
-    assert extract(frame([row]), config) is None
 
 
 class Pipe:
@@ -285,6 +272,27 @@ def session(monkeypatch, tmp_path):
     yield types.SimpleNamespace(storage=storage, path=path, worker=to_worker)
     # Leaves the atexit hook that optimise() registered with nothing to stop.
     storage.optimisation_worker = None
+
+
+def test_only_the_shot_it_was_called_on_is_asked_of_lyse(session, shot, monkeypatch):
+    """A run is one sequence, and it grows by a row every time the routine is
+    called on one of its shots. Asking for the sequence would make each
+    invocation cost more than the one before, for rows nothing reads: the
+    routine reads the most recent shot and no other.
+    """
+    lyse = pytest.importorskip('lyse')
+    asked = []
+
+    def data(**kwargs):
+        asked.append(kwargs)
+        return frame([shot()])
+
+    monkeypatch.setattr(lyse, 'data', data)
+    monkeypatch.setattr(lyse, 'routine_storage', session.storage)
+
+    routine_module.optimise(session.path)
+
+    assert asked == [{'n_sequences': 1, 'n_shots': 1}]
 
 
 def test_a_shot_with_no_usable_cost_is_reported_as_a_bad_observation(session, shot):
@@ -425,7 +433,29 @@ def test_the_status_is_written_onto_the_shot_as_lyse_results(session, shot, resu
     assert written['best_cost'] == -7.0
     assert list(written['best_params']) == [0.25]
     assert written['best_shot_id'] == 'row-3'
-    assert written['submitted'] == 1
+    assert written['phase'] == 'main'
+
+
+def test_the_sessions_own_counters_are_not_written_onto_every_shot(
+    session, shot, results
+):
+    """They are one answer for the whole run rather than anything about a shot,
+    and an attribute overwritten shot after shot grows the file for nothing. A
+    routine that wants them has them: optimise returns the whole status.
+    """
+    row = shot()
+    session.worker.replies.append(('status', status()))
+    answer = routine_module.optimise(session.path, session.storage, frame([row]))
+    # Spelt out rather than read back from the module that wrote them: these
+    # names are the promise, df[('labscript_optimization', 'best_cost')].
+    assert set(results(row)) == {
+        'phase',
+        'best_cost',
+        'best_params',
+        'best_shot_id',
+        'stopped',
+    }
+    assert answer['starved'] == 0 and answer['submitted'] == 1
 
 
 def test_a_value_the_session_does_not_have_yet_is_written_as_nan(

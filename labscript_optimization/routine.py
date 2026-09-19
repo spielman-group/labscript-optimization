@@ -6,9 +6,9 @@ A lab analysis routine is two lines::
     optimisation.optimise('mloop_config.toml')
 
 Adding the routine to lyse starts the session; removing it, restarting it, or
-reaching the run budget stops it. Progress is written onto each shot the
-optimiser can claim, as lyse results under :data:`RESULTS_GROUP`, so the best
-cost and the rest of the session's status are columns of the dataframe.
+reaching the run budget stops it. :data:`SHOT_RESULTS` is written onto each
+shot the optimiser can claim, as lyse results under :data:`RESULTS_GROUP`, so
+the best cost and where the search has got to are columns of the dataframe.
 
 The routine itself does almost nothing: it reads the cost for the shot it was
 called on, hands it to the worker, and waits for the worker to say where the
@@ -22,13 +22,18 @@ import sys
 
 import numpy as np
 
-from .runmanager_interface import SHOT_ID_ATTR
-
 #: The lyse results group the session's status is written to, and so the first
 #: level of every column it produces: ``df[('labscript_optimization',
 #: 'best_cost')]``. lyse names a routine's group after the routine's file, so a
 #: lab collides with this only by naming a routine after the package it imports.
 RESULTS_GROUP = "labscript_optimization"
+
+#: The status keys written onto a shot, and so the columns the session
+#: produces: where the search has got to, and whether it has stopped. The rest
+#: of the status is the session's bookkeeping, one answer for the whole run
+#: that would be repeated onto every shot of it; :func:`optimise` returns all
+#: of it.
+SHOT_RESULTS = ("phase", "best_cost", "best_params", "best_shot_id", "stopped")
 
 #: Seconds the routine waits for the worker to answer the message it has just
 #: sent. Generous for an answer that is a dictionary and a socket hop, and
@@ -36,63 +41,49 @@ RESULTS_GROUP = "labscript_optimization"
 REPLY_TIMEOUT = 2.0
 
 
-def latest(dataframe, key):
-    """The most recent value of one column, or ``None`` if there is no such column.
+def latest(dataframe):
+    """The most recent shot, as a one-row frame.
 
-    ``key`` may be shallower than the dataframe's MultiIndex, whose padding
-    levels are empty.
+    A frame rather than the row ``dataframe.iloc[-1]``: pandas resolves a key
+    shallower than the column MultiIndex against a frame's columns, whatever
+    the frame's depth, where against a row the same key names a sub-Series.
     """
-    if key not in dataframe:
-        return None
-    return dataframe[key].iloc[-1]
+    return dataframe.iloc[[-1]]
 
 
-def shot_id_of(filepath) -> str | None:
-    """The identifier runmanager wrote into a shot file, if it wrote one.
+def value(shot, key):
+    """One column of a one-row frame, or ``None`` if there is no such column.
 
-    lyse does not carry this into its dataframe, so it is read from the file.
-    ``None`` covers both a shot that carries no identifier -- a user's own, or
-    one of runmanager's defaults -- and one whose file cannot be read at all.
+    ``key`` may be shallower than the frame's MultiIndex, whose padding levels
+    are empty.
     """
-    import h5py
-
-    try:
-        with h5py.File(filepath, "r") as f:
-            shot_id = f.attrs.get(SHOT_ID_ATTR)
-    except (OSError, KeyError, RuntimeError, ValueError):
-        # How h5py reports a file that is missing, still being written or
-        # damaged. Named rather than bare: an interrupt or an out-of-memory
-        # error says nothing about the shot and must propagate.
+    if key not in shot:
         return None
-    if shot_id is None:
-        return None
-    if isinstance(shot_id, bytes):
-        shot_id = shot_id.decode()
-    return str(shot_id)
+    return shot[key].iloc[-1]
 
 
 def extract(dataframe, config):
     """Read the shot id and cost of the most recent shot.
 
-    Returns ``(shot_id, cost, uncer, bad)``, or ``None`` when the shot carries
-    no identifier and so belongs to somebody else. The sign flip for
-    ``maximize`` happens here, once, so everything downstream minimises.
+    Returns ``(shot_id, cost, uncer, bad)``, or ``None`` when the shot belongs
+    to somebody else: lyse reads the identifier runmanager wrote into the file
+    as a column, and it is empty for a shot runmanager did not queue -- a
+    user's own, or one of runmanager's defaults. The sign flip for ``maximize``
+    happens here, once, so everything downstream minimises.
     """
     if not len(dataframe):
         return None
 
-    filepath = latest(dataframe, "filepath")
-    if filepath is None:
-        return None
-    shot_id = shot_id_of(filepath)
-    if shot_id is None:
+    shot = latest(dataframe)
+    shot_id = value(shot, "shot_id")
+    if shot_id is None or shot_id == "":
         return None
 
     cost, uncer = float("nan"), None
-    raw = latest(dataframe, config.cost_key)
+    raw = value(shot, config.cost_key)
     if raw is not None:
         cost = float(raw)
-        measured = latest(dataframe, config.uncertainty_key)
+        measured = value(shot, config.uncertainty_key)
         if measured is not None and np.isfinite(float(measured)):
             uncer = float(measured)
 
@@ -103,15 +94,15 @@ def extract(dataframe, config):
 
 
 def save_status(filepath, status) -> None:
-    """Write the session's status onto one shot, as lyse results.
+    """Write :data:`SHOT_RESULTS` onto one shot, as lyse results.
 
     lyse reads the attributes of ``/results/<group>`` back as dataframe
-    columns, so each key of the status becomes ``df[(RESULTS_GROUP, key)]``
-    against the shot the routine ran on. Only attributes are read that way,
-    which is why ``best_params`` is saved with ``save_result`` although it is a
-    list -- ``save_result_array`` would write it as a dataset, into a part of
-    the file the dataframe never looks at. A value the session does not have
-    yet is written as NaN, because an h5 attribute cannot be ``None``.
+    columns, so each key written becomes ``df[(RESULTS_GROUP, key)]`` against
+    the shot the routine ran on. Only attributes are read that way, which is
+    why ``best_params`` is saved with ``save_result`` although it is a list --
+    ``save_result_array`` would write it as a dataset, into a part of the file
+    the dataframe never looks at. A value the session does not have yet is
+    written as NaN, because an h5 attribute cannot be ``None``.
 
     A write that fails is reported to lyse's output and otherwise passed over.
     """
@@ -123,8 +114,9 @@ def save_status(filepath, status) -> None:
         # One open for the whole status. Left to itself each save_result opens
         # and locks the file again, and this runs inline in lyse.
         with run.open("r+"):
-            for name, value in status.items():
-                run.save_result(name, float("nan") if value is None else value)
+            for name in SHOT_RESULTS:
+                reported = status[name]
+                run.save_result(name, float("nan") if reported is None else reported)
     except Exception as exc:
         print(
             f"could not write the optimisation status to {filepath}: {exc!r}",
@@ -194,20 +186,27 @@ def optimise(config_path, storage=None, dataframe=None):
         config_path: The TOML configuration.
         storage: Where to keep the worker between shots. Defaults to
             ``lyse.routine_storage``.
-        dataframe: The shots to read. Defaults to ``lyse.data(n_sequences=1)``.
+        dataframe: The shots to read. Defaults to the shot the routine was
+            called on, asked of lyse.
 
     Returns:
-        The status the worker sends in answer to this invocation, already
-        written onto the shot by :func:`save_status`, or ``None`` if the
-        worker does not answer within :data:`REPLY_TIMEOUT`. On the shot that
-        starts the session the answer is to the configuration this invocation
-        also sent, so it counts a session that has proposed nothing yet.
+        The whole status the worker sends in answer to this invocation, of
+        which :func:`save_status` has written :data:`SHOT_RESULTS` onto the
+        shot, or ``None`` if the worker does not answer within
+        :data:`REPLY_TIMEOUT`. On the shot that starts the session the answer
+        is to the configuration this invocation also sent, so it counts a
+        session that has proposed nothing yet.
     """
     if storage is None or dataframe is None:
         import lyse
 
         storage = lyse.routine_storage if storage is None else storage
-        dataframe = lyse.data(n_sequences=1) if dataframe is None else dataframe
+        if dataframe is None:
+            # One sequence because a run is one sequence, and one shot of it
+            # because only the most recent is read: a sequence grows by a row
+            # every time this is called, and asking for the whole of it would
+            # make each invocation cost more than the one before.
+            dataframe = lyse.data(n_sequences=1, n_shots=1)
 
     if getattr(storage, "optimisation_worker", None) is None:
         from . import config as config_module
@@ -240,7 +239,7 @@ def optimise(config_path, storage=None, dataframe=None):
     # id is somebody else's, and a session that has proposed nothing has no
     # shot of its own yet at all.
     if observation is not None and status and status.get("submitted"):
-        save_status(latest(dataframe, "filepath"), status)
+        save_status(value(latest(dataframe), "filepath"), status)
     return status
 
 

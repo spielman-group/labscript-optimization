@@ -30,18 +30,15 @@ args = ["y"]
 
 
 class FakeClient:
-    def __init__(self, policy='default_labscript', labscript='/lab/expt.py'):
-        self.policy = policy
+    def __init__(self, labscript='/lab/expt.py'):
         self.labscript = labscript
+        self.broken_globals = False
         self.entries = []
         self.states = {}
         self.refuse = None
 
     def error_in_globals(self):
-        return False
-
-    def get_empty_queue_policy(self):
-        return self.policy
+        return self.broken_globals
 
     def get_labscript_file(self):
         return self.labscript
@@ -88,9 +85,10 @@ def test_a_session_starts_when_runmanager_can_sustain_it(interface):
     interface.check_unchanged()
 
 
-def test_a_policy_that_would_let_the_session_die_silently_is_refused(config):
-    interface = RunmanagerInterface(config, FakeClient(policy='nothing'))
-    with pytest.raises(RuntimeError, match="sequence of its own"):
+def test_a_runmanager_whose_globals_do_not_evaluate_is_refused(interface, client):
+    """Every shot the session went on to submit would fail to compile."""
+    client.broken_globals = True
+    with pytest.raises(RuntimeError, match='error in its globals'):
         interface.check_ready()
 
 
