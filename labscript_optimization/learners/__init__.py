@@ -67,6 +67,14 @@ LEARNERS = _LearnerRegistry(
 #: and the learner that provides it.
 NEEDS_TRAINING = {"gaussian_process": "directed_random"}
 
+#: Learners that evolve a population, and whose budget therefore has to cover
+#: more than one of it. Written out rather than read off the selected learner's
+#: signature, because reading a signature resolves that learner's class: the
+#: registry is lazy so that the lyse process, which loads the configuration and
+#: never builds a learner, does not pay for the scientific stack. The two are
+#: held to each other by a test rather than by one deriving from the other.
+POPULATION_LEARNERS = frozenset({"differential_evolution"})
+
 
 def __getattr__(name):
     if name == "GaussianProcessLearner":
@@ -74,8 +82,8 @@ def __getattr__(name):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def _option_names(name: str) -> set[str]:
-    """The configuration options accepted by one named learner."""
+def _constructor_parameters(name: str):
+    """The constructor signature of one named learner, by parameter name."""
     try:
         cls = LEARNERS[name]
     except KeyError:
@@ -89,13 +97,20 @@ def _option_names(name: str) -> set[str]:
             f"none of them, so every option would be dropped and the learner "
             f"built entirely from its defaults; spell the knobs out"
         )
-    return set(accepted) - {"space", "rng"}
+    return accepted
+
+
+def _option_names(name: str) -> set[str]:
+    """The configuration options accepted by one named learner."""
+    return set(_constructor_parameters(name)) - {"space", "rng"}
 
 
 def validate_options(config) -> None:
-    """Reject a named learner table containing anything its learner ignores.
+    """Hold a configuration to the learner it names.
 
-    A ``[LEARNER.<name>]`` table has one constructor that defines its keys.
+    A ``[LEARNER.<name>]`` table has one constructor that defines its keys, so
+    anything else in it is a knob that learner ignores. And a budget is
+    measured against the population the selected learner will evolve.
     """
     for name, options in config.learner_options.items():
         accepted = _option_names(name)
@@ -106,6 +121,20 @@ def validate_options(config) -> None:
                 f"{', '.join(repr(key) for key in unknown)}. It accepts: "
                 f"{', '.join(sorted(accepted))}."
             )
+
+    if config.max_num_runs is None or config.learner not in POPULATION_LEARNERS:
+        return
+    default = _constructor_parameters(config.learner)["population_size"].default
+    size = int(config.options_for(config.learner).get("population_size", default))
+    if config.max_num_runs < 2 * size:
+        raise ValueError(
+            f"max_num_runs {config.max_num_runs} leaves less than two "
+            f"generations of the {size} members {config.learner!r} evolves, so "
+            f"set it to at least {2 * size} or lower population_size. The "
+            f"first generation is the population itself and the second is the "
+            f"first to evolve it; a second generation cut short evolves some "
+            f"of its slots rather than a generation."
+        )
 
 
 def make_learner(name: str, space, rng, options):

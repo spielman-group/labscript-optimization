@@ -118,7 +118,7 @@ not read either.
 | --- | --- |
 | `random` | Uniform draws. The reference the others are measured against. |
 | `directed_random` | Draws near a previously seen point, chosen from a band of middling costs rather than from the best one, so it explores rather than refines. |
-| `differential_evolution` | Evolves a population. Good on rough landscapes with no useful gradient. |
+| `differential_evolution` | Evolves a population. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds: around eight searches well, and a budget over a thousand shots is worth sixteen. |
 | `gaussian_process` | Fits a Gaussian process and searches its posterior. Runs `directed_random` for its training shots first, and falls back to it for any proposal it cannot make. |
 
 A learner is a function from the observation history to `k` proposals:

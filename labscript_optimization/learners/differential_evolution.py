@@ -31,9 +31,14 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
     Args:
         space: The parameter space to search.
         rng: Source of randomness.
-        population_size: Multiplier on the parameter count; the population
-            holds ``population_size * num_params`` members. How few members
-            will do depends on the strategy: see :data:`STRATEGIES`.
+        population_size: How many members the population holds, which is the
+            literature's NP given directly. How few will do depends on the
+            strategy: see :data:`STRATEGIES`, which sets the floor this
+            refuses below. That floor is a long way under a population that
+            searches well: around eight members is where one stops converging
+            prematurely, and a budget over a thousand shots is worth sixteen.
+            Rules of thumb scaling it with the parameter count are for
+            choosing a number, not the shape of the setting.
         evolution_strategy: Which mutation to use, one of :data:`STRATEGIES`.
         mutation_scale: ``(low, high)`` bounds on the differential weight,
             redrawn each generation.
@@ -51,7 +56,7 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         self,
         space: ParameterSpace,
         rng: np.random.Generator,
-        population_size: int = 15,
+        population_size: int = 8,
         evolution_strategy: str = "best1",
         mutation_scale: Sequence[float] = (0.5, 1.0),
         cross_over_probability: float = 0.7,
@@ -66,16 +71,15 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
                 f"{evolution_strategy!r}"
             )
         self.evolution_strategy = evolution_strategy
-        self.num_members = int(population_size) * space.num_params
+        self.population_size = int(population_size)
         # A mutation draws distinct members from the population minus the slot
         # it is replacing, so it needs one member more than it draws on.
         draws = STRATEGIES[evolution_strategy]
-        if self.num_members < draws + 1:
+        if self.population_size < draws + 1:
             raise ValueError(
                 f"evolution_strategy {evolution_strategy!r} draws on {draws} "
                 f"other members, so it needs a population of at least "
-                f"{draws + 1}; population_size {population_size} over "
-                f"{space.num_params} parameters gives {self.num_members}"
+                f"{draws + 1}; population_size is {self.population_size}"
             )
         self.mutation_scale = tuple(float(m) for m in mutation_scale)
         if len(self.mutation_scale) != 2 or not 0 <= self.mutation_scale[0] <= self.mutation_scale[1]:
@@ -107,10 +111,10 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         slot = 0
 
         for obs in usable(history):
-            if len(costs) < self.num_members:
+            if len(costs) < self.population_size:
                 params.append(np.asarray(obs.params, dtype=float))
                 costs.append(float(obs.cost))
-                if len(costs) == self.num_members:
+                if len(costs) == self.population_size:
                     init_spread = float(np.std(costs))
                     slot = 0
                 continue
@@ -119,7 +123,7 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
                 params[slot] = np.asarray(obs.params, dtype=float)
                 costs[slot] = float(obs.cost)
             slot += 1
-            if slot == self.num_members:
+            if slot == self.population_size:
                 slot = 0
                 # A population whose costs have collapsed together has found a
                 # minimum and stopped exploring; start again elsewhere.
@@ -136,7 +140,7 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         return self.space.uniform(self.rng, 1, best, self.trust_region)[0]
 
     def mutant(self, slot: int, population: np.ndarray, best: int, scale: float):
-        others = np.delete(np.arange(self.num_members), slot)
+        others = np.delete(np.arange(self.population_size), slot)
         drawn = population[
             self.rng.choice(
                 others, size=STRATEGIES[self.evolution_strategy], replace=False
@@ -181,14 +185,14 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         params, costs, slot = self.replay(history)
         proposals = np.empty((k, self.space.num_params))
         for i in range(k):
-            if len(costs) < self.num_members:
+            if len(costs) < self.population_size:
                 # Still filling: each proposal is another founding member. The
                 # ones already proposed in this batch are not yet members, so
                 # they cannot be drawn around, which only costs some locality.
                 proposals[i] = self.sample_new_member(params, costs)
             else:
                 proposals[i] = self.trial(
-                    (slot + i) % self.num_members,
+                    (slot + i) % self.population_size,
                     np.array(params),
                     np.array(costs),
                 )

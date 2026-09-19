@@ -5,7 +5,7 @@ runmanager globals the old plugin needed are no longer used. Everything else
 carries over: the same parameter and globals tables, the same cost column, the
 same algorithms.
 
-Work through the four steps below. Each says what to change and why, so you can
+Work through the five steps below. Each says what to change and why, so you can
 tell whether it applies to your lab.
 
 ## 1. Install it, and point lyse at the new routine
@@ -94,6 +94,23 @@ never writes a shot id into them.
 The status counts a `starved` for each time the routine found nothing of its
 own queued. If it keeps climbing, the fit is taking longer than a shot: raise
 `num_buffered_runs`.
+
+## 5. Read `population_size` again
+
+**`population_size` is the number of members in the differential evolution
+population.** It is NP as the literature gives it: a file saying
+`population_size = 15` is asking for fifteen members, over however many
+parameters. Nothing is converted and nothing is refused on account of the
+number you already have — at three parameters, fifteen members is a smaller
+population than M-LOOP would have built and a better one than that. Around
+eight members is where a population stops converging prematurely, and a budget
+over about a thousand shots is worth sixteen; the strategy's own minimum, three
+members for `best1`, is refused below and is nowhere near enough to search
+with.
+
+A budget has to cover two whole generations of that population, so
+`max_num_runs` below `2 × population_size` is refused: the first generation is
+the population itself and the second is the first to evolve it.
 
 ## What stays the same
 

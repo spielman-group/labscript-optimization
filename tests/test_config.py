@@ -498,3 +498,28 @@ def test_the_gaussian_process_knob_is_not_spelt_generation_size(text):
     """
     with pytest.raises(ValueError, match='generation_size'):
         config_module.loads(text)
+
+
+# --- the budget and the population -----------------------------------------
+
+
+DE = MINIMAL + '[MLOOP]\nlearner = "differential_evolution"\n'
+
+
+@pytest.mark.parametrize(
+    'written, refused, accepted',
+    [('', 15, 16), ('population_size = 5\n', 9, 10)],
+    ids=['the default population', 'a population the file sizes'],
+)
+def test_a_budget_below_two_whole_generations_is_refused(written, refused, accepted):
+    """One generation is the population itself; the second is the first to
+    evolve it, and a configuration that cannot reach it cannot do what it
+    says."""
+    with pytest.raises(ValueError, match='max_num_runs') as raised:
+        config_module.loads(DE + written + f'max_num_runs = {refused}\n')
+    # Not "nothing evolves below this": between one population and two, a
+    # generation cut short does evolve some of its slots.
+    assert 'cut short' in str(raised.value)
+    assert config_module.loads(
+        DE + written + f'max_num_runs = {accepted}\n'
+    ).max_num_runs == accepted

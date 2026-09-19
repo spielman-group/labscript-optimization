@@ -348,7 +348,7 @@ def one_parameter_space():
 @pytest.mark.parametrize('strategy', ['best1', 'best2', 'rand1', 'rand2'])
 def test_differential_evolution_finds_the_minimum(space, rng, strategy):
     learner = DifferentialEvolutionLearner(
-        space, rng, population_size=5, evolution_strategy=strategy
+        space, rng, population_size=8, evolution_strategy=strategy
     )
     history = run_loop(learner, space, sphere, batches=50, k=4, rng=rng)
     assert min(o.cost for o in history) < 0.05
@@ -386,7 +386,7 @@ def test_every_strategy_evolves_at_its_own_smallest_population(rng, strategy, sm
     )
     history = run_loop(learner, space, sphere, batches=8, k=2, rng=rng)
     # Long past the filling phase, so mutation did the bulk of the proposing.
-    assert len(history) > 2 * learner.num_members
+    assert len(history) > 2 * learner.population_size
     assert space.contains(np.array([o.params for o in history])).all()
 
 
@@ -684,12 +684,31 @@ def test_a_learner_is_built_from_a_table_holding_other_learners_knobs(space):
         space,
         'differential_evolution',
         {
-            'population_size': 4,
+            'population_size': 15,
             'cost_has_noise': False,
             'length_scale_bounds': (1e-3, 1e3),
         },
     )
-    assert build(config).num_members == 4 * space.num_params
+    # And population_size is the number of members, not a multiplier on the
+    # parameter count: fifteen here, over however many parameters.
+    assert build(config).population_size == 15
+
+
+def test_the_learners_with_a_population_are_the_ones_named_as_such(space):
+    """The budget check reads a list of names rather than the signatures.
+
+    It has to: resolving the selected learner's class to read its signature is
+    the import the registry's laziness exists to avoid. So the two are held to
+    each other here instead -- a learner with a population left off the list
+    has its budget unchecked, and a name on the list that takes no population
+    raises at load.
+    """
+    with_a_population = {
+        name
+        for name in learners.LEARNERS
+        if 'population_size' in learners._option_names(name)
+    }
+    assert with_a_population == learners.POPULATION_LEARNERS
 
 
 def test_the_default_learner_comes_back_wrapped_in_its_training_phase(space):
