@@ -24,8 +24,6 @@ import numpy as np
 
 from .runmanager_interface import SHOT_ID_ATTR
 
-WORKER_PATH = os.path.join(os.path.dirname(__file__), "worker.py")
-
 #: The lyse results group the session's status is written to, and so the first
 #: level of every column it produces: ``df[('labscript_optimization',
 #: 'best_cost')]``. lyse names a routine's group after the routine's file, so a
@@ -139,6 +137,11 @@ def start_worker(config_path, process_tree=None):
 
     Returns ``(to_worker, from_worker, popen)``.
     """
+    # zprocess sends the class itself to the child, so the parent needs it.
+    # Imported here rather than above so that a routine which never starts a
+    # session does not pay for the learners the worker brings with it.
+    from .worker import Worker
+
     if process_tree is None:
         from labscript_utils.ls_zprocess import ProcessTree
 
@@ -147,11 +150,12 @@ def start_worker(config_path, process_tree=None):
         # goes away with it.
         process_tree = ProcessTree.instance()
 
-    to_worker, from_worker, popen = process_tree.subprocess(
-        WORKER_PATH, startup_timeout=30
-    )
+    worker = Worker(process_tree, startup_timeout=30)
+    to_worker, from_worker = worker.start()
     to_worker.put(("configure", os.path.abspath(config_path)))
-    return to_worker, from_worker, popen
+    # The Popen, not the Process: stopping the worker escalates from a
+    # request to terminate and then to kill, which zprocess does not do.
+    return to_worker, from_worker, worker.child
 
 
 def _drain(from_worker):

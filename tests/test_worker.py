@@ -1,17 +1,16 @@
 """The worker's message loop, driven through fake pipes.
 
-Exercised directly rather than through a spawned process, so these tests say
-what the protocol is without depending on zprocess starting anything.
+The pipes zprocess attaches to a worker are attributes, so all but the last of
+these tests put fakes in their place and call the child's entry point in this
+process: they say what the protocol is without depending on zprocess starting
+anything.
 """
 
-import os
 import queue
-import subprocess
-import sys
 
 import pytest
 
-from labscript_optimization.worker import serve
+from labscript_optimization.worker import Worker
 
 CONFIG = """
 [ANALYSIS]
@@ -93,10 +92,21 @@ def clear_instances():
     FakeInterface.instances.clear()
 
 
+def driven(messages, interface=FakeInterface):
+    """A worker holding fake pipes, its inbox already filled.
+
+    Nothing here starts a child, so the process tree is immaterial.
+    """
+    worker = Worker(None, interface_factory=interface)
+    worker.from_parent = Pipe(list(messages) + [('quit', None)])
+    worker.to_parent = Pipe()
+    return worker
+
+
 def run(messages, interface=FakeInterface):
-    to_parent = Pipe()
-    serve(Pipe(list(messages) + [('quit', None)]), to_parent, interface)
-    return to_parent.sent
+    worker = driven(messages, interface)
+    worker.run()
+    return worker.to_parent.sent
 
 
 def test_configuring_fills_the_queue(config_file):
@@ -146,19 +156,15 @@ def test_the_reply_is_sent_before_runmanager_is_asked_which_shots_remain(config_
     replying would hand lyse the very delay the worker exists to absorb, once
     per shot. Every question to runmanager must come after the reply.
     """
-    to_parent = Pipe()
     outbox_when_asked = []
 
     class NotesTheOutbox(FakeInterface):
         def shot_status(self, shot_ids):
-            outbox_when_asked.append([kind for kind, _ in to_parent.sent])
+            outbox_when_asked.append([kind for kind, _ in worker.to_parent.sent])
             return super().shot_status(shot_ids)
 
-    serve(
-        Pipe([('configure', config_file), ('status', None), ('quit', None)]),
-        to_parent,
-        NotesTheOutbox,
-    )
+    worker = driven([('configure', config_file), ('status', None)], NotesTheOutbox)
+    worker.run()
 
     # Configuring has nothing awaiting to ask about, so the one question comes
     # on the second invocation -- by which time that invocation's reply, and
@@ -192,33 +198,44 @@ def test_an_unknown_command_is_an_error(config_file):
 
 
 def test_a_failure_stops_the_session_proposing(config_file):
+    """Carrying on past a runmanager that is not doing what it should would
+    spend the run budget on shots nobody is counting. The error reaches the
+    routine, and the session it stopped says so from then on.
+    """
+
     class FailsOnSubmit(FakeInterface):
         def submit(self, proposals):
             raise RuntimeError('runmanager went away')
 
-    sent = run([('configure', config_file)], FailsOnSubmit)
-    assert any(kind == 'error' for kind, _ in sent)
+    sent = run([('configure', config_file), ('status', None)], FailsOnSubmit)
+    assert [kind for kind, _ in sent] == ['status', 'error', 'status']
+    assert 'runmanager went away' in sent[1][1]
+    assert sent[-1][1]['stopped'] == 'stopped by an error'
 
 
 def test_quit_returns_without_replying(config_file):
     assert run([]) == []
 
 
-def test_the_worker_runs_as_a_script():
-    """zprocess executes the worker file directly, with no package around it.
+def test_the_worker_starts_in_a_process_of_its_own(monkeypatch, tmp_path):
+    """The one test that spawns anything: zprocess enters the child through a
+    wrapper module of its own, which imports this class by name on the path
+    the parent hands over. An import that does not resolve there looks like
+    the child never connecting rather than like an import error, so the real
+    thing is pinned here, where the message is plain.
 
-    Relative imports fail there, and the failure looks like the child never
-    connecting rather than like an import error, so it is pinned here where
-    the message is plain.
+    The path handed over is the parent's own ``sys.path``, not the child's
+    working directory, which is what the run from a directory the package
+    cannot be found from says.
     """
-    from labscript_optimization.worker import __file__ as worker_file
+    import zprocess
 
-    finished = subprocess.run(
-        [sys.executable, worker_file],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env={**os.environ, 'LABSCRIPT_NO_ERROR_DIALOG': '1'},
-    )
-    assert 'ZPROCESS_PARENTINFO' in finished.stderr, finished.stderr
-    assert 'ImportError' not in finished.stderr, finished.stderr
+    monkeypatch.chdir(tmp_path)
+    worker = Worker(zprocess.ProcessTree(allow_insecure=True), startup_timeout=60)
+    to_worker, from_worker = worker.start()
+    try:
+        to_worker.put(('status', None))
+        assert from_worker.get(timeout=60) == ('status', {})
+    finally:
+        to_worker.put(('quit', None))
+        assert worker.child.wait(timeout=60) == 0
