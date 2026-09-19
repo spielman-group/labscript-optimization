@@ -9,6 +9,7 @@ from labscript_optimization.session import Session
 BASE = """
 [ANALYSIS]
 cost_key = ["r", "c"]
+maximize = {maximize}
 groups = ["G"]
 [MLOOP]
 session = "s"
@@ -22,9 +23,13 @@ max = 1.0
 """
 
 
-def make_config(buffered=3, **extra):
+def make_config(buffered=3, maximize=False, **extra):
     lines = '\n'.join(f'{k} = {v}' for k, v in extra.items())
-    return config_module.loads(BASE.format(buffered=buffered, extra=lines))
+    return config_module.loads(
+        BASE.format(
+            buffered=buffered, extra=lines, maximize='true' if maximize else 'false'
+        )
+    )
 
 
 class FakeRunmanager:
@@ -349,6 +354,36 @@ def test_status_reports_progress(session, runmanager):
     assert status['best_cost'] == 2.0
     assert status['best_shot_id'] == 'shot-0'
     assert status['stopped'] is None
+
+
+def test_a_maximised_best_cost_is_reported_in_the_labs_own_sign(runmanager):
+    """A lab maximising a figure of merit reads back what it measured.
+
+    Two measurements rather than one, because one would prove only that a
+    number was negated somewhere. The larger of the two says the session
+    minimised its way to the right shot, and the sign it comes back in says
+    the flip the routine made on the way in was undone on the way out.
+    """
+    session = Session(make_config(maximize=True), runmanager)
+    session.refill()
+    # The costs the routine hands over, flipped once so the session
+    # minimises: measurements of 3.0 and 7.0.
+    session.record('shot-0', -3.0, None, False)
+    session.record('shot-1', -7.0, None, False)
+
+    status = session.status()
+    assert (status['best_cost'], status['best_shot_id']) == (7.0, 'shot-1')
+
+
+def test_a_minimised_best_cost_is_reported_as_it_was_measured(runmanager):
+    """The mirror, which a session negating unconditionally would fail."""
+    session = Session(make_config(), runmanager)
+    session.refill()
+    session.record('shot-0', 3.0, None, False)
+    session.record('shot-1', 7.0, None, False)
+
+    status = session.status()
+    assert (status['best_cost'], status['best_shot_id']) == (3.0, 'shot-0')
 
 
 def test_an_empty_queue_at_refill_is_counted(runmanager):

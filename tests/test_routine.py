@@ -678,13 +678,13 @@ def test_the_status_is_written_onto_the_shot_as_lyse_results(
             'status',
             (
                 (True,),
-                status(best_cost=-7.0, best_params=[0.25], best_shot_id='row-3'),
+                status(best_cost=7.0, best_params=[0.25], best_shot_id='row-3'),
             ),
         )
     )
     analysed(row)
     written = results(row)
-    assert written['best_cost'] == -7.0
+    assert written['best_cost'] == 7.0
     assert list(written['best_params']) == [0.25]
     assert written['best_shot_id'] == 'row-3'
     assert written['phase'] == 'main'

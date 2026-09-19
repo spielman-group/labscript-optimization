@@ -192,8 +192,19 @@ class Session:
         """A snapshot for the routine to write back as lyse results.
 
         ``None`` means the session has nothing to report for that key yet.
+
+        ``best_cost`` is in the units and sign of the lab's own cost column,
+        beside a ``best_params`` in real units: under ``maximize`` a
+        measurement of 7 is reported as 7.
         """
         best = self.best
+        # The routine flips a maximised quantity once on the way in, so that
+        # everything here minimises. This is the mirror of that flip, and the
+        # only place it is undone: minimising is the package's own business
+        # and has no place in a column a physicist reads.
+        best_cost = None if best is None else best.cost
+        if best_cost is not None and self.config.maximize:
+            best_cost = -best_cost
         return {
             "session": self.config.session,
             "phase": self.learner.last_phase,
@@ -203,7 +214,7 @@ class Session:
             "dropped": len(self.dropped),
             "blocked": len(self.blocked),
             "starved": self.starved,
-            "best_cost": None if best is None else best.cost,
+            "best_cost": best_cost,
             "best_params": None if best is None else best.params.tolist(),
             "best_shot_id": None if best is None else best.shot_id,
             "stopped": self.stopped,

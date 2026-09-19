@@ -130,7 +130,8 @@ def extract(shot, config):
     there does not make the shot the session's -- runmanager mints one for
     every row it compiles, a user's own shots included -- and which ids belong
     to the session is the session's own answer. The sign flip for ``maximize``
-    happens here, once, so everything downstream minimises.
+    happens here, on the way in, so everything downstream minimises; the
+    session puts it back in the best cost it reports.
     """
     shot_id = value(shot, "shot_id")
     if shot_id is None or shot_id == "":
