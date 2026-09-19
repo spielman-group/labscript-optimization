@@ -41,11 +41,12 @@ def _make(name: str, space, rng, options):
         raise ValueError(
             f"unknown learner {name!r}; choose one of {sorted(LEARNERS)}"
         ) from None
-    accepted = inspect.signature(cls).parameters
     # A shared table carries knobs for every learner, so pass on the ones this
-    # learner actually takes rather than making the user split them by hand.
-    # The question is what the constructor accepts, which is its parameters and
-    # nothing else: a name it happens to use as a local variable is not a knob.
+    # learner actually takes. What it takes is its signature and nothing wider:
+    # a name the constructor happens to use as a local variable is not a knob,
+    # and letting one through blames the shared table for a collision the user
+    # cannot see.
+    accepted = inspect.signature(cls).parameters
     return cls(space, rng, **{k: v for k, v in options.items() if k in accepted})
 
 

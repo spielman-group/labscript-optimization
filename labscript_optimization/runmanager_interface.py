@@ -2,25 +2,22 @@
 
 runmanager never stops. Submitting appends to the running queue; there is no
 queue to start, drain or wait on. A shot is complete when runmanager sends it
-to lyse, which is the routine being called on it.
-
-Every shot carries the identifier runmanager minted for its queue row, written
-into the shot file. That is what a cost is matched to a proposal by, and what
-this module asks about when a cost has not arrived. Nothing here counts shots:
-whether a shot is still coming is runmanager's answer, not a number kept on
-this side.
+to lyse, which is the routine being called on it. Every shot carries the
+identifier runmanager minted for its queue row, written into the shot file:
+that is what a cost is matched to a proposal by.
 """
 
 from typing import Iterable, Sequence
 
 import numpy as np
 
-#: Attribute runmanager writes into each shot file it queues.
+#: Attribute runmanager writes into each shot file it queues. Its
+#: ``submit_shots`` reply spells its own key the same way, which
+#: :meth:`RunmanagerInterface.submit` reads as a literal: two namespaces that
+#: agree, not one constant covering both.
 SHOT_ID_ATTR = "shot_id"
 
-#: The state runmanager reports for a shot id it has no row for. It is what a
-#: shot that completed and left the queue reads as, as much as one an operator
-#: deleted, so it says less on its own than the other not-pending states do.
+#: The state runmanager reports for a shot id it has no row for.
 UNKNOWN_SHOT_STATE = "unknown"
 
 #: What runmanager answers for a shot id in that state.
@@ -48,17 +45,12 @@ class RunmanagerInterface:
     def check_ready(self) -> None:
         """Raise unless runmanager can run this session to completion.
 
-        Both checks are about silence rather than error. A queue that empties
-        under the 'nothing' policy produces no further shot, so nothing reaches
-        lyse, so the routine is never called again and the optimisation stops
-        without saying anything. And a labscript file changed underneath a
-        running session would optimise a different experiment without a word.
-
-        The policy check earns its place twice over. Under 'default_labscript'
-        the gap between submissions is filled by a shot runmanager makes
-        itself, which deliberately never becomes the sequence anchor, so a
-        whole run stays one sequence with continuing run numbers. Under
-        'nothing' the anchor is let go the moment BLACS finds the queue empty.
+        Both checks are against silence rather than error. An empty-queue
+        policy of 'nothing' produces no further shot once the queue empties, so
+        nothing reaches lyse and the routine is never called again; it also
+        lets go of the sequence being continued. Under 'default_labscript'
+        runmanager fills the gap with a shot of its own, which never becomes
+        the sequence anchor.
         """
         if self.client.error_in_globals():
             raise RuntimeError(
@@ -70,14 +62,9 @@ class RunmanagerInterface:
         if policy != "default_labscript":
             raise RuntimeError(
                 f"runmanager's empty-queue policy is {policy!r}. Set it to "
-                f"'default_labscript'. Two things go wrong otherwise, and "
-                f"only the first is obvious. Nothing would reach lyse the "
-                f"first time the queue emptied, so the routine would never be "
-                f"invoked again and the session would stop without saying so. "
-                f"And runmanager lets go of the sequence it is continuing as "
-                f"soon as BLACS finds the queue empty, so every submission "
-                f"would start a sequence of its own and the run would be "
-                f"scattered across one sequence per shot."
+                f"'default_labscript': otherwise the session stops silently "
+                f"the first time the queue empties, and every submission "
+                f"starts a sequence of its own."
             )
 
         self.labscript_file = self.client.get_labscript_file()
@@ -97,10 +84,8 @@ class RunmanagerInterface:
 
         A refusal means nothing was queued: submit_shots checks every entry --
         that the globals evaluate, and that each produces exactly one shot --
-        before submitting any of them. So a raise here leaves nothing behind to
-        account for, and the proposals are simply discarded. The learner is a
-        function of the history, which this has not touched, so there is no
-        state to unwind.
+        before submitting any of them, so a raise here leaves nothing behind
+        to account for.
         """
         entries = [
             self.config.globals_for(np.asarray(p, dtype=float)) for p in proposals
@@ -115,15 +100,7 @@ class RunmanagerInterface:
         ``state`` is the queue row's own state, or ``'submitted'`` for a shot
         runmanager has taken on but has no row for yet, ``'blocked'`` for a row
         sitting behind one an operator has to clear, and ``'unknown'`` for an
-        id runmanager does not know. An id it does not answer for at all is
-        filled in the same way, because knowing nothing of a shot is what it
-        means.
-
-        Passed through rather than reduced to the shots still coming. Whether
-        a cost is still on its way is not a property of the queue alone -- a
-        shot that completed has left the queue and reads exactly like one that
-        was deleted -- so the caller needs the state runmanager gave as well as
-        its verdict.
+        id runmanager does not know -- including one it does not answer for.
         """
         shot_ids = list(shot_ids)
         if not shot_ids:

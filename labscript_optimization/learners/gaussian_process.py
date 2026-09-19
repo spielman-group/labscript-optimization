@@ -2,8 +2,7 @@
 
 A scikit-learn :class:`~sklearn.gaussian_process.GaussianProcessRegressor` fit
 to the scaled history, and a multi-start L-BFGS-B search over its posterior for
-the next point. Carried over from M-LOOP, minus the process and queue
-scaffolding that surrounded it there.
+the next point.
 
 Exploration comes from the acquisition, which minimises
 
@@ -12,24 +11,13 @@ Exploration comes from the acquisition, which minimises
 with the weight on the uncertainty stepping 0, 1, 2, ... across successive
 proposals and returning to zero every ``generation_size`` of them. One
 proposal per generation is therefore purely greedy and the rest trade
-predicted cost for a look somewhere less certain.
-
-The schedule advances with the proposals a session actually makes, not with
-the position of a point within a batch: a session settles into asking for one
-point at a time as shots complete, and a schedule keyed on the batch would
-then sit at its first entry forever and never explore. Its position is read
-off the history rather than counted, so a learner handed the same history
-proposes the same thing.
+predicted cost for a look somewhere less certain. The step is read off the
+history, so it advances with the proposals a session makes rather than with a
+point's position within a batch.
 
 Refitting the kernel hyperparameters is the expensive part, so it happens once
 per ``generation_size`` new observations rather than on every call; the
-posterior is refit to all the data every time. The hyperparameters are fitted
-to a whole number of generations of the history, never to the odd observations
-past the last one, so an instance that has been running all session holds the
-kernel one handed the same history for the first time computes, and what it
-remembers is a cache. Short of a full generation there is nothing to hold back:
-the fit takes the whole history and repeats on every arrival until the first
-generation closes.
+posterior is refit to all the data every time.
 """
 
 from typing import Sequence
@@ -60,23 +48,26 @@ class GaussianProcessLearner:
         rng: Source of randomness.
         cost_has_noise: Add a white-noise term to the kernel. Leave this on for
             real data; turning it off asserts the cost is measured exactly.
+            With it off, a history in which only some observations carry an
+            uncertainty gives the rest an ``alpha`` of exactly zero and there
+            is no jitter anywhere else, so two shots at the same parameter
+            vector make the covariance matrix singular and the fit raises
+            ``numpy.linalg.LinAlgError``.
         length_scale_bounds: Bounds on the RBF length scale, in units of the
             unit cube the parameters are scaled onto.
         noise_level_bounds: Bounds on the white-noise level, in units of the
             standardised cost.
         cost_bias: Weight on predicted cost in the acquisition.
         uncer_bias: Weight on predicted uncertainty, one step of the
-            exploration schedule. Successive proposals use 0, 1, 2, ... times
-            this, so raising it buys a wider look at the unexplored parts of
-            the space without moving the greedy proposal of each generation.
-        generation_size: How many proposals a generation holds. It is both the
-            number of new observations accepted before the kernel
-            hyperparameters are refit and the period of the exploration
-            schedule, as it is in M-LOOP.
+            exploration schedule described above. Raising it buys a wider look
+            without moving each generation's greedy proposal.
+        generation_size: How many proposals a generation holds: the period of
+            that schedule, and the number of new observations accepted before
+            the kernel hyperparameters are refit.
         trust_region: Restrict the search to this distance around the best
             point seen.
         minimum_observations: Refuse to propose until the history holds this
-            many usable observations, so the two-phase wrapper keeps using its
+            many usable observations, so a two-phase wrapper keeps using its
             trainer. Defaults to twice the parameter count.
     """
 
@@ -132,7 +123,11 @@ class GaussianProcessLearner:
         return kernel
 
     def _alpha(self, seen: Sequence[Observation], scaler):
-        """Per-point variances for the regressor, in standardised cost units."""
+        """Per-point variances for the regressor, in standardised cost units.
+
+        An observation with no uncertainty of its own gets zero here rather
+        than the scalar floor, because ``uncers_array`` fills it in as exact.
+        """
         uncers = uncers_array(seen)
         if uncers is None:
             return 1e-10
@@ -144,9 +139,9 @@ class GaussianProcessLearner:
         The scaling belongs with them because it sets the units the noise level
         is measured in: restandardising as each observation arrived would leave
         a cached kernel describing units that had since moved. The restart
-        draws are seeded from the length of ``prefix`` rather than from the
-        learner's rng, which would make the search depend on how much this
-        instance had already proposed.
+        draws are seeded from the length of ``prefix``, not from the learner's
+        rng, which would make the search depend on how much this instance had
+        already proposed.
         """
         costs = costs_array(prefix).reshape(-1, 1)
         scaler = StandardScaler().fit(costs)
@@ -168,9 +163,10 @@ class GaussianProcessLearner:
         if len(seen) < self.minimum_observations:
             return False
 
-        # Hyperparameters come from whole generations, so that refitting once a
-        # generation is a saving rather than a record of when this instance
-        # last looked. Short of one generation there is nothing to hold back.
+        # Hyperparameters come from whole generations, so that an instance that
+        # has been fitting all session holds the kernel a fresh one handed the
+        # same history computes, and what it keeps is a cache. Short of one
+        # generation there is nothing to hold back.
         whole = len(seen) - len(seen) % self.generation_size
         prefix = seen[:whole] if whole else seen
         # Keyed on which observations they were fitted to and not how many: a
@@ -247,10 +243,9 @@ class GaussianProcessLearner:
         point in a batch with a high uncertainty weight chases the same
         unexplored corner and the batch is spent on one location.
 
-        The conditioned fit is returned rather than stored. Invented points
-        never reach the learner, so predict() describes the measured data
-        however a batch turns out, including one abandoned halfway by a
-        minimiser that gave up.
+        Returned rather than stored, so that invented points never reach the
+        learner and :meth:`predict` describes the measured data however a batch
+        turns out.
         """
         mean = regressor.predict(np.atleast_2d(scaled_point))
         alpha = regressor.alpha
@@ -284,10 +279,11 @@ class GaussianProcessLearner:
         regressor = self.regressor
         proposals = np.empty((k, self.space.num_params))
         for i in range(k):
-            # Where the exploration schedule stands: one step per proposal,
-            # counting the observations already in hand and then the points
-            # picked so far in this batch. Reading the count off the history
-            # is what makes it survive being asked one point at a time.
+            # Where the exploration schedule stands, counted off the history
+            # and then the points picked so far in this batch. A schedule kept
+            # as a counter over the batch would sit at its greedy first step
+            # for ever in a session that settles into asking for one point at
+            # a time, and uncer_bias would do nothing whatever.
             step = (len(seen) + i) % self.generation_size
             scaled = self._minimise_acquisition(
                 regressor, self.uncer_bias * step, best_params, bounds

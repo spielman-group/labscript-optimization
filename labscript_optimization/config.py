@@ -12,21 +12,14 @@
     several parameters feed one global.
 
 ``[ANALYSIS] groups`` selects which groups take part. A parameter in a group
-that is not listed is left out of the session entirely; one with
-``enable = false`` in a group that is listed is carried, but is not searched
-and gets no mapping, so its runmanager global keeps whatever value it already
-holds.
+that is not listed is left out entirely; one with ``enable = false`` in a group
+that is listed is carried but not searched, and gets no mapping, so its
+runmanager global keeps whatever value it already holds.
 
-Every key is either acted on or rejected. A setting this package does not read
--- one M-LOOP needed, or one spelt wrongly -- stops the load with a message
-naming it: accepting it and ignoring it is how a lab comes to believe an
-option is in force when nothing reads it. No analysislib-mloop file therefore
-loads as it stands: one carried over has to be cut down to the keys this
-module names first.
-
-``[LEARNER.<name>]`` is the exception. Its contents belong to the learners:
-one lab's table serves whichever learner is selected, and the factory passes
-each learner the knobs its constructor takes.
+Every key is either acted on or rejected, so a file carried over from
+analysislib-mloop has to be cut down to the keys this module names before it
+will load. ``[LEARNER.<name>]`` is the exception: its contents belong to the
+learners, and the factory passes each the knobs its constructor takes.
 """
 
 import tomllib
@@ -116,18 +109,17 @@ class GlobalMapping:
     expr: str | None
     args: tuple[str, ...]
     #: ``expr`` as a callable, or ``None`` when the single argument passes
-    #: through unchanged. Built here rather than handed in, so that the only
-    #: way to get one is through the checking in ``__post_init__``.
+    #: through unchanged. Not an init field: the only way to get one is through
+    #: the checking in ``__post_init__``.
     function: Callable[..., Any] | None = field(
         init=False, repr=False, compare=False, default=None
     )
 
     def __post_init__(self) -> None:
-        """Turn ``expr`` into its callable now, so that a bad one stops the load.
+        """Build ``expr``'s callable now, so a bad one raises here.
 
-        Evaluated on demand instead, a mistyped lambda would first be found on
-        a proposal: mid-session, out through the worker's error path, which is
-        the late failure the rest of this module exists to prevent.
+        Left until a proposal needs it, a mistyped lambda would first be found
+        mid-session, out through the worker's error path.
         """
         if self.expr is None:
             return
@@ -159,11 +151,9 @@ class GlobalMapping:
 class Config:
     """Everything a session needs to run.
 
-    ``session`` is a label and nothing more. It is reported among the
-    routine's results so that a row can be attributed to the run that produced
-    it; no matching is done on it. A cost reaches the proposal it answers by
-    the shot id runmanager mints for its queue row, which is unique across
-    runs on its own.
+    ``session`` is a label and nothing more: it is reported among the routine's
+    results so that a row can be attributed to the run that produced it, and
+    nothing is matched on it.
     """
 
     space: ParameterSpace
@@ -176,6 +166,11 @@ class Config:
     num_buffered_runs: int = 3
     num_training_runs: int = 5
     max_num_runs: int | None = None
+    #: Stop after this many completed shots without a better cost. Every
+    #: completed shot counts, including one whose cost was not usable: it is
+    #: still a shot spent, and counting only the usable ones would let a
+    #: session whose detector has died run for ever on the limit meant to
+    #: stop it.
     max_num_runs_without_better_params: int | None = None
     seed: int | None = None
 
@@ -203,23 +198,25 @@ def _present(
     """The ``keys`` this table actually carries, coerced by ``convert``.
 
     A key the file leaves out is left out of the result, so :class:`Config`
-    supplies it from the field's own default. That is why no default appears
-    here: each one is written down once, on the dataclass, and cannot drift
-    away from a second copy kept for the files that omit it.
+    supplies it from the field's own default. No default is written here: each
+    one lives on the dataclass and nowhere else, so none can drift.
     """
-    return {
-        key: table[key] if convert is None else convert(table[key])
-        for key in keys
-        if key in table
-    }
+    present: dict[str, Any] = {}
+    for key in (k for k in keys if k in table):
+        try:
+            present[key] = table[key] if convert is None else convert(table[key])
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"{key} must be readable as {convert.__name__}, got {table[key]!r}"
+            ) from error
+    return present
 
 
 def _reject_unknown(table: dict, allowed: frozenset[str], where: str) -> None:
     """Fail on any key of ``table`` that nothing in this package reads.
 
-    The message names the table as well as the key because the same spelling
-    can be a setting in one table and meaningless in another, and somebody
-    editing a lab file has nothing to go on but what is printed here.
+    The message names the table as well as the key, because the same spelling
+    can be a setting in one table and meaningless in another.
     """
     unknown = sorted(set(table) - allowed)
     if unknown:
@@ -254,12 +251,11 @@ def _require_type(value: Any, kind: type, where: str) -> Any:
 def _check_keys(raw: dict) -> None:
     """Fail on a key nothing would act on, and on a required one left out.
 
-    Accepting one and ignoring it is how a lab comes to believe a setting is
+    Accepting a key and ignoring it is how a lab comes to believe a setting is
     in force when it is not, so a stale file is stopped at the door instead.
-
     Parameter and global tables are checked whether or not their group is
-    active: their shape does not depend on that, and a typo left to load in a
-    switched-off group waits for the day somebody switches the group on.
+    active: a typo left to load in a switched-off group waits for the day
+    somebody switches the group on.
     """
     _reject_unknown(raw, TOP_LEVEL_TABLES, "the top level of the configuration")
     _reject_unknown(raw.get("ANALYSIS", {}), ANALYSIS_KEYS, "[ANALYSIS]")
@@ -277,8 +273,7 @@ def _check_keys(raw: dict) -> None:
                     _require_type(entry["args"], list, f"{where} args")
                 if "enable" in entry:
                     _require_type(entry["enable"], bool, f"{where} enable")
-    # [LEARNER.<name>] is left alone: those knobs are the learners' own, and
-    # the factory takes the ones each constructor accepts.
+    # [LEARNER.<name>] is left alone: those knobs are the learners' own.
 
 
 def loads(text: str) -> Config:
@@ -296,10 +291,9 @@ def from_dict(raw: dict) -> Config:
     """Build a :class:`Config` from already-parsed TOML.
 
     Every complaint about the file is a :class:`ValueError`, a missing setting
-    as much as a contradictory one. The message is the whole of what somebody
-    with a stale file gets, and ``KeyError`` reprs its argument: a sentence
-    raised as one reaches the reader wrapped in quotes with its own quotes
-    escaped.
+    as much as a contradictory one, because ``KeyError`` reprs its argument and
+    a written-out sentence raised as one reaches the reader in quotes with its
+    own quotes escaped.
     """
     _check_keys(raw)
 
@@ -394,9 +388,6 @@ def from_dict(raw: dict) -> Config:
     for name, table in raw.get("LEARNER", {}).items():
         learner_options[name] = dict(table)
 
-    # Only the settings the file actually carries are passed on; Config fills
-    # in the rest from its field defaults, which are the one place a default
-    # is written down.
     settings: dict[str, Any] = {
         **_present(analysis, ("maximize",)),
         **_present(mloop, ("learner", "session"), str),

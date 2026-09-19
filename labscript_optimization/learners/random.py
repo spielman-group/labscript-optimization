@@ -3,10 +3,9 @@
 :class:`RandomLearner` draws uniformly from the whole space. It is the simplest
 thing that works and the reference every other learner is measured against.
 
-:class:`DirectedRandomLearner` is the algorithm the lab actually runs, carried
-over from analysislib-mloop. It draws near a previously seen point rather than
+:class:`DirectedRandomLearner` draws near a previously seen point rather than
 near the best one, which biases it towards exploring the space instead of
-refining a single minimum.
+refining a single minimum. It is the trainer the Gaussian process runs first.
 """
 
 from typing import Sequence
@@ -59,9 +58,8 @@ class DirectedRandomLearner:
 
     ``trust_range`` is measured as a fraction of the way from the worst cost
     seen to the best, so ``[1, 1]`` centres on the best point and values near
-    zero centre on poor ones. The default sits near the worst end deliberately:
-    spreading the search over mediocre points is what makes this learner a
-    better explorer than one that always refines the best.
+    zero centre on poor ones. The default sits near the worst end: spreading
+    the search over mediocre points is what makes this learner an explorer.
 
     Args:
         space: The parameter space to search.
@@ -104,9 +102,9 @@ class DirectedRandomLearner:
 
         if len(trust_range) != 2:
             raise ValueError(f"trust_range needs two values, got {trust_range!r}")
-        # Refused rather than sorted, as mutation_scale is: a pair written
-        # backwards is a misunderstanding of which end is which, and reordering
-        # it quietly hides that from the lab that wrote it.
+        # Refused rather than sorted: a pair written backwards is a
+        # misunderstanding of which end is which, and putting it in order
+        # quietly runs a search the lab did not ask for.
         if not 0 <= trust_range[0] <= trust_range[1] <= 1:
             raise ValueError(
                 f"trust_range must be an ordered pair within [0, 1], got "
@@ -119,10 +117,8 @@ class DirectedRandomLearner:
     def _centre(self, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
         """Pick the point to draw around.
 
-        The band runs from ``trust_range[0]`` to ``trust_range[1]`` of the way
-        from the worst cost towards the best. When nothing falls inside it --
-        which includes the case of a single observation -- the best point is
-        used.
+        With nothing inside the band -- which includes the case of a single
+        observation -- the best point is used.
         """
         best, worst = costs.min(), costs.max()
         high = worst + (best - worst) * self.trust_range[0]

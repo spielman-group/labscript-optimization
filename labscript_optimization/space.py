@@ -85,11 +85,9 @@ class ParameterSpace:
     def contains(self, x: np.ndarray) -> np.ndarray:
         """Whether each row of ``x`` is within bounds, one answer per row.
 
-        The answer is an array even for a single point, so a caller wanting a
-        yes or no reduces it with ``.all()`` rather than testing it for truth.
-        numpy allows a truth test only on a size-one array, so the bare form
-        works until the day a second row arrives and then raises instead of
-        answering.
+        An array even for a single point, so reduce it with ``.all()``: numpy
+        allows a truth test only on a size-one array, and the bare form works
+        until the day a second row arrives.
         """
         x = np.atleast_2d(x)
         return np.all((x >= self.minimum) & (x <= self.maximum), axis=-1)
@@ -111,9 +109,8 @@ class ParameterSpace:
     ) -> np.ndarray:
         """``k`` points drawn uniformly from the space.
 
-        Given a ``centre`` and a ``region`` the draw is confined to that trust
-        region as :meth:`bounds_near` clips it; given neither it covers the
-        whole space.
+        A ``centre`` and a ``region`` confine the draw to that trust region as
+        :meth:`bounds_near` clips it; neither covers the whole space.
         """
         low, high = self.minimum, self.maximum
         if centre is not None:
@@ -157,9 +154,8 @@ class ParameterSpace:
         """The bounds within ``region`` of ``centre``, kept inside the space.
 
         ``region`` is an absolute per-parameter distance, as
-        :meth:`absolute_trust_region` returns it. ``None`` means unrestricted
-        and gives back the whole space, so a learner free to travel anywhere
-        takes the same path as one that is not.
+        :meth:`absolute_trust_region` returns it; ``None`` gives back the whole
+        space, so a learner free to travel anywhere takes the same path.
         """
         if region is None:
             return self.minimum, self.maximum

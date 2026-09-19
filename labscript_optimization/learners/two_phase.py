@@ -5,10 +5,9 @@ anything, so the first ``num_training`` shots come from a cheap learner that
 explores. After that the main learner takes over, and the trainer stays on as
 the fallback for any proposal the main learner cannot make.
 
-This is a proposer that wraps two proposers, not a controller: it implements
-the same :class:`~labscript_optimization.learners.base.Learner` protocol as
-what it wraps, so it can be nested or swapped out without anything upstream
-knowing.
+A proposer wrapping two proposers, not a controller: it implements the same
+:class:`~labscript_optimization.learners.base.Learner` protocol as what it
+wraps.
 """
 
 from typing import Sequence
@@ -35,10 +34,9 @@ class TwoPhaseLearner:
         self.num_training = int(num_training)
         if self.num_training < 0:
             raise ValueError(f"num_training cannot be negative, got {num_training}")
-        # The phase every learner publishes, kept as an instance attribute
-        # because this is the one that changes. It is answered before anything
-        # has been proposed, since a session may report its status first, and
-        # a wrapper that has proposed nothing has its training ahead of it.
+        # An instance attribute because this is the learner whose phase
+        # changes, and answered before anything has been proposed because a
+        # session may report its status first.
         self.last_phase = "training"
 
     def training(self, history: Sequence[Observation]) -> bool:

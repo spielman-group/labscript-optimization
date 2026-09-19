@@ -5,15 +5,8 @@ still coming is runmanager's answer, asked for afresh each time it matters,
 because a number kept here can only be decremented by a shot coming back --
 and a shot that never comes back would hold its place for ever.
 
-History is kept in proposal order. A cost arriving out of order fills the slot
-its shot id names, and a shot that is no longer coming is dropped. That is the
-whole of the bookkeeping, and it is why the learners never see a shot in
-flight.
-
-The one thing carried between questions is which shots runmanager had no row
-for the last time it was asked, because that single answer covers both a shot
-that has just finished and a shot that has gone for good. It is a memory of
-what was said, not a tally of what is outstanding.
+History is kept in proposal order: a cost arriving out of order fills the slot
+its shot id names, and a shot that is no longer coming is dropped.
 """
 
 import numpy as np
@@ -21,11 +14,6 @@ import numpy as np
 from . import learners, observations
 from .observations import Observation
 from .runmanager_interface import UNKNOWN_SHOT_STATE
-
-#: What runmanager answers about a shot it has no queue row for. It says this
-#: of a shot that completed and left the queue just as much as of one it never
-#: knew or has forgotten, so on its own it is not a reason to give up on a
-#: shot; see :meth:`Session.reconcile`.
 
 
 class Session:
@@ -35,7 +23,7 @@ class Session:
         config: The session configuration.
         interface: Something with ``check_unchanged()``, ``submit(proposals)``
             and ``shot_status(shot_ids)``. Readiness is the worker's to check
-            before a session is built, and is not asked about again here.
+            before a session is built.
         learner: The learner to use, or ``None`` to build the configured one.
             It answers ``propose(history, k)`` and carries ``last_phase``.
     """
@@ -47,10 +35,7 @@ class Session:
         self.proposals: dict[str, np.ndarray] = {}
         self.results: dict[str, tuple[float, float | None, bool]] = {}
         self.dropped: set[str] = set()
-        # Awaited shots runmanager had no row for at the last reconcile. An id
-        # waits here for one round before being given up on, because the
-        # answer that puts it here is also the answer a healthy shot gets the
-        # moment it finishes; see reconcile().
+        # Awaited shots runmanager had no row for at the last reconcile.
         self._unknown: set[str] = set()
         self.starved = 0
         self.stopped: str | None = None
@@ -81,12 +66,8 @@ class Session:
     def _runs_since_best(self) -> int:
         """How many completed shots came after the one holding the best cost.
 
-        Counted over every completed shot rather than only the usable ones. A
-        shot that came back with nothing usable is still a shot spent, and it
-        already counts against ``max_num_runs``; leaving it out here is what
-        would let a session whose detector has died run for ever on the one
-        limit meant to stop it. A history with nothing usable in it has gone
-        its whole length without better parameters.
+        Counted over every completed shot, usable or not; see
+        :attr:`~labscript_optimization.config.Config.max_num_runs_without_better_params`.
         """
         history = self.history
         best = observations.best(history)
@@ -111,8 +92,8 @@ class Session:
         """Take the cost for one shot. Returns whether it was taken.
 
         A shot this session did not submit is ignored, which is how a user's
-        own shots and runmanager's default shots pass through harmlessly. So is
-        a second cost for a shot already recorded: a row can be run twice, by a
+        own shots and runmanager's defaults pass through harmlessly. So is a
+        second cost for a shot already recorded: a row can be run twice, by a
         retry or by BLACS re-running a file that already held data, and an id
         names a proposal rather than an execution.
         """
@@ -126,29 +107,14 @@ class Session:
     def reconcile(self) -> list[str]:
         """Ask runmanager what became of the awaited shots, and give some up.
 
-        ``shot_status(shot_ids)`` hands back runmanager's own answer, one
-        ``{'pending': bool, 'state': str}`` per id asked about.
+        Returns the shots dropped by this call. Dropping one stops a place in
+        the queue being held for it; a cost that turns up afterwards is still
+        taken, and the shot stops counting as dropped.
 
-        Returns the shots dropped by this call. Dropping a shot is a decision
-        to stop holding a place in the queue for it, not a ruling that its cost
-        can never arrive: a cost that turns up afterwards is still taken, and
-        the shot stops counting as dropped.
-
-        A shot runmanager has no row for is reported ``unknown``, and that is
-        what it says about a shot that completed and left the queue as much as
-        about one an operator deleted or a restart lost. The first is the
-        ordinary end of every healthy shot, whose cost is on its way through
-        lyse, so an unknown shot is given up on only once it has been unknown
-        across two reconciles running -- by which time the routine has been
-        called for it and its cost has been offered. Dropping on the first
-        answer instead would make the normal completion of every shot look
-        like a loss, and the count of dropped shots is the number a user reads
-        to see whether shots are being lost.
-
-        Every other not-pending answer names a reason nothing further will
-        happen: the shot was cancelled, it cannot compile, BLACS refused it, or
-        it sits behind a row only an operator can clear. Those are given up on
-        at once.
+        An ``unknown`` shot is given up on only once it has been unknown across
+        two reconciles running. Every other not-pending answer names a reason
+        nothing further will happen -- cancelled, will not compile, refused by
+        BLACS, or behind a row only an operator can clear -- and goes at once.
         """
         awaiting = self.awaiting
         if not awaiting:
@@ -164,6 +130,12 @@ class Session:
             if answer.get("pending", False):
                 continue
             unknown = answer.get("state", UNKNOWN_SHOT_STATE) == UNKNOWN_SHOT_STATE
+            # The round of grace is the whole of the difference between a shot
+            # that has gone and one that has just run: runmanager says
+            # ``unknown`` of both, and a finished shot leaves the queue while
+            # its cost is still crossing lyse. Dropping on the first answer
+            # counts the ordinary end of every healthy shot as a loss, in the
+            # very number a user reads to see whether shots are being lost.
             if unknown and shot_id not in unknown_before:
                 self._unknown.add(shot_id)
                 continue
@@ -175,24 +147,22 @@ class Session:
         """Submit enough proposals to keep the queue topped up.
 
         Returns the shot ids submitted, which is empty once the session has
-        stopped. Raises if the interface does not answer with one shot id per
-        proposal, because a pairing that is not one to one cannot be trusted.
+        stopped. Raises unless the interface answers with one shot id per
+        proposal.
         """
         if self.stopped:
             return []
         awaiting = len(self.awaiting)
         if awaiting == 0 and self.proposals:
-            # Nothing of ours was queued when this ran, so runmanager will have
-            # given BLACS a default shot instead. That is the apparatus staying
-            # busy rather than a fault, but every one is a shot the optimiser
-            # did not get, so it is counted: a session that starves often wants
-            # a larger num_buffered_runs.
+            # Nothing of ours was queued when this ran, so runmanager gave
+            # BLACS a default shot instead: the apparatus staying busy rather
+            # than a fault, but a shot the optimiser did not get. A session
+            # that starves wants a larger num_buffered_runs.
             self.starved += 1
         wanted = self.config.num_buffered_runs - awaiting
         if self.config.max_num_runs is not None:
-            # Do not queue shots beyond the budget. Dropped shots are not
-            # counted against it: they produced nothing, so replacing one is
-            # not spending a run.
+            # Dropped shots are not charged against the budget: they produced
+            # nothing, so replacing one is not spending a run.
             room = self.config.max_num_runs - len(self.results) - awaiting
             wanted = min(wanted, room)
         if wanted <= 0:
@@ -202,14 +172,8 @@ class Session:
         proposals = np.atleast_2d(self.learner.propose(self.history, wanted))
         shot_ids = self.interface.submit(proposals)
         if len(shot_ids) != len(proposals):
-            # Pairing what came back against the proposals would either leave
-            # out a proposal whose shot is queued and running -- its cost then
-            # arrives for an id this session never recorded, and the buffer
-            # depth is never reached again -- or attribute a cost to
-            # parameters that were not the ones requested. Nothing is recorded
-            # here: an id that cannot be trusted to name its proposal is worth
-            # no more than one this session did not submit, and a submission
-            # that goes wrong leaves the session untouched.
+            # Nothing is recorded before the raise: the session is left as it
+            # was rather than holding ids that may not name their proposals.
             raise RuntimeError(
                 f"submitted {len(proposals)} proposals but got "
                 f"{len(shot_ids)} shot ids back; the two cannot be paired, "

@@ -1,9 +1,9 @@
 """Differential evolution, in ask/tell form.
 
-Carried over from M-LOOP, which hand-codes the algorithm rather than calling
-scipy. That is the right shape here: scipy's optimisers are callback-driven and
-want to own the loop, while a lab optimiser has to hand out a point now and
-receive its cost hours later, possibly out of order.
+The algorithm is written out here rather than called from scipy, whose
+optimisers are callback-driven and want to own the loop, while a lab optimiser
+has to hand out a point now and receive its cost hours later, possibly out of
+order.
 
 The population is not carried between calls. It is rebuilt by walking the
 history in proposal order, which makes the learner a function of that history
@@ -99,7 +99,7 @@ class DifferentialEvolutionLearner:
         """Rebuild the population by walking the history in proposal order.
 
         Returns the population parameters, their costs, and the slot the next
-        trial targets. While the population is still being filled the returned
+        trial targets. While the population is still filling, the returned
         arrays are short and the slot is meaningless.
         """
         params: list[np.ndarray] = []
@@ -141,9 +141,6 @@ class DifferentialEvolutionLearner:
         return self.rng.choice(choices, size=count, replace=False)
 
     def _mutant(self, slot: int, population: np.ndarray, best: int, scale: float):
-        # How many members to draw comes from STRATEGIES, which is also what
-        # sets the minimum population, so a strategy can never ask for more
-        # points than the constructor guaranteed it.
         drawn = population[
             self._distinct_indices(slot, STRATEGIES[self.evolution_strategy])
         ]
