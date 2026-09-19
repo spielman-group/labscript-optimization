@@ -20,10 +20,66 @@ House rules that apply to every slice:
 
 ## Checklist
 
-- [ ] Slice 1: Routine hands over every shot lyse analysed
-- [ ] Slice 2: Configuration is validated at load
-- [ ] Slice 3: What the lab reads — `best_cost` units and cost ordering
+- [x] Slice 1: Routine hands over every shot lyse analysed
+- [x] Slice 2: Configuration is validated at load
+- [x] Slice 3: What the lab reads — `best_cost` units and cost ordering
 - [ ] Slice 4: Textbook generational differential evolution
+- [ ] Follow-up: the greeting's deadline belongs to the question
+
+## Follow-up: the greeting's deadline belongs to the question
+
+### Type
+
+`AFK`, and partly in another repository.
+
+### What to build
+
+`check_ready` holds the injected runmanager client to a short deadline for the
+greeting by swapping its `timeout` attribute and restoring it in a `finally`.
+That works and is tested, but it temporarily reconfigures an object the caller
+owns — a design issue in production code, not merely a smell.
+
+The cause is an API gap: `runmanager.remote.Client` takes `timeout` at
+construction and `request()` reads `self.timeout` on every call, so there is no
+per-request deadline. BLACS does the same thing for the same reason
+(`blacs/shot_execution.py:290-291` assigns `client.timeout` per call), so this
+is a suite-wide workaround rather than a local shortcut.
+
+Two parts:
+
+- **In runmanager**, add `Client.with_timeout(seconds)` returning a sibling
+  client for the same host and port with a different deadline, passing all
+  three arguments so the sibling is built without a labconfig read. Leave
+  `request` and the wire format alone: a keyword `timeout` would collide with
+  any server command that takes one. That work goes through the runmanager
+  session; a statement of work is drafted and awaiting Ian.
+- **Here**, once it exists, `check_ready` becomes
+  `self.client.with_timeout(GREETING_TIMEOUT).say_hello()` — the deadline on
+  the question, one injection point, no mutation. The fake client implements
+  `with_timeout` by recording the deadline and returning itself.
+
+Independent of runmanager, and worth doing first: take the greeting's value
+from labconfig's `timeouts/liveness_timeout`, keeping the constant as the
+fallback. BLACS already reads that key for its own liveness probe, deliberately
+separate from `communication_timeout` because one measures a round trip and the
+other allows for work. A lab on a slow link should set one number and have both
+applications honour it.
+
+### Acceptance criteria
+
+- [ ] The greeting's deadline comes from labconfig, with the constant as
+      fallback, and matches the key BLACS reads
+- [ ] No production code assigns to a client's `timeout`
+- [ ] The interim carries a comment naming the runmanager change it waits on,
+      for as long as it remains the interim
+
+### Blocked by
+
+- The runmanager side is blocked on that session; the labconfig key is not.
+
+### User stories covered
+
+- PRD "Issue 1 — worker reply offset", the residue subsection
 - [ ] Slice 5: Benchmark the shipped DE
 - [ ] Slice 6: Test cleanup
 
