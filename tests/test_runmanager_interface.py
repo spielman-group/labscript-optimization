@@ -131,15 +131,6 @@ def test_runmanagers_verdict_and_its_reason_both_reach_the_caller(interface, cli
     }
 
 
-def test_an_id_runmanager_does_not_answer_for_is_one_it_knows_nothing_of(
-    interface, client
-):
-    client.shot_status = lambda ids: {}
-    assert interface.shot_status(['a', 'b']) == {
-        'a': {'pending': False, 'state': 'unknown'},
-        'b': {'pending': False, 'state': 'unknown'},
-    }
-
 
 def test_nothing_is_asked_about_an_empty_list(interface, client):
     client.shot_status = lambda ids: pytest.fail('asked about nothing')

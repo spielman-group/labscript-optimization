@@ -125,8 +125,6 @@ class Session:
         unknown_before, self._unknown = self._unknown, set()
         gone = []
         for shot_id in awaiting:
-            # An id the interface says nothing at all about is read as
-            # unknown: no answer is no reason to give up on a shot this round.
             answer = answers[shot_id]
             if answer.get("pending", False):
                 continue

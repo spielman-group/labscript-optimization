@@ -19,9 +19,6 @@ UNKNOWN_SHOT_STATE = "unknown"
 #: moves what is in front of it.
 BLOCKED_SHOT_STATE = "blocked"
 
-#: What runmanager answers for a shot id in that state.
-UNKNOWN_SHOT_STATUS = {"pending": False, "state": UNKNOWN_SHOT_STATE}
-
 
 class RunmanagerInterface:
     """Submits proposals and reports what became of them.
@@ -84,17 +81,15 @@ class RunmanagerInterface:
         """What runmanager says about each of these shots, as it says it.
 
         ``{shot_id: {'pending': bool, 'state': str}}``, one entry per id asked
-        about. ``pending`` is whether that shot could still produce a cost.
-        ``state`` is the queue row's own state, or ``'submitted'`` for a shot
-        runmanager has taken on but has no row for yet, ``'blocked'`` for a row
-        sitting behind one an operator has to clear, and ``'unknown'`` for an
-        id runmanager does not know -- including one it does not answer for.
+        about: runmanager loops over the ids it was handed and answers for each
+        of them, so an id it has no row for comes back ``'unknown'`` rather
+        than absent. ``pending`` is whether that shot could still produce a
+        cost. ``state`` is the queue row's own state, or ``'submitted'`` for a
+        shot runmanager has taken on but has no row for yet, ``'blocked'`` for
+        a row sitting behind one an operator has to clear, and ``'unknown'``
+        for an id runmanager does not know.
         """
         shot_ids = list(shot_ids)
         if not shot_ids:
             return {}
-        answer = self.client.shot_status(shot_ids)
-        return {
-            i: answer[i] if i in answer else dict(UNKNOWN_SHOT_STATUS)
-            for i in shot_ids
-        }
+        return self.client.shot_status(shot_ids)
