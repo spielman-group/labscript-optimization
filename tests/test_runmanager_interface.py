@@ -30,17 +30,36 @@ args = ["y"]
 
 
 class FakeClient:
+    """The shape of ``runmanager.remote.Client``, answers and all.
+
+    ``timeout`` is the real client's own: every request waits that long for an
+    answer, and it comes from labconfig's ``communication_timeout``. Each call
+    is recorded with the timeout in force when it was made, because how long a
+    question is allowed to go unanswered is part of what this seam promises.
+    """
+
     def __init__(self, labscript='/lab/expt.py'):
         self.labscript = labscript
         self.broken_globals = False
         self.entries = []
         self.states = {}
         self.refuse = None
+        self.timeout = 60.0
+        self.silent = False
+        self.asked = []
+
+    def say_hello(self):
+        self.asked.append(('say_hello', self.timeout))
+        if self.silent:
+            raise TimeoutError('no response from server')
+        return 'hello'
 
     def error_in_globals(self):
+        self.asked.append(('error_in_globals', self.timeout))
         return self.broken_globals
 
     def get_labscript_file(self):
+        self.asked.append(('get_labscript_file', self.timeout))
         return self.labscript
 
     def submit_shots(self, entries):
@@ -83,6 +102,36 @@ def interface(config, client):
 def test_a_session_starts_when_runmanager_can_sustain_it(interface):
     interface.check_ready()
     interface.check_unchanged()
+
+
+def test_a_runmanager_that_does_not_answer_is_reported_as_the_cause(interface, client):
+    """The worker has one startup allowance, and everything it does with
+    runmanager happens inside it. A runmanager that is not running answers
+    nothing, so without being named here the lab reads only that the worker
+    failed to configure in time -- true, and no help at all.
+    """
+    client.silent = True
+    with pytest.raises(RuntimeError, match='runmanager did not answer'):
+        interface.check_ready()
+    assert [call for call, _ in client.asked] == ['say_hello']
+
+
+def test_the_greeting_is_asked_first_and_is_the_only_short_wait(interface, client):
+    """A runmanager that is not there is found out by the greeting rather than
+    by whichever question happened to be asked first, and found out inside the
+    startup allowance: the client's own wait is longer than that allowance, so
+    a question asked at its full length is one the worker is killed during.
+
+    Only the greeting is shortened. A submission compiles shots, which takes
+    as long as it takes, and holding it to a few seconds would end a healthy
+    session.
+    """
+    interface.check_ready()
+    assert client.asked == [
+        ('say_hello', 5.0),
+        ('error_in_globals', 60.0),
+        ('get_labscript_file', 60.0),
+    ]
 
 
 def test_a_runmanager_whose_globals_do_not_evaluate_is_refused(interface, client):

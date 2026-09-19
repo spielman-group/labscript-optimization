@@ -1,10 +1,10 @@
 """Submitting proposals to runmanager, and asking what became of them.
 
 runmanager never stops. Submitting appends to the running queue; there is no
-queue to start, drain or wait on. A shot is complete when runmanager sends it
-to lyse, which is the routine being called on it. Every shot carries the
-identifier runmanager minted for its queue row, written into the shot file:
-that is what a cost is matched to a proposal by.
+queue to start, drain or wait on. A shot is complete when runmanager has sent
+it to lyse and lyse has analysed it, which is the routine being handed its
+row. Every shot carries the identifier runmanager minted for its queue row,
+written into the shot file: that is what a cost is matched to a proposal by.
 """
 
 from typing import Iterable, Sequence
@@ -19,6 +19,14 @@ UNKNOWN_SHOT_STATE = "unknown"
 #: moves what is in front of it.
 BLOCKED_SHOT_STATE = "blocked"
 
+#: Seconds runmanager is given to answer the greeting that opens a session.
+#: Short against the routine's allowance for the whole of configuration, so
+#: that a runmanager which is not running is named as the cause rather than
+#: the worker being killed mid-wait and the lab told that it was slow. The
+#: session's later requests keep the client's own timeout, labconfig's
+#: ``communication_timeout``, which a submission that compiles shots needs.
+GREETING_TIMEOUT = 5.0
+
 
 class RunmanagerInterface:
     """Submits proposals and reports what became of them.
@@ -26,7 +34,9 @@ class RunmanagerInterface:
     Args:
         config: The session configuration.
         client: A ``runmanager.remote`` client, or ``None`` to make the default
-            one. Injected so the session can be tested without runmanager.
+            one. Injected so the session can be tested without runmanager. Its
+            ``timeout`` is how long each request waits, and is held down to
+            :data:`GREETING_TIMEOUT` for the greeting.
     """
 
     def __init__(self, config, client=None):
@@ -41,11 +51,30 @@ class RunmanagerInterface:
     def check_ready(self) -> None:
         """Raise if runmanager cannot start a session, and pin its labscript file.
 
+        The greeting comes first, and is the only request held to
+        :data:`GREETING_TIMEOUT`, so that a runmanager which is not there is
+        reported as a runmanager which is not there. Asking it a question
+        instead leaves the answer to the client's own timeout, which outlasts
+        the routine's allowance for the whole of configuration: the worker is
+        killed mid-wait and the lab reads that the worker was slow.
+
         A global that does not evaluate is a shot that will not compile, and
         every shot this session submits would be one. The file pinned here is
         what :meth:`check_unchanged` compares against for the rest of the
         session.
         """
+        patient, self.client.timeout = self.client.timeout, GREETING_TIMEOUT
+        try:
+            self.client.say_hello()
+        except Exception as exc:
+            raise RuntimeError(
+                f"runmanager did not answer within {GREETING_TIMEOUT:g} "
+                f"seconds ({exc!r}); an optimisation session cannot start "
+                f"without it"
+            ) from exc
+        finally:
+            self.client.timeout = patient
+
         if self.client.error_in_globals():
             raise RuntimeError(
                 "runmanager reports an error in its globals; fix it before "
