@@ -1,14 +1,16 @@
-"""Reading a cost out of the lyse dataframe, and handing it to the worker.
+"""Reading costs out of the lyse dataframe, and handing them to the worker.
 
 lyse labels its columns with a MultiIndex, so an analysis result is the column
 ``('routine', 'result')``. The shot's identifier is a column of its own, filled
 for every shot runmanager compiled and empty for one of its default shots.
 
-What the routine then does with that cost is the other half. Those tests drive
-the entry point against a pair of fake pipes and a fake process, so they say
-what the routine sends, what it makes of the answer, what it writes back onto
-the shot, and how it shuts the worker down, without depending on zprocess
-starting anything.
+What the routine then does with those costs is the other half. lyse runs a
+multishot routine once per drained batch of singleshot analyses, so an
+invocation answers for every shot analysed since the one before it. Those
+tests drive the entry point against a pair of fake pipes and a fake process,
+so they say which shots the routine sends and in how many messages, what it
+makes of the answer, what it writes back onto each shot, and how it shuts the
+worker down, without depending on zprocess starting anything.
 """
 
 import math
@@ -36,6 +38,7 @@ import pytest
 
 from labscript_optimization import config as config_module
 from labscript_optimization import routine as routine_module
+from labscript_optimization import runmanager_interface as interface_module
 from labscript_optimization.routine import extract
 
 CONFIG = """
@@ -132,12 +135,6 @@ def test_a_shot_with_no_usable_cost_is_bad(config, shot, value):
     assert bad
 
 
-def test_the_most_recent_shot_is_the_one_read(config, shot):
-    rows = [shot(shot_id='row-1', cost=1.0), shot(shot_id='row-2', cost=2.0)]
-    shot_id, cost, _, _ = extract(frame(rows), config)
-    assert shot_id == 'row-2' and cost == -2.0
-
-
 def test_a_shot_carrying_no_identifier_has_nothing_to_read(config, shot):
     """One of runmanager's default shots. It goes to BLACS already compiled, so
     no queue-row id is ever written into it and no cost can be matched to a
@@ -153,10 +150,6 @@ def test_a_dataframe_with_no_shot_id_column_yields_nothing(config):
     every shot and matching costs to proposals at random.
     """
     assert extract(frame([{'filepath': '/p', ('zTOF', 'Nb'): 5.0}]), config) is None
-
-
-def test_an_empty_dataframe_yields_nothing(config, shot):
-    assert extract(frame([shot()]).iloc[0:0], config) is None
 
 
 def test_a_cost_column_that_does_not_exist_yet_reads_as_bad(config, shot):
@@ -207,6 +200,10 @@ class Answering(Pipe):
     second sees nothing on the first shot and the shot before's status after
     that. Each answer names the message it answers, so a status belonging to an
     earlier shot is recognisable as one.
+
+    The default answer takes no observation: a test about what is written onto
+    a shot says so itself, with one verdict per observation the way the worker
+    replies.
     """
 
     def __init__(self, from_worker, delay=0.02):
@@ -221,7 +218,7 @@ class Answering(Pipe):
         if self.replies:
             reply = self.replies.pop(0)
         else:
-            reply = ('status', (False, {'answered': len(self.sent)}))
+            reply = ('status', ((), {'answered': len(self.sent)}))
         timer = threading.Timer(self.delay, self.from_worker.incoming.put, [reply])
         # Nothing need wait at the end of a test for an answer nobody is
         # listening for any more.
@@ -288,7 +285,7 @@ def test_start_worker_waits_for_and_consumes_the_configuration_reply(
 
             def answer():
                 from_worker.incoming.put(
-                    ('status', (False, {'configured': True}))
+                    ('status', ((), {'configured': True}))
                 )
                 self.answered.set()
 
@@ -347,6 +344,15 @@ def test_start_worker_reaps_a_worker_that_does_not_configure(
     assert child.reaped
 
 
+def test_runmanager_is_given_up_on_before_the_worker_is():
+    """Everything the worker does with runmanager happens inside the routine's
+    allowance for configuring it, and the worker is killed when that runs out.
+    A greeting allowed to outlast it means a runmanager that is not running is
+    never reported as one: the lab is told only that the worker was slow.
+    """
+    assert interface_module.GREETING_TIMEOUT < routine_module.CONFIGURE_TIMEOUT
+
+
 @pytest.fixture
 def session(monkeypatch, tmp_path):
     """A running session: a configuration file, and a worker made of fakes.
@@ -366,68 +372,203 @@ def session(monkeypatch, tmp_path):
     storage.optimisation_worker = None
 
 
-def test_only_the_shot_it_was_called_on_is_asked_of_lyse(session, shot, monkeypatch):
-    """A run is one sequence, and it grows by a row every time the routine is
-    called on one of its shots. Asking for the sequence would make each
-    invocation cost more than the one before, for rows nothing reads: the
-    routine reads the most recent shot and no other.
+@pytest.fixture
+def analysed(session, shot):
+    """Run the routine on a session that has already seen a row of its sequence.
+
+    Each call adds shots to the sequence lyse has analysed and invokes the
+    routine on the whole of it, returning the status. The first invocation of
+    a session hands nothing over -- it remembers where the sequence had got to
+    and no further -- so everything about what reaches the worker starts from
+    the second, and the priming invocation's message is cleared away here.
+    """
+    sequence = [shot(shot_id='before-this-session')]
+    routine_module.optimise(session.path, session.storage, frame(sequence))
+    session.worker.sent.clear()
+
+    def analyse(*rows):
+        sequence.extend(rows)
+        return routine_module.optimise(
+            session.path, session.storage, frame(sequence)
+        )
+
+    return analyse
+
+
+@pytest.fixture
+def box(session, shot, monkeypatch):
+    """lyse's file box: the shots it has analysed, and what it was asked for.
+
+    ``rows`` is the sequence, oldest first, and ``asked`` records the
+    ``n_shots`` of each request, which is how a routine that fetches a pile-up
+    whole is told from one that reads the end of it.
     """
     lyse = pytest.importorskip('lyse')
-    asked = []
+    sequence, asked = [], []
 
-    def data(**kwargs):
-        asked.append(kwargs)
-        return frame([shot()])
+    def data(n_sequences=None, n_shots=None):
+        assert n_sequences == 1, 'a run is one sequence'
+        asked.append(n_shots)
+        return frame(sequence[-n_shots:] if n_shots else sequence)
 
     monkeypatch.setattr(lyse, 'data', data)
     monkeypatch.setattr(lyse, 'routine_storage', session.storage)
 
+    def add(*shot_ids):
+        sequence.extend(shot(shot_id=shot_id) for shot_id in shot_ids)
+
+    return types.SimpleNamespace(add=add, asked=asked)
+
+
+def ids_sent(worker):
+    """The shot ids of each message the routine sent, one list per message."""
+    return [
+        [observation[0] for observation in payload] if command == 'observe' else []
+        for command, payload in worker.sent
+    ]
+
+
+def test_every_shot_analysed_since_the_last_invocation_is_handed_over(
+    session, shot, analysed
+):
+    """lyse runs a multishot routine once per drained batch of singleshot
+    analyses, not once per shot. Every shot in the batch ran and spent a run,
+    so a routine that reads only the last one leaves the rest awaited until a
+    reconcile drops them -- costs the learner never sees, counted against the
+    run as lost.
+    """
+    analysed(shot(shot_id='row-1', cost=1.0), shot(shot_id='row-2', cost=2.0))
+    assert ids_sent(session.worker) == [['row-1', 'row-2']]
+
+
+def test_a_shot_already_handed_over_is_not_sent_again(session, shot, analysed):
+    """The session would ignore a second cost for a shot it has already
+    recorded, so this is invisible in what the optimisation does and plain in
+    what crosses the pipe: every invocation would re-send the whole frame it
+    can see, growing the message for as long as the run lasts.
+    """
+    analysed(shot(shot_id='row-1', cost=1.0))
+    analysed(shot(shot_id='row-2', cost=2.0))
+    assert ids_sent(session.worker) == [['row-1'], ['row-2']]
+
+
+def test_several_observations_travel_in_one_message(session, shot, analysed):
+    """The worker answers each message once. Handing over three shots as three
+    messages would leave two replies behind, and the next invocation would read
+    the first of them as the answer to its own message -- the offset that
+    writing every column one shot stale is made of.
+    """
+    analysed(*(shot(shot_id=f'row-{n}', cost=float(n)) for n in range(3)))
+    assert len(session.worker.sent) == 1
+
+
+def test_a_pile_up_larger_than_the_first_request_is_fetched_whole(session, box):
+    """Analysis paused and resumed, or lyse started with shots already in the
+    box, and a single invocation answers for a batch of any size. The routine
+    asks for more until the row it handled last is in the frame; stopping at
+    the first request would hand over the end of the batch and lose the rest.
+    """
+    box.add('row-0')
     routine_module.optimise(session.path)
+    box.add('row-1', 'row-2', 'row-3', 'row-4')
+    routine_module.optimise(session.path)
+    assert ids_sent(session.worker)[-1] == ['row-1', 'row-2', 'row-3', 'row-4']
+    assert box.asked == [1, 2, 4, 8]
 
-    assert asked == [{'n_sequences': 1, 'n_shots': 1}]
+
+def test_the_steady_state_costs_one_request(session, box):
+    """Where analysis keeps up there is one new shot an invocation, and the
+    frame that holds it and the row handled last is two rows. Asking for a
+    third would be a second round trip to lyse for every shot of every run.
+    """
+    box.add('row-0')
+    routine_module.optimise(session.path)
+    box.add('row-1')
+    routine_module.optimise(session.path)
+    assert ids_sent(session.worker)[-1] == ['row-1']
+    assert box.asked == [1, 2]
 
 
-def test_a_shot_with_no_usable_cost_is_reported_as_a_bad_observation(session, shot):
+def test_the_first_invocation_hands_over_nothing_and_reads_one_row(session, box):
+    """A session opens with whatever lyse already has in its box, which was
+    analysed before the session existed. It proposed none of those shots, so
+    it can make nothing of them -- and reaching back over a sequence hundreds
+    of rows long to be told so would cost the whole frame to learn nothing.
+    """
+    box.add(*(f'row-{n}' for n in range(5)))
+    routine_module.optimise(session.path)
+    assert session.worker.sent == [('shot', None)]
+    assert box.asked == [1]
+
+
+def test_an_invocation_with_nothing_new_still_sends_one_message(
+    session, shot, analysed
+):
+    """Reconciling and refilling happen in the worker's trailing work, after
+    it has replied. A routine that returned early with nothing to report would
+    stop the session giving up on shots that are not coming, and a generation
+    an operator had unblocked would never be revived.
+    """
+    analysed(shot(shot_id='row-1', cost=1.0))
+    analysed()
+    assert [command for command, _ in session.worker.sent] == ['observe', 'shot']
+
+
+def test_a_shot_with_no_usable_cost_is_reported_as_a_bad_observation(
+    session, analysed, shot
+):
     """It has run and lyse has analysed it, so no cost for it is coming.
 
     Unreported, its id would be awaited until a reconcile quietly recorded it
     as dropped, and the run it spent would go uncounted.
     """
-    routine_module.optimise(
-        session.path, session.storage, frame([shot(cost=float('nan'))])
-    )
-    (command, (shot_id, _, _, bad)), = session.worker.sent
+    analysed(shot(cost=float('nan')))
+    (command, ((shot_id, _, _, bad),)), = session.worker.sent
     assert command == 'observe' and shot_id == 'row-3' and bad
 
 
-def test_the_configuration_is_read_once_for_the_whole_session(session, shot):
+def test_a_default_shot_is_passed_over_rather_than_handed_on(
+    session, analysed, shot
+):
+    """One of runmanager's default shots, carrying no queue-row id. It is a row
+    of the sequence like any other and the routine has handled it, but there is
+    no id to send a cost under.
+    """
+    analysed(shot(shot_id=''), shot(shot_id='row-9'))
+    assert ids_sent(session.worker) == [['row-9']]
+
+
+def test_the_configuration_is_read_once_for_the_whole_session(
+    session, analysed, shot
+):
     """The worker keeps the configuration it was started with, so this must too.
 
     Re-reading it every shot lets an edit mid-session leave the two disagreeing
     about what the cost is: a flipped maximize would drive the search the wrong
     way with nothing said.
     """
-    routine_module.optimise(session.path, session.storage, frame([shot(cost=7.0)]))
+    analysed(shot(cost=7.0))
     session.path.write_text(CONFIG.replace('maximize = true', 'maximize = false'))
-    routine_module.optimise(session.path, session.storage, frame([shot(cost=7.0)]))
-    assert [payload[1] for _, payload in session.worker.sent] == [-7.0, -7.0]
+    analysed(shot(cost=7.0))
+    assert [
+        observation[1] for _, payload in session.worker.sent for observation in payload
+    ] == [-7.0, -7.0]
 
 
-def test_the_status_returned_answers_this_shot_and_not_the_one_before(session, shot):
-    """It is written back as lyse results against the shot the routine ran on,
-    so a status from the invocation before is a row of numbers belonging to
-    another shot, and a glance that finds nothing yet is no row at all.
+def test_the_status_returned_answers_this_shot_and_not_the_one_before(
+    session, analysed, shot
+):
+    """It is written back as lyse results against the shots the routine was
+    handed, so a status from the invocation before is a row of numbers
+    belonging to other shots, and a glance that finds nothing yet is no row at
+    all.
     """
-    first = routine_module.optimise(
-        session.path, session.storage, frame([shot(cost=1.0)])
-    )
-    second = routine_module.optimise(
-        session.path, session.storage, frame([shot(cost=2.0)])
-    )
+    first = analysed(shot(cost=1.0))
+    second = analysed(shot(cost=2.0))
     assert (first, second) == ({'answered': 1}, {'answered': 2})
 
 
-def test_a_worker_that_failed_says_so_through_the_routine(session, shot):
+def test_a_worker_that_failed_says_so_through_the_routine(session, analysed, shot):
     """The worker is a process of its own with nowhere to report to. Raising
     here is the only route by which its failure reaches a person: lyse shows
     what a routine raises.
@@ -436,11 +577,11 @@ def test_a_worker_that_failed_says_so_through_the_routine(session, shot):
         ('error', 'Traceback (most recent call last):\nRuntimeError: no runmanager')
     )
     with pytest.raises(RuntimeError, match='no runmanager'):
-        routine_module.optimise(session.path, session.storage, frame([shot()]))
+        analysed(shot())
 
 
 def test_a_worker_that_does_not_answer_in_time_is_given_up_on(
-    session, shot, monkeypatch
+    session, analysed, shot, monkeypatch
 ):
     """lyse runs multishot routines inline and one at a time, so every moment
     spent waiting here delays the analysis of every shot behind this one. A
@@ -450,14 +591,14 @@ def test_a_worker_that_does_not_answer_in_time_is_given_up_on(
     monkeypatch.setattr(routine_module, 'REPLY_TIMEOUT', 0.05)
     session.worker.delay = 30.0
     started = time.monotonic()
-    status = routine_module.optimise(
-        session.path, session.storage, frame([shot()])
-    )
+    status = analysed(shot())
     assert status is None and time.monotonic() - started < 5.0
 
 
-def test_an_answer_still_on_its_way_is_left_for_the_next_shot(session, shot):
-    """Behind this shot's answer only what is already waiting is swept up.
+def test_an_answer_still_on_its_way_is_left_for_the_next_shot(
+    session, analysed, shot
+):
+    """Behind this invocation's answer only what is already waiting is swept up.
 
     That is how an error from the slow work behind an earlier reply arrives
     without being waited for. Waiting for more would hand lyse back the delay
@@ -466,12 +607,11 @@ def test_an_answer_still_on_its_way_is_left_for_the_next_shot(session, shot):
     straggler = threading.Timer(
         1.0,
         session.worker.from_worker.incoming.put,
-        [('status', (False, {'answered': 99}))],
+        [('status', ((), {'answered': 99}))],
     )
     straggler.daemon = True
     straggler.start()
-    status = routine_module.optimise(session.path, session.storage, frame([shot()]))
-    assert status == {'answered': 1}
+    assert analysed(shot()) == {'answered': 1}
 
 
 def status(**overrides):
@@ -525,7 +665,9 @@ def results():
     return read
 
 
-def test_the_status_is_written_onto_the_shot_as_lyse_results(session, shot, results):
+def test_the_status_is_written_onto_the_shot_as_lyse_results(
+    session, analysed, shot, results
+):
     """lyse turns each attribute into a column, so this is the whole point of
     computing a status: the lab reads it as ``df[('labscript_optimization',
     'best_cost')]`` alongside the shot it belongs to.
@@ -534,10 +676,13 @@ def test_the_status_is_written_onto_the_shot_as_lyse_results(session, shot, resu
     session.worker.replies.append(
         (
             'status',
-            (True, status(best_cost=-7.0, best_params=[0.25], best_shot_id='row-3')),
+            (
+                (True,),
+                status(best_cost=-7.0, best_params=[0.25], best_shot_id='row-3'),
+            ),
         )
     )
-    routine_module.optimise(session.path, session.storage, frame([row]))
+    analysed(row)
     written = results(row)
     assert written['best_cost'] == -7.0
     assert list(written['best_params']) == [0.25]
@@ -546,15 +691,15 @@ def test_the_status_is_written_onto_the_shot_as_lyse_results(session, shot, resu
 
 
 def test_the_sessions_own_counters_are_not_written_onto_every_shot(
-    session, shot, results
+    session, analysed, shot, results
 ):
     """They are one answer for the whole run rather than anything about a shot,
     and an attribute overwritten shot after shot grows the file for nothing. A
     routine that wants them has them: optimise returns the whole status.
     """
     row = shot()
-    session.worker.replies.append(('status', (True, status())))
-    answer = routine_module.optimise(session.path, session.storage, frame([row]))
+    session.worker.replies.append(('status', ((True,), status())))
+    answer = analysed(row)
     # Spelt out rather than read back from the module that wrote them: these
     # names are the promise, df[('labscript_optimization', 'best_cost')].
     assert set(results(row)) == {
@@ -568,14 +713,14 @@ def test_the_sessions_own_counters_are_not_written_onto_every_shot(
 
 
 def test_a_value_the_session_does_not_have_yet_is_written_as_nan(
-    session, shot, results
+    session, analysed, shot, results
 ):
     """An h5 attribute cannot be None, and a column that changes type partway
     through a session is one lyse cannot plot.
     """
     row = shot()
-    session.worker.replies.append(('status', (True, status())))
-    routine_module.optimise(session.path, session.storage, frame([row]))
+    session.worker.replies.append(('status', ((True,), status())))
+    analysed(row)
     written = results(row)
     assert all(
         math.isnan(written[key])
@@ -583,34 +728,54 @@ def test_a_value_the_session_does_not_have_yet_is_written_as_nan(
     )
 
 
-def test_a_shot_carrying_no_identifier_is_not_written_to(session, shot):
+def test_a_shot_carrying_no_identifier_is_not_written_to(session, analysed, shot):
     """One of runmanager's default shots. There is no id to send an observation
     under, so the session has nothing to take and nothing of the optimiser's
     belongs on the shot.
     """
     row = shot(shot_id=None)
-    session.worker.replies.append(('status', (False, status())))
-    routine_module.optimise(session.path, session.storage, frame([row]))
+    session.worker.replies.append(('status', ((), status())))
+    analysed(row)
     with h5py.File(row['filepath'], 'r') as f:
         assert 'results' not in f
 
 
-def test_a_shot_the_session_never_proposed_is_not_written_to(session, shot):
+def test_a_shot_the_session_never_proposed_is_handed_over_and_not_written_to(
+    session, analysed, shot
+):
     """runmanager mints a shot id for every queue row it compiles, so a user's
-    own shot arrives carrying one exactly as the optimiser's do. Only the
-    session knows which ids it proposed, and its answer is what says so:
-    writing on the strength of the id alone puts a column of the optimiser's
-    numbers onto somebody else's shot.
+    own shot, engaged alongside the optimisation, arrives carrying one exactly
+    as the optimiser's do. The routine cannot tell them apart and does not try:
+    it hands the shot over, and the session's answer -- that it took nothing --
+    is what says nothing of the optimiser's belongs on it. Writing on the
+    strength of the id alone puts a column of the optimiser's numbers onto
+    somebody else's shot.
     """
     row = shot(shot_id='someone-elses-shot')
-    session.worker.replies.append(('status', (False, status())))
-    routine_module.optimise(session.path, session.storage, frame([row]))
+    session.worker.replies.append(('status', ((False,), status())))
+    analysed(row)
+    assert ids_sent(session.worker) == [['someone-elses-shot']]
     with h5py.File(row['filepath'], 'r') as f:
+        assert 'results' not in f
+
+
+def test_the_status_is_written_onto_each_shot_the_session_took(
+    session, analysed, shot, results
+):
+    """A batch can hold the optimiser's shots and a user's own together, and
+    the worker answers with a verdict for each in the order they were sent.
+    One answer for the whole message could only write onto all of them or none.
+    """
+    ours, theirs = shot(shot_id='row-1'), shot(shot_id='someone-elses-shot')
+    session.worker.replies.append(('status', ((True, False), status())))
+    analysed(ours, theirs)
+    assert results(ours)['phase'] == 'main'
+    with h5py.File(theirs['filepath'], 'r') as f:
         assert 'results' not in f
 
 
 def test_a_status_that_cannot_be_written_does_not_stop_the_session(
-    session, shot, capsys
+    session, analysed, shot, capsys
 ):
     """The shot can go between the routine reading it and the status being
     written, because the routine waits for the worker in between. A progress
@@ -618,14 +783,14 @@ def test_a_status_that_cannot_be_written_does_not_stop_the_session(
     """
     pytest.importorskip('lyse')
     row = shot()
-    session.worker.replies.append(('status', (True, status())))
+    session.worker.replies.append(('status', ((True,), status())))
     sending = session.worker.put
     session.worker.put = lambda item: (os.unlink(row['filepath']), sending(item))
 
-    answer = routine_module.optimise(session.path, session.storage, frame([row]))
+    answer = analysed(row)
 
     assert answer == status()
-    assert 'shot0.h5' in capsys.readouterr().err
+    assert os.path.basename(row['filepath']) in capsys.readouterr().err
 
 
 @pytest.fixture

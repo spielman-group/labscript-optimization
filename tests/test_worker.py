@@ -112,8 +112,8 @@ def run(messages, interface=FakeInterface):
 def status_of(message):
     """The status in one reply, which is ``('status', (recorded, status))``.
 
-    ``recorded`` is whether the session took the observation the message
-    answered; the tests that are about that unpack it themselves.
+    ``recorded`` is one verdict per observation the message answered; the
+    tests that are about that unpack it themselves.
     """
     _, (_, status) = message
     return status
@@ -128,7 +128,7 @@ def test_configuring_fills_the_queue(config_file):
 def test_an_observation_is_answered_before_the_next_shots_are_proposed(config_file):
     """The reply must not wait on a fit, or lyse waits with it."""
     sent = run(
-        [('configure', config_file), ('observe', ('shot-0', 1.0, None, False))]
+        [('configure', config_file), ('observe', [('shot-0', 1.0, None, False)])]
     )
     assert [kind for kind, _ in sent] == ['status', 'status']
     assert status_of(sent[1])['completed'] == 1
@@ -144,10 +144,10 @@ def test_an_observation_the_session_proposed_is_answered_as_taken(config_file):
     only thing that knows.
     """
     sent = run(
-        [('configure', config_file), ('observe', ('shot-0', 1.0, None, False))]
+        [('configure', config_file), ('observe', [('shot-0', 1.0, None, False)])]
     )
     _, (recorded, _) = sent[-1]
-    assert recorded is True
+    assert recorded == (True,)
 
 
 def test_an_observation_the_session_never_proposed_is_answered_as_not_taken(
@@ -160,11 +160,68 @@ def test_an_observation_the_session_never_proposed_is_answered_as_not_taken(
     sent = run(
         [
             ('configure', config_file),
-            ('observe', ('someone-elses-shot', 1.0, None, False)),
+            ('observe', [('someone-elses-shot', 1.0, None, False)]),
         ]
     )
     _, (recorded, _) = sent[-1]
-    assert recorded is False
+    assert recorded == (False,)
+
+
+def test_every_observation_in_one_message_is_taken(config_file):
+    """lyse hands the routine every shot it analysed in one batch, and all of
+    them are runs this session spent. A message that carried two and recorded
+    one would leave the other awaited until a reconcile dropped it.
+    """
+    sent = run(
+        [
+            ('configure', config_file),
+            (
+                'observe',
+                [('shot-0', 1.0, None, False), ('shot-1', 2.0, None, False)],
+            ),
+        ]
+    )
+    assert status_of(sent[-1])['completed'] == 2
+
+
+def test_one_verdict_comes_back_per_observation_in_the_order_sent(config_file):
+    """The routine writes each shot's status into that shot's own file, so a
+    single answer for a message carrying several would either write the
+    optimiser's numbers onto somebody else's shot or leave one of its own
+    without them.
+    """
+    sent = run(
+        [
+            ('configure', config_file),
+            (
+                'observe',
+                [
+                    ('someone-elses-shot', 1.0, None, False),
+                    ('shot-1', 2.0, None, False),
+                    ('another-of-theirs', 3.0, None, False),
+                ],
+            ),
+        ]
+    )
+    _, (recorded, _) = sent[-1]
+    assert recorded == (False, True, False)
+
+
+def test_one_message_carrying_several_observations_is_answered_once(config_file):
+    """The routine waits for one reply per message it sends. A second reply
+    would be read by the next invocation as the answer to its own message, and
+    every status after it would belong to the shots before it.
+    """
+    sent = run(
+        [
+            ('configure', config_file),
+            (
+                'observe',
+                [('shot-0', 1.0, None, False), ('shot-1', 2.0, None, False)],
+            ),
+        ]
+    )
+    assert [kind for kind, _ in sent] == ['status', 'status']
 
 
 def test_a_status_message_frees_the_places_of_lost_shots(config_file):
@@ -225,11 +282,11 @@ def test_a_shot_arriving_before_configuring_is_answered_with_nothing(config_file
     """There is no session to report on yet, and the routine is waiting: an
     empty status is the answer, not an error and not silence.
     """
-    assert run([('shot', None)]) == [('status', (False, {}))]
+    assert run([('shot', None)]) == [('status', ((), {}))]
 
 
 def test_an_observation_before_configuring_is_an_error(config_file):
-    sent = run([('observe', ('shot-0', 1.0, None, False))])
+    sent = run([('observe', [('shot-0', 1.0, None, False)])])
     assert sent[-1][0] == 'error'
     assert 'before being configured' in sent[-1][1]
 
@@ -277,7 +334,7 @@ def test_the_worker_starts_in_a_process_of_its_own(monkeypatch, tmp_path):
     to_worker, from_worker = worker.start()
     try:
         to_worker.put(('shot', None))
-        assert from_worker.get(timeout=60) == ('status', (False, {}))
+        assert from_worker.get(timeout=60) == ('status', ((), {}))
     finally:
         to_worker.put(('quit', None))
         assert worker.child.wait(timeout=60) == 0

@@ -10,9 +10,16 @@ reaching the run budget stops it. :data:`SHOT_RESULTS` is written onto each
 shot the session proposed, as lyse results under :data:`RESULTS_GROUP`, so
 the best cost and where the search has got to are columns of the dataframe.
 
-The routine itself does almost nothing: it reads the cost for the shot it was
-called on, hands it to the worker, and waits for the worker to say where the
-session has got to.
+The routine itself does almost nothing: it reads the costs of the shots lyse
+has analysed since it last ran, hands them to the worker, and waits for the
+worker to say where the session has got to.
+
+lyse runs a multishot routine once per drained batch of singleshot analyses
+rather than once per shot. Where analysis keeps up that is one shot an
+invocation, and where it does not -- a shot arriving while the one before it
+is still being analysed, analysis paused and resumed, or lyse started with
+shots already in the box -- it is several. Every one of them is a run the
+session spent, so every one of them is handed over.
 """
 
 import atexit
@@ -44,30 +51,77 @@ REPLY_TIMEOUT = 2.0
 #: first runmanager connection. This is startup, not part of a shot cycle.
 CONFIGURE_TIMEOUT = 30.0
 
-
-def latest(dataframe):
-    """The most recent shot, as a one-row frame.
-
-    A frame rather than the row ``dataframe.iloc[-1]``: pandas resolves a key
-    shallower than the column MultiIndex against a frame's columns, whatever
-    the frame's depth, where against a row the same key names a sub-Series.
-    """
-    return dataframe.iloc[[-1]]
+#: Rows asked of lyse first: the row this routine handled last, and the shot
+#: analysed since. That is the steady state, where analysis keeps up, in one
+#: request; a batch larger than this is reached by doubling.
+FIRST_REQUEST = 2
 
 
 def value(shot, key):
     """One column of a one-row frame, or ``None`` if there is no such column.
 
-    ``key`` may be shallower than the frame's MultiIndex, whose padding levels
-    are empty.
+    A one-row frame rather than the row ``dataframe.iloc[-1]``: pandas
+    resolves a key shallower than the column MultiIndex against a frame's
+    columns, whatever the frame's depth, where against a row the same key
+    names a sub-Series. ``key`` may be shallower than the frame's MultiIndex,
+    whose padding levels are empty.
     """
     if key not in shot:
         return None
     return shot[key].iloc[-1]
 
 
-def extract(dataframe, config):
-    """Read the shot id and cost of the most recent shot.
+def catch_up(handled):
+    """Ask lyse for every shot of this sequence analysed after ``handled``.
+
+    ``handled`` is the filepath of the row this routine last handled, or
+    ``None`` on the first invocation of a session. The frame returned holds
+    that row and everything after it, which is what tells the caller which
+    rows are new.
+
+    Asks for :data:`FIRST_REQUEST` rows and doubles until the handled row is
+    in the frame or the sequence has no more rows to give, so a pile-up of any
+    size is fetched whole while the steady state costs one request. The first
+    invocation asks for one row: it hands nothing over, and reaching back over
+    a sequence already hundreds of rows long would fetch all of it to make
+    nothing of it.
+    """
+    import lyse
+
+    if handled is None:
+        return lyse.data(n_sequences=1, n_shots=1)
+    wanted = FIRST_REQUEST
+    while True:
+        # One sequence because a run is one sequence: the rows of whatever ran
+        # before this session are not shots it can report on.
+        frame = lyse.data(n_sequences=1, n_shots=wanted)
+        if len(frame) < wanted or handled in list(frame["filepath"]):
+            return frame
+        wanted *= 2
+
+
+def unreported(dataframe, handled):
+    """The rows after ``handled``, in order: the shots to hand over.
+
+    None of them on the first invocation of a session, where there is no
+    handled row: those shots were analysed before the session existed, and
+    the sequence so far is not what it spent its runs on.
+
+    All of them when the handled row is not in the frame, which is a sequence
+    that has moved on further than the frame reaches, or a new sequence
+    entirely. Handing over a row twice is harmless -- the session takes a cost
+    for a shot id once -- and skipping one is a run it never hears about.
+    """
+    if handled is None:
+        return dataframe.iloc[0:0]
+    paths = list(dataframe["filepath"])
+    if handled not in paths:
+        return dataframe
+    return dataframe.iloc[paths.index(handled) + 1 :]
+
+
+def extract(shot, config):
+    """Read the shot id and cost of one shot, given as a one-row frame.
 
     Returns ``(shot_id, cost, uncer, bad)``, or ``None`` when there is no id to
     read: lyse reads the identifier runmanager wrote into the file as a column,
@@ -78,10 +132,6 @@ def extract(dataframe, config):
     to the session is the session's own answer. The sign flip for ``maximize``
     happens here, once, so everything downstream minimises.
     """
-    if not len(dataframe):
-        return None
-
-    shot = latest(dataframe)
     shot_id = value(shot, "shot_id")
     if shot_id is None or shot_id == "":
         return None
@@ -105,8 +155,8 @@ def save_status(filepath, status) -> None:
 
     lyse reads the attributes of ``/results/<group>`` back as dataframe
     columns, so each key written becomes ``df[(RESULTS_GROUP, key)]`` against
-    the shot the routine ran on. Only attributes are read that way, which is
-    why ``best_params`` is saved with ``save_result`` although it is a list --
+    that shot. Only attributes are read that way, which is why ``best_params``
+    is saved with ``save_result`` although it is a list --
     ``save_result_array`` would write it as a dataset, into a part of the file
     the dataframe never looks at. A value the session does not have yet is
     written as NaN, because an h5 attribute cannot be ``None``.
@@ -172,20 +222,21 @@ def start_worker(config_path, process_tree=None):
 def _drain(from_worker, timeout=None):
     """Wait for the worker's answer to the message just sent, and return it.
 
-    Returns ``(recorded, status)``: whether the session took the observation
-    just sent, and where the session has got to. The two travel in one message,
-    so a status can never be read against another shot's answer.
+    Returns ``(recorded, status)``: one verdict per observation the message
+    carried, in the order it carried them, saying whether the session took
+    that observation, and where the session has got to. All of it travels in
+    one message, so a status can never be read against another shot's answer.
 
-    The answer is this shot's own: the worker's reply is still crossing a
-    socket while this runs. ``timeout`` bounds the wait for its first message
-    and defaults to :data:`REPLY_TIMEOUT`; reaching it returns ``(False,
-    None)`` and this shot goes unreported.
+    The answer is this invocation's own: the worker's reply is still crossing
+    a socket while this runs. ``timeout`` bounds the wait for its first
+    message and defaults to :data:`REPLY_TIMEOUT`; reaching it returns ``((),
+    None)`` and the shots just sent go unreported.
 
     Anything behind the answer is swept up too, but only if it is already
     waiting, which is how an error from the slow work behind an earlier reply
     arrives without being waited for. Raises if the worker reported an error.
     """
-    recorded, status, error = False, None, None
+    recorded, status, error = (), None, None
     timeout = REPLY_TIMEOUT if timeout is None else timeout
     while True:
         try:
@@ -204,33 +255,27 @@ def _drain(from_worker, timeout=None):
 
 
 def optimise(config_path, storage=None, dataframe=None):
-    """Advance the optimisation by one shot. The lyse routine entry point.
+    """Hand over the shots analysed since last time. The lyse routine entry point.
 
     Args:
         config_path: The TOML configuration.
-        storage: Where to keep the worker between shots. Defaults to
-            ``lyse.routine_storage``.
-        dataframe: The shots to read. Defaults to the shot the routine was
-            called on, asked of lyse.
+        storage: Where to keep the worker and the sequence's place between
+            invocations. Defaults to ``lyse.routine_storage``.
+        dataframe: The shots to read, the row handled last among them.
+            Defaults to what :func:`catch_up` asks of lyse.
 
     Returns:
         The whole status the worker sends in answer to this invocation, or
         ``None`` if the worker does not answer within :data:`REPLY_TIMEOUT`.
-        When the session took this shot's cost, :func:`save_status` has
-        written :data:`SHOT_RESULTS` of that status onto the shot. Worker
-        configuration is acknowledged before the worker is stored, so the
-        first shot receives its own answer like every later shot.
+        For each shot the session took, :func:`save_status` has written
+        :data:`SHOT_RESULTS` of that status onto it. Worker configuration is
+        acknowledged before the worker is stored, so the first invocation
+        receives its own answer like every later one.
     """
-    if storage is None or dataframe is None:
+    if storage is None:
         import lyse
 
-        storage = lyse.routine_storage if storage is None else storage
-        if dataframe is None:
-            # One sequence because a run is one sequence, and one shot of it
-            # because only the most recent is read: a sequence grows by a row
-            # every time this is called, and asking for the whole of it would
-            # make each invocation cost more than the one before.
-            dataframe = lyse.data(n_sequences=1, n_shots=1)
+        storage = lyse.routine_storage
 
     if getattr(storage, "optimisation_worker", None) is None:
         from . import config as config_module
@@ -241,6 +286,9 @@ def optimise(config_path, storage=None, dataframe=None):
         # the cost is -- a flipped maximize driving the search the wrong way.
         storage.optimisation_config = config_module.load(config_path)
         storage.optimisation_worker = start_worker(config_path)
+        # A session opens having handled nothing: the rows already in lyse's
+        # box were analysed before it existed.
+        storage.optimisation_last_row = None
         # The ordinary shutdown, where lyse asks the analysis subprocess to
         # quit. A killed subprocess does not run this and the worker is left
         # to zprocess's heartbeat.
@@ -248,23 +296,49 @@ def optimise(config_path, storage=None, dataframe=None):
 
     config = storage.optimisation_config
     to_worker, from_worker, _ = storage.optimisation_worker
+    if dataframe is None:
+        dataframe = catch_up(storage.optimisation_last_row)
 
-    observation = extract(dataframe, config)
-    if observation is not None:
-        # Reported whether or not its cost is usable: the shot has run and
+    shots = unreported(dataframe, storage.optimisation_last_row)
+    if len(dataframe):
+        storage.optimisation_last_row = value(dataframe.iloc[[-1]], "filepath")
+
+    handed, observations = [], []
+    for position in range(len(shots)):
+        shot = shots.iloc[[position]]
+        observation = extract(shot, config)
+        if observation is None:
+            # One of runmanager's default shots, carrying no queue-row id.
+            continue
+        # Handed over whether or not its cost is usable: the shot has run and
         # lyse has analysed it, so withholding it would leave its id awaited
         # until a reconcile quietly dropped it, understating the runs spent.
-        to_worker.put(("observe", observation))
+        handed.append(value(shot, "filepath"))
+        observations.append(observation)
+
+    if observations:
+        # One message however many shots it carries. The worker answers each
+        # message once, so a second message would be answered against the
+        # status the routine has already read and every verdict after it would
+        # belong to another invocation's shots.
+        to_worker.put(("observe", tuple(observations)))
     else:
+        # An invocation with nothing to report still sends one. Reconciling
+        # and refilling happen in the worker's trailing work, after it has
+        # replied, so a routine that returned here would stop the session
+        # giving up on shots that are not coming and stop it reviving a
+        # generation an operator has unblocked.
         to_worker.put(("shot", None))
 
     recorded, status = _drain(from_worker)
-    # The session took this shot's cost, so this shot is one it proposed. The
-    # id alone does not say so: runmanager mints one for every queue row it
+    # One verdict per shot handed over, in the order they were handed over.
+    # The session taking a cost is what says the shot is one it proposed: the
+    # id alone does not, because runmanager mints one for every queue row it
     # compiles, and writing the status onto a shot the session never proposed
     # would put a column of somebody else's numbers against a user's own shot.
-    if recorded:
-        save_status(value(latest(dataframe), "filepath"), status)
+    for filepath, taken in zip(handed, recorded):
+        if taken:
+            save_status(filepath, status)
     return status
 
 

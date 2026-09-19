@@ -2,7 +2,7 @@
 
 Spawned once by the lyse routine and kept until the routine is restarted. The
 fitting and the runmanager traffic happen here, so that the routine can hand
-over one observation and return at once.
+over the shots lyse has analysed and return at once.
 
 The worker is purely reactive: it proposes only in response to a message. If
 the routine's process dies no more messages arrive, so the few seconds zprocess
@@ -39,11 +39,14 @@ class Worker(Process):
     def run(self) -> None:
         """Handle messages until told to quit. The child's entry point.
 
-        A reply is ``("status", (recorded, status))``. ``recorded`` is whether
-        the session took the observation this message carried, and it is the
-        only thing that says the shot the routine is holding is one of this
-        session's: runmanager mints a shot id for every queue row it compiles,
-        so a user's own shots carry one too.
+        A reply is ``("status", (recorded, status))``. ``recorded`` holds one
+        verdict per observation the message carried, in the order it carried
+        them: whether the session took that observation, which is the only
+        thing that says the shot the routine is holding is one of this
+        session's -- runmanager mints a shot id for every queue row it
+        compiles, so a user's own shots carry one too. One message is answered
+        once however many observations it carries, so the routine never reads
+        a verdict against another invocation's shots.
 
         The reply goes out before the reconciling, proposing and submitting
         that follow it, so the status the routine reads is one step behind:
@@ -57,7 +60,7 @@ class Worker(Process):
             command, payload = self.from_parent.get()
             if command == "quit":
                 return
-            recorded = False
+            recorded = ()
             try:
                 if command == "configure":
                     config = config_module.load(payload)
@@ -69,10 +72,12 @@ class Worker(Process):
                         raise RuntimeError(
                             "got an observation before being configured"
                         )
-                    recorded = session.record(*payload)
+                    recorded = tuple(
+                        session.record(*observation) for observation in payload
+                    )
                 elif command == "shot":
                     if session is None:
-                        self.to_parent.put(("status", (False, {})))
+                        self.to_parent.put(("status", ((), {})))
                         continue
                 else:
                     raise ValueError(f"unknown command {command!r}")
