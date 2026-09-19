@@ -25,8 +25,9 @@ House rules that apply to every slice:
 - [x] Slice 3: What the lab reads — `best_cost` units and cost ordering
 - [x] Slice 4: Textbook generational differential evolution
 - [ ] Slice 5: The greeting's deadline belongs to the question
-- [ ] Slice 6: Benchmark the shipped DE
-- [ ] Slice 7: Test cleanup
+- [ ] Slice 6: A wrapper cannot silently drop a generation barrier
+- [ ] Slice 7: Benchmark the shipped DE
+- [ ] Slice 8: Test cleanup
 
 ---
 
@@ -443,7 +444,58 @@ Ian, and until it lands the interim stays in place with its comment.
 
 ---
 
-## Slice 6: Benchmark the shipped DE
+## Slice 6: A wrapper cannot silently drop a generation barrier
+
+### Type
+
+`AFK`
+
+### What to build
+
+`TwoPhaseLearner` wraps a trainer and a main learner and does not forward the
+main learner's `generation`. Nothing that needs training declares one today —
+only the Gaussian process is wrapped, and it has no population — so this cannot
+bite now. It is filed because of what happens when it does: a generational
+learner placed behind a trainer would have its barrier silently dropped, the
+session would top the queue up mid-generation, and the algorithm would quietly
+stop being the algorithm it is named after. That is precisely the failure the
+differential evolution slice exists to correct, left reachable by a second
+route.
+
+Forwarding is not obviously right — during training the trainer proposes, and
+the trainer has no barrier, so a forwarded generation would describe a phase
+that is not running. Refusing is the honest alternative: a wrapper that cannot
+honour a barrier its main learner declares should say so at construction rather
+than discard it. Decide which, and write down why the other was not chosen.
+
+The general form of the rule is worth stating in the learner contract: an
+attribute a session acts on must be either honoured or refused by anything that
+wraps a learner. `last_phase` and `minimum_observations` should be checked
+against that rule at the same time, since the same argument applies to both.
+
+### Acceptance criteria
+
+- [ ] A generational learner behind a trainer either keeps its barrier or is
+      refused at construction — mutation: whichever is chosen, the opposite
+      behaviour passes silently today
+- [ ] The learner contract states what a wrapper owes an attribute the session
+      acts on
+- [ ] `last_phase` and `minimum_observations` are checked against the same rule,
+      and any gap is fixed or recorded
+
+### Blocked by
+
+None - can start immediately. The differential evolution slice is what makes it
+reachable, and that has landed.
+
+### User stories covered
+
+- Found while implementing PRD "Issue 2"; not in the PRD, which did not
+  anticipate a wrapped generational learner.
+
+---
+
+## Slice 7: Benchmark the shipped DE
 
 ### Type
 
@@ -488,7 +540,7 @@ mutation strategy.
 
 ---
 
-## Slice 7: Test cleanup
+## Slice 8: Test cleanup
 
 ### Type
 
@@ -544,7 +596,7 @@ Three specific items carried forward from earlier slices:
 
 ### Blocked by
 
-- Slices 1 through 6
+- Slices 1 through 7
 
 ### User stories covered
 
