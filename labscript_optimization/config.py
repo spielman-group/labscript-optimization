@@ -103,7 +103,7 @@ class Config:
     session: str = "default"
     learner: str = "gaussian_process"
     learner_options: dict[str, dict[str, Any]] = field(default_factory=dict)
-    num_buffered_runs: int = 1
+    num_buffered_runs: int = 3
     num_training_runs: int = 5
     max_num_runs: int | None = None
     max_num_runs_without_better_params: int | None = None
@@ -238,7 +238,7 @@ def from_dict(raw: dict) -> Config:
         session=str(mloop.get("session", "default")),
         learner=mloop.get("learner", mloop.get("controller_type", "gaussian_process")),
         learner_options=learner_options,
-        num_buffered_runs=int(mloop.get("num_buffered_runs", 1)),
+        num_buffered_runs=int(mloop.get("num_buffered_runs", 3)),
         num_training_runs=int(mloop.get("num_training_runs", 5)),
         max_num_runs=mloop.get("max_num_runs"),
         max_num_runs_without_better_params=mloop.get(

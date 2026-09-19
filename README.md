@@ -48,10 +48,20 @@ Adding the routine starts the session; removing it, restarting it, or reaching
 the run budget stops it. Progress comes back as the routine's results: the best
 cost so far, how many shots are in flight, and which phase the learner is in.
 
+`num_buffered_runs` must be more than one. BLACS asks for its next shot as
+soon as it finishes the last, which is before this optimiser has seen the cost
+and proposed a replacement — so a queue holding only one of our shots is empty
+at precisely that moment, and runmanager hands BLACS a default shot instead. At
+one buffered run roughly every second shot is a default one. The routine
+reports a `starved` count for the times it found nothing of its own queued;
+raise `num_buffered_runs` if it keeps climbing.
+
 runmanager's empty-queue policy must be `default_labscript`. The session
 refuses to start otherwise: a queue that empties under the `nothing` policy
 produces no further shot, so nothing would reach lyse to invoke the routine
-again and the optimisation would stop without saying so.
+again and the optimisation would stop without saying so. Those default shots
+are also what keeps the routine running while the optimiser waits: they carry
+no shot id, so they are not mistaken for its own.
 
 You compute the cost yourself, in your own lyse routine, into the column named
 by `cost_key`. A shot whose cost is `NaN` is recorded as a bad observation

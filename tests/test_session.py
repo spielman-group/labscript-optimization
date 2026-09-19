@@ -231,3 +231,25 @@ def test_status_reports_progress(session, runmanager):
     assert status['best_cost'] == 2.0
     assert status['best_shot'] == 'shot-0'
     assert status['stopped'] is None
+
+
+def test_an_empty_queue_at_refill_is_counted(runmanager):
+    """Every time nothing of ours is queued, BLACS ran a default shot instead.
+
+    That is the apparatus staying busy rather than a fault, but it is a shot
+    the optimiser did not get, so it is worth telling the user about.
+    """
+    session = Session(make_config(buffered=1), runmanager)
+    for _ in range(3):
+        for shot_id in session.refill():
+            session.record(shot_id, 1.0, None, False)
+    assert session.status()['starved'] == 2
+
+
+def test_a_queue_kept_topped_up_does_not_starve(runmanager):
+    session = Session(make_config(buffered=3), runmanager)
+    session.refill()
+    for _ in range(5):
+        session.record(session.awaiting[0], 1.0, None, False)
+        session.refill()
+    assert session.status()['starved'] == 0

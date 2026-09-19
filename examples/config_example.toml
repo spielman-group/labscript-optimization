@@ -31,7 +31,13 @@ session = "2026-09-18a"
 # gaussian_process runs directed_random for its training shots first.
 learner = "gaussian_process"
 
-# How many shots to keep in runmanager's queue at once.
+# How many shots to keep in runmanager's queue at once. This must be more than
+# one. BLACS asks for a shot as soon as it finishes the last, which is before
+# this optimiser has seen the cost and proposed a replacement, so a queue
+# holding only one of our shots is empty at exactly that moment and runmanager
+# gives BLACS a default shot instead. At one buffered run roughly every second
+# shot is a default one. Raise it if the "starved" count in this routine's
+# results keeps climbing: the fit is taking longer than a shot.
 num_buffered_runs = 3
 
 # How many shots the trainer runs before the Gaussian process takes over.

@@ -36,6 +36,7 @@ class Session:
         self.proposals: dict[str, np.ndarray] = {}
         self.results: dict[str, tuple[float, float | None, bool]] = {}
         self.dropped: set[str] = set()
+        self.starved = 0
         self.stopped: str | None = None
 
     @property
@@ -116,7 +117,15 @@ class Session:
         """
         if self.stopped:
             return []
-        wanted = self.config.num_buffered_runs - len(self.awaiting)
+        awaiting = len(self.awaiting)
+        if awaiting == 0 and self.proposals:
+            # Nothing of ours was queued when this ran, so runmanager will have
+            # given BLACS a default shot instead. That is the apparatus staying
+            # busy rather than a fault, but every one is a shot the optimiser
+            # did not get, so it is counted: a session that starves often wants
+            # a larger num_buffered_runs.
+            self.starved += 1
+        wanted = self.config.num_buffered_runs - awaiting
         if self.config.max_num_runs is not None:
             # Do not queue shots beyond the budget. Dropped shots are not
             # counted against it: they produced nothing, so replacing one is
@@ -143,6 +152,7 @@ class Session:
             "completed": len(self.results),
             "awaiting": len(self.awaiting),
             "dropped": len(self.dropped),
+            "starved": self.starved,
             "best_cost": None if best is None else best.cost,
             "best_params": None if best is None else best.params.tolist(),
             "best_shot": None if best is None else best.tag,
