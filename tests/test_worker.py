@@ -64,8 +64,14 @@ class FakeInterface:
         self.submitted.extend(ids)
         return ids
 
-    def pending(self, shot_ids):
-        return {i for i in shot_ids if i not in self.gone}
+    def shot_status(self, shot_ids):
+        """The shape runmanager answers with: a verdict and a state per id."""
+        return {
+            i: {'pending': False, 'state': 'cancelled'}
+            if i in self.gone
+            else {'pending': True, 'state': 'running'}
+            for i in shot_ids
+        }
 
 
 class RefusingInterface(FakeInterface):
@@ -111,8 +117,10 @@ def test_an_observation_is_answered_before_the_next_shots_are_proposed(config_fi
 
 def test_a_status_message_frees_the_places_of_lost_shots(config_file):
     class LosesEverything(FakeInterface):
-        def pending(self, shot_ids):
-            return set()
+        def shot_status(self, shot_ids):
+            return {
+                i: {'pending': False, 'state': 'cancelled'} for i in shot_ids
+            }
 
     sent = run(
         [('configure', config_file), ('status', None), ('status', None)],
@@ -142,9 +150,9 @@ def test_the_reply_is_sent_before_runmanager_is_asked_which_shots_remain(config_
     outbox_when_asked = []
 
     class NotesTheOutbox(FakeInterface):
-        def pending(self, shot_ids):
+        def shot_status(self, shot_ids):
             outbox_when_asked.append([kind for kind, _ in to_parent.sent])
-            return super().pending(shot_ids)
+            return super().shot_status(shot_ids)
 
     serve(
         Pipe([('configure', config_file), ('status', None), ('quit', None)]),

@@ -27,11 +27,11 @@ if __package__ in (None, ""):
 from labscript_utils.ls_zprocess import ProcessTree
 
 from labscript_optimization import config as config_module
-from labscript_optimization.runmanager_interface import interface_for
+from labscript_optimization.runmanager_interface import RunmanagerInterface
 from labscript_optimization.session import Session
 
 
-def serve(from_parent, to_parent, interface_factory=interface_for) -> None:
+def serve(from_parent, to_parent, interface_factory=RunmanagerInterface) -> None:
     """Handle messages until told to quit.
 
     The reply goes out first, before the reconciling, proposing and submitting

@@ -5,9 +5,10 @@ Machine-learning online optimisation of
 
 A lyse routine proposes shots, runmanager runs them, and the costs come back
 through lyse. It replaces M-LOOP and its lyse plugin
-[analysislib-mloop](https://github.com/rpanderson/analysislib-mloop), keeping
-their configuration schema and the algorithms worth keeping, and depends only
-on numpy, scipy and scikit-learn.
+[analysislib-mloop](https://github.com/rpanderson/analysislib-mloop), taking
+the algorithms worth keeping and the shape of their TOML configuration, and
+depends only on numpy, scipy and scikit-learn. It does not read an
+analysislib-mloop file as it stands: see [Using it](#using-it).
 
 ## How it works
 
@@ -73,12 +74,21 @@ by `cost_key`. A shot whose cost is `NaN` is recorded as a bad observation
 rather than being waited on.
 
 See [`examples/config_example.toml`](examples/config_example.toml) for the
-configuration. It is the schema analysislib-mloop used, less the settings that
-were M-LOOP's own: every key is read, and one this package does not act on
-stops the load with a message naming it, rather than being accepted and
-ignored — a setting nothing reads is one a lab believes is in force when it is
-not. An `mloop_config` file carried over therefore needs those keys deleted,
-typically `ignore_bad`, `no_delay`, `visualisations` and the log levels.
+configuration. It has the shape of an analysislib-mloop file, without the
+settings that belong to M-LOOP itself and without that package's alternate
+spellings: every key is read, and one this package does not act on stops the
+load with a message
+naming it, rather than being accepted and ignored — a setting nothing reads is
+one a lab believes is in force when it is not.
+
+An `mloop_config` file carried over therefore needs editing before it will
+load. Between them, analysislib-mloop's own two example files need the whole
+`[COMPILATION]` table deleted, along with `ignore_bad`, `no_delay`,
+`visualisations` and the log settings `analysislib_console_log_level`,
+`analysislib_file_log_level`, `console_log_level` and `console_log_string`;
+`controller_type` is spelt `learner` here and has to be renamed. Parameter
+bounds are `min` and `max`, and the long spellings `minimum` and `maximum` are
+not read either.
 
 ## Learners
 

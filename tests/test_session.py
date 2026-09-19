@@ -28,11 +28,18 @@ def make_config(buffered=3, **extra):
 
 
 class FakeRunmanager:
-    """Stands in for runmanager, and decides what is still coming."""
+    """Stands in for runmanager, and decides what is still coming.
+
+    It answers as runmanager does: one ``{'pending', 'state'}`` per id asked
+    about. A cancelled shot keeps its row and says so, while a shot that has
+    run leaves the queue and becomes indistinguishable from an id runmanager
+    never had -- both are ``unknown``.
+    """
 
     def __init__(self):
         self.submitted: list[str] = []
-        self.gone: set[str] = set()
+        self.cancelled: set[str] = set()
+        self.finished: set[str] = set()
         self.labscript_changed = False
 
     def check_ready(self):
@@ -47,12 +54,24 @@ class FakeRunmanager:
         self.submitted.extend(ids)
         return ids
 
-    def pending(self, shot_ids):
-        return {i for i in shot_ids if i not in self.gone}
+    def shot_status(self, shot_ids):
+        answers = {}
+        for shot_id in shot_ids:
+            if shot_id in self.cancelled:
+                answers[shot_id] = {'pending': False, 'state': 'cancelled'}
+            elif shot_id in self.finished or shot_id not in self.submitted:
+                answers[shot_id] = {'pending': False, 'state': 'unknown'}
+            else:
+                answers[shot_id] = {'pending': True, 'state': 'running'}
+        return answers
 
     def lose(self, *shot_ids):
-        """The apparatus or an operator disposes of these shots."""
-        self.gone.update(shot_ids)
+        """An operator disposes of these shots, so they will never run."""
+        self.cancelled.update(shot_ids)
+
+    def finish(self, *shot_ids):
+        """These shots run and leave the queue, as every healthy shot does."""
+        self.finished.update(shot_ids)
 
 
 @pytest.fixture
@@ -85,7 +104,7 @@ def test_costs_arriving_out_of_order_land_in_proposal_order(session):
     session.refill()
     session.record('shot-2', 3.0, None, False)
     session.record('shot-0', 9.0, None, False)
-    assert [o.tag for o in session.history] == ['shot-0', 'shot-2']
+    assert [o.shot_id for o in session.history] == ['shot-0', 'shot-2']
 
 
 def test_a_shot_this_session_did_not_submit_is_ignored(session):
@@ -152,21 +171,65 @@ def test_a_cost_arriving_after_a_shot_was_dropped_is_still_taken(session, runman
     runmanager.lose('shot-0')
     session.reconcile()
     assert session.record('shot-0', 2.0, None, False) is True
-    assert session.best.tag == 'shot-0'
+    assert session.best.shot_id == 'shot-0'
 
 
 def test_reconciling_asks_only_about_shots_still_awaited(session, runmanager):
     session.refill()
     session.record('shot-0', 1.0, None, False)
     asked = []
-    runmanager.pending = lambda ids: (asked.extend(ids) or set(ids))
+    still_coming = {'pending': True, 'state': 'running'}
+    runmanager.shot_status = lambda ids: (
+        asked.extend(ids) or {i: dict(still_coming) for i in ids}
+    )
     session.reconcile()
     assert sorted(asked) == ['shot-1', 'shot-2']
 
 
 def test_nothing_is_asked_when_nothing_is_awaited(session, runmanager):
-    runmanager.pending = lambda ids: pytest.fail('asked with nothing awaited')
+    runmanager.shot_status = lambda ids: pytest.fail('asked with nothing awaited')
     assert session.reconcile() == []
+
+
+def test_a_shot_that_has_only_just_run_is_not_treated_as_lost(session, runmanager):
+    """A completed shot leaves runmanager's queue at once, while its cost is
+    still on its way through lyse. runmanager reports it exactly as it reports
+    an id it has never heard of, so giving up on that answer alone would make
+    the ordinary end of every healthy shot count as a loss -- and the number of
+    dropped shots is what a user reads to see whether shots are being lost.
+    """
+    session.refill()
+    runmanager.finish('shot-0')
+
+    assert session.reconcile() == []
+    assert session.status()['dropped'] == 0
+
+    assert session.record('shot-0', 1.0, None, False) is True
+    assert session.reconcile() == []
+    assert session.status()['dropped'] == 0
+
+
+def test_a_shot_still_unknown_at_the_next_reconcile_is_dropped(session, runmanager):
+    """Staying unknown with no cost is how a shot that has really gone is told
+    from one that has just finished. An operator's deletion and a runmanager
+    restart both leave an id nothing will ever answer for, and its place must
+    not be held for the rest of the session.
+    """
+    session.refill()
+    runmanager.finish('shot-0')
+
+    assert session.reconcile() == []
+    assert session.reconcile() == ['shot-0']
+    assert session.awaiting == ['shot-1', 'shot-2']
+    assert session.refill() == ['shot-3']
+
+
+def test_a_shot_with_a_reason_is_dropped_at_the_first_reconcile(session, runmanager):
+    """An answer that names a state names a reason nothing further will happen,
+    so there is nothing to wait a second round for."""
+    session.refill()
+    runmanager.lose('shot-0')
+    assert session.reconcile() == ['shot-0']
 
 
 # --- stopping ---------------------------------------------------------------
@@ -211,6 +274,45 @@ def test_improvement_resets_the_patience(runmanager):
     assert session.stopped is None
 
 
+def test_shots_with_no_usable_cost_still_exhaust_the_patience(runmanager):
+    """A detector that has died returns costs, none of them usable.
+
+    Those shots count against max_num_runs, so they must count here too. A
+    patience limit that ignored them would be the one setting that runs for
+    ever on a broken apparatus -- which is the failure it exists to catch.
+    """
+    session = Session(
+        make_config(buffered=1, max_num_runs_without_better_params=3), runmanager
+    )
+    for cost, bad in [
+        (1.0, False),
+        (float('nan'), False),
+        (2.0, True),
+        (float('inf'), False),
+        (0.5, False),
+    ]:
+        submitted = session.refill()
+        if not submitted:
+            break
+        session.record(submitted[0], cost, None, bad)
+    assert 'no better parameters in 3 runs' in session.stopped
+    assert session.best.cost == 1.0
+
+
+def test_a_session_that_never_gets_a_usable_cost_gives_up(runmanager):
+    """With no best to count from, the whole history has been without one."""
+    session = Session(
+        make_config(buffered=1, max_num_runs_without_better_params=2), runmanager
+    )
+    for _ in range(5):
+        submitted = session.refill()
+        if not submitted:
+            break
+        session.record(submitted[0], float('nan'), None, False)
+    assert 'no better parameters in 2 runs' in session.stopped
+    assert session.best is None
+
+
 def test_a_changed_labscript_file_stops_the_session(session, runmanager):
     runmanager.labscript_changed = True
     with pytest.raises(RuntimeError, match='labscript file changed'):
@@ -229,7 +331,7 @@ def test_status_reports_progress(session, runmanager):
     assert status['awaiting'] == 1
     assert status['dropped'] == 1
     assert status['best_cost'] == 2.0
-    assert status['best_shot'] == 'shot-0'
+    assert status['best_shot_id'] == 'shot-0'
     assert status['stopped'] is None
 
 

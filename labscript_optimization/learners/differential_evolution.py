@@ -17,6 +17,7 @@ import numpy as np
 
 from ..observations import Observation, usable
 from ..space import ParameterSpace
+from .base import opening_batch, opening_point
 
 #: The mutation strategies, and how many other population members each one
 #: draws on. The counts are read by :meth:`DifferentialEvolutionLearner._mutant`
@@ -43,6 +44,8 @@ class DifferentialEvolutionLearner:
         trust_region: Restrict sampling to this distance around the best member.
         first_params: A point to return as the very first proposal.
     """
+
+    last_phase = "main"
 
     def __init__(
         self,
@@ -90,13 +93,7 @@ class DifferentialEvolutionLearner:
         self.restart_tolerance = float(restart_tolerance)
         self.trust_region = space.absolute_trust_region(trust_region)
 
-        if first_params is None:
-            first_params = space.start
-        self.first_params = (
-            None if first_params is None else np.array(first_params, dtype=float)
-        )
-        if self.first_params is not None and not self.space.contains(self.first_params):
-            raise ValueError(f"first_params outside the bounds: {self.first_params}")
+        self.first_params = opening_point(space, first_params)
 
     def _replay(self, history: Sequence[Observation]):
         """Rebuild the population by walking the history in proposal order.
@@ -134,12 +131,10 @@ class DifferentialEvolutionLearner:
 
     def _sample_new_member(self, params: list, costs: list) -> np.ndarray:
         """Draw a point while the population is still being filled."""
-        if self.trust_region is None or not costs:
+        if not costs:
             return self.space.uniform(self.rng, 1)[0]
         best = params[int(np.argmin(costs))]
-        low = np.maximum(self.space.minimum, best - self.trust_region)
-        high = np.minimum(self.space.maximum, best + self.trust_region)
-        return self.rng.uniform(low, high)
+        return self.space.uniform(self.rng, 1, best, self.trust_region)[0]
 
     def _distinct_indices(self, exclude: int, count: int) -> np.ndarray:
         choices = np.delete(np.arange(self.num_members), exclude)
@@ -175,20 +170,18 @@ class DifferentialEvolutionLearner:
 
         # A coordinate pushed out of bounds is resampled rather than clipped,
         # which would pile members onto the boundary.
-        if self.trust_region is None:
-            fallback = self.space.uniform(self.rng, 1)[0]
-        else:
-            low = np.maximum(self.space.minimum, population[best] - self.trust_region)
-            high = np.minimum(self.space.maximum, population[best] + self.trust_region)
-            fallback = self.rng.uniform(low, high)
+        fallback = self.space.uniform(
+            self.rng, 1, population[best], self.trust_region
+        )[0]
         outside = (trial < self.space.minimum) | (trial > self.space.maximum)
         return np.where(outside, fallback, trial)
 
     def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
-        if not history and self.first_params is not None:
-            proposals = self.space.uniform(self.rng, k)
-            proposals[0] = self.first_params
-            return proposals
+        opening = opening_batch(
+            self.space, self.rng, history, k, self.first_params
+        )
+        if opening is not None:
+            return opening
 
         params, costs, slot = self._replay(history)
         proposals = np.empty((k, self.space.num_params))

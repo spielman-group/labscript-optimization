@@ -19,7 +19,7 @@ def test_unusable_observations_are_excluded_from_fits():
         observe('not_a_number', [4.0], float('nan')),
         observe('better', [5.0], 2.0),
     ]
-    assert [o.tag for o in usable(history)] == ['good', 'better']
+    assert [o.shot_id for o in usable(history)] == ['good', 'better']
 
 
 def test_best_is_the_lowest_usable_cost():
@@ -28,7 +28,7 @@ def test_best_is_the_lowest_usable_cost():
         observe('b', [2.0], 0.5, bad=True),
         observe('c', [3.0], 2.0),
     ]
-    assert best(history).tag == 'c'
+    assert best(history).shot_id == 'c'
 
 
 def test_best_of_an_empty_history_is_none():

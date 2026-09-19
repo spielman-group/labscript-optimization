@@ -1,7 +1,8 @@
 """The observation record and the history helpers learners share.
 
 An :class:`Observation` is one completed shot: the parameters that were
-requested, the cost that came back, and the tag that ties the two together.
+requested, the cost that came back, and the shot id that ties the two
+together.
 Learners never see a shot that has not reported a cost yet; the worker holds
 those back and keeps the history in the order the proposals were made.
 """
@@ -15,8 +16,10 @@ class Observation(NamedTuple):
     """One completed shot.
 
     Args:
-        tag: The value of the tag global stamped on the shot. Unique within a
-            session, and the key costs are matched to proposals by.
+        shot_id: The identifier runmanager minted for this shot's queue row,
+            written into the shot file as an attribute and read back by the
+            routine. Unique within a session, and the key costs are matched to
+            proposals by.
         params: The parameter vector that was requested, in real units, in
             :class:`~labscript_optimization.space.ParameterSpace` order.
         cost: The measured cost. Lower is better; a maximised quantity has
@@ -26,7 +29,7 @@ class Observation(NamedTuple):
         bad: True when the shot ran but its cost is not usable.
     """
 
-    tag: str
+    shot_id: str
     params: np.ndarray
     cost: float
     uncer: float | None = None

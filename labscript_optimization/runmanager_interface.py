@@ -18,6 +18,14 @@ import numpy as np
 #: Attribute runmanager writes into each shot file it queues.
 SHOT_ID_ATTR = "shot_id"
 
+#: The state runmanager reports for a shot id it has no row for. It is what a
+#: shot that completed and left the queue reads as, as much as one an operator
+#: deleted, so it says less on its own than the other not-pending states do.
+UNKNOWN_SHOT_STATE = "unknown"
+
+#: What runmanager answers for a shot id in that state.
+UNKNOWN_SHOT_STATUS = {"pending": False, "state": UNKNOWN_SHOT_STATE}
+
 
 class RunmanagerInterface:
     """Submits proposals and reports what became of them.
@@ -99,53 +107,29 @@ class RunmanagerInterface:
         ]
         return [d["shot_id"] for d in self.client.submit_shots(entries)]
 
-    def pending(self, shot_ids: Iterable[str]) -> set[str]:
-        """Which of these shots could still produce a cost.
+    def shot_status(self, shot_ids: Iterable[str]) -> dict[str, dict]:
+        """What runmanager says about each of these shots, as it says it.
 
-        An id runmanager no longer knows is not pending, which is how a shot
-        deleted by an operator, or lost to a runmanager restart, stops being
-        waited on.
+        ``{shot_id: {'pending': bool, 'state': str}}``, one entry per id asked
+        about. ``pending`` is whether that shot could still produce a cost.
+        ``state`` is the queue row's own state, or ``'submitted'`` for a shot
+        runmanager has taken on but has no row for yet, ``'blocked'`` for a row
+        sitting behind one an operator has to clear, and ``'unknown'`` for an
+        id runmanager does not know. An id it does not answer for at all is
+        filled in the same way, because knowing nothing of a shot is what it
+        means.
+
+        Passed through rather than reduced to the shots still coming. Whether
+        a cost is still on its way is not a property of the queue alone -- a
+        shot that completed has left the queue and reads exactly like one that
+        was deleted -- so the caller needs the state runmanager gave as well as
+        its verdict.
         """
         shot_ids = list(shot_ids)
         if not shot_ids:
-            return set()
-        status = self.client.shot_status(shot_ids)
-        return {i for i in shot_ids if status.get(i, {}).get("pending", False)}
-
-
-class MockInterface:
-    """Accepts proposals without a runmanager behind it.
-
-    Selected by ``[COMPILATION] mock = true``. Every shot it accepts stays
-    pending until a cost is recorded for it, so a session driven against this
-    behaves as though the apparatus never loses one.
-    """
-
-    def __init__(self, config):
-        self.config = config
-        self.submitted: list[tuple[str, dict]] = []
-        self.labscript_file = "mock"
-
-    def check_ready(self) -> None:
-        pass
-
-    def check_unchanged(self) -> None:
-        pass
-
-    def submit(self, proposals) -> list[str]:
-        ids = []
-        for p in proposals:
-            shot_id = f"mock-{len(self.submitted)}"
-            values = self.config.globals_for(np.asarray(p, dtype=float))
-            self.submitted.append((shot_id, values))
-            ids.append(shot_id)
-            print(f"mock submit {shot_id}: {values}", flush=True)
-        return ids
-
-    def pending(self, shot_ids) -> set[str]:
-        return set(shot_ids)
-
-
-def interface_for(config):
-    """The interface a configuration asks for."""
-    return MockInterface(config) if config.mock else RunmanagerInterface(config)
+            return {}
+        answer = self.client.shot_status(shot_ids)
+        return {
+            i: answer[i] if i in answer else dict(UNKNOWN_SHOT_STATUS)
+            for i in shot_ids
+        }

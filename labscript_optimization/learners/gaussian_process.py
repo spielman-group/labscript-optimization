@@ -9,9 +9,17 @@ Exploration comes from the acquisition, which minimises
 
     cost_bias * predicted_cost - uncer_bias * predicted_standard_deviation
 
-with ``uncer_bias`` stepping 0, 1, 2, ... across the points of one batch, so a
-batch always contains one point that is purely greedy and others that trade
+with the weight on the uncertainty stepping 0, 1, 2, ... across successive
+proposals and returning to zero every ``generation_size`` of them. One
+proposal per generation is therefore purely greedy and the rest trade
 predicted cost for a look somewhere less certain.
+
+The schedule advances with the proposals a session actually makes, not with
+the position of a point within a batch: a session settles into asking for one
+point at a time as shots complete, and a schedule keyed on the batch would
+then sit at its first entry forever and never explore. Its position is read
+off the history rather than counted, so a learner handed the same history
+proposes the same thing.
 
 Refitting the kernel hyperparameters is the expensive part, so it happens once
 per ``generation_size`` new observations rather than on every call. Between
@@ -46,16 +54,22 @@ class GaussianProcessLearner:
         noise_level_bounds: Bounds on the white-noise level, in units of the
             standardised cost.
         cost_bias: Weight on predicted cost in the acquisition.
-        uncer_bias: Weight on predicted uncertainty for the first point of a
-            batch; later points step up by one each.
-        generation_size: How many new observations to accept before refitting
-            the kernel hyperparameters.
+        uncer_bias: Weight on predicted uncertainty, one step of the
+            exploration schedule. Successive proposals use 0, 1, 2, ... times
+            this, so raising it buys a wider look at the unexplored parts of
+            the space without moving the greedy proposal of each generation.
+        generation_size: How many proposals a generation holds. It is both the
+            number of new observations accepted before the kernel
+            hyperparameters are refit and the period of the exploration
+            schedule, as it is in M-LOOP.
         trust_region: Restrict the search to this distance around the best
             point seen.
         minimum_observations: Refuse to propose until the history holds this
             many usable observations, so the two-phase wrapper keeps using its
             trainer. Defaults to twice the parameter count.
     """
+
+    last_phase = "main"
 
     def __init__(
         self,
@@ -157,10 +171,7 @@ class GaussianProcessLearner:
 
     def _search_bounds(self, centre: np.ndarray):
         """Scaled bounds for the minimiser, narrowed by the trust region."""
-        low, high = self.space.minimum, self.space.maximum
-        if self.trust_region is not None:
-            low = np.maximum(low, centre - self.trust_region)
-            high = np.minimum(high, centre + self.trust_region)
+        low, high = self.space.bounds_near(centre, self.trust_region)
         return list(zip(self.space.scale(low), self.space.scale(high)))
 
     def _minimise_acquisition(
@@ -199,9 +210,9 @@ class GaussianProcessLearner:
         unexplored corner and the batch is spent on one location.
 
         The conditioned fit is returned rather than stored. Invented points
-        never reach the learner, so predict() and global_minimum() describe the
-        measured data however a batch turns out, including one abandoned
-        halfway by a minimiser that gave up.
+        never reach the learner, so predict() describes the measured data
+        however a batch turns out, including one abandoned halfway by a
+        minimiser that gave up.
         """
         mean = regressor.predict(np.atleast_2d(scaled_point))
         alpha = regressor.alpha
@@ -235,24 +246,15 @@ class GaussianProcessLearner:
         regressor = self.regressor
         proposals = np.empty((k, self.space.num_params))
         for i in range(k):
+            # Where the exploration schedule stands: one step per proposal,
+            # counting the observations already in hand and then the points
+            # picked so far in this batch. Reading the count off the history
+            # is what makes it survive being asked one point at a time.
+            step = (len(seen) + i) % self.generation_size
             scaled = self._minimise_acquisition(
-                regressor, self.uncer_bias * i, best, bounds
+                regressor, self.uncer_bias * step, best, bounds
             )
             proposals[i] = self.space.clip(self.space.unscale(scaled))
             if i + 1 < k:
                 regressor = self._condition_on(regressor, scaled)
         return proposals
-
-    def global_minimum(self, history: Sequence[Observation]) -> np.ndarray:
-        """The posterior's unbiased minimum over the whole space.
-
-        This is the answer to "where does the model think the optimum is",
-        which is not the same as the next point to try.
-        """
-        if not self.fit(history):
-            raise InsufficientData("no fit is possible yet")
-        seen = usable(history)
-        best = params_array(seen)[int(np.argmin(costs_array(seen)))]
-        bounds = list(zip(self.space.scale(self.space.minimum), self.space.scale(self.space.maximum)))
-        scaled = self._minimise_acquisition(self.regressor, 0.0, best, bounds)
-        return self.space.clip(self.space.unscale(scaled))

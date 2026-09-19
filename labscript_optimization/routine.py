@@ -9,8 +9,9 @@ Adding the routine to lyse starts the session; removing it, restarting it, or
 reaching the run budget stops it. Progress appears as results on the routine.
 
 The routine itself does almost nothing: it reads the cost for the shot it was
-called on, hands it to the worker, and returns. Everything slow happens in the
-worker, because lyse calls multishot routines inline and a slow one delays
+called on, hands it to the worker, and waits for the worker to say where the
+session has got to. Everything slow happens in the worker *after* that answer
+goes out, because lyse calls multishot routines inline and a slow one delays
 every shot behind it.
 
 Every shot the routine can identify is reported, including one whose cost is
@@ -29,23 +30,26 @@ from .runmanager_interface import SHOT_ID_ATTR
 
 WORKER_PATH = os.path.join(os.path.dirname(__file__), "worker.py")
 
+#: Seconds the routine waits for the worker to answer the message it has just
+#: sent. Generous for an answer that is a dictionary and a socket hop, and
+#: short against a shot cycle, which is what it is traded against: see
+#: :func:`_drain`.
+REPLY_TIMEOUT = 2.0
+
 
 def latest(dataframe, key):
     """The most recent value of one column, or ``None`` if there is no such column.
 
-    lyse pads its column labels into a MultiIndex, so an analysis result is the
-    column ``('routine', 'result')``. Indexing by a bare name then gives a
-    frame rather than a value. Accepting both shapes keeps this usable against
-    a plain dataframe in a test.
+    lyse labels its columns with a MultiIndex and pads every label out to the
+    depth of the deepest one, so an analysis result is ``('routine', 'result')``
+    and the shot's file is ``('filepath', '')`` -- deeper still in a sequence
+    whose shots carry images. Either key reads as the column itself rather than
+    as a frame of what sits beneath it, because the levels the padding added
+    are empty, so the depth of the frame does not matter here.
     """
     if key not in dataframe:
         return None
-    column = dataframe[key]
-    if getattr(column, "ndim", 1) > 1:
-        if column.shape[1] != 1:
-            return None
-        column = column.iloc[:, 0]
-    return column.iloc[-1]
+    return dataframe[key].iloc[-1]
 
 
 def shot_id_of(filepath) -> str | None:
@@ -130,17 +134,39 @@ def start_worker(config_path, process_tree=None):
 
 
 def _drain(from_worker):
-    """Take every reply waiting, and return the last status.
+    """Wait for the worker's answer to the message just sent, and return it.
+
+    Waiting, rather than taking whatever happens to have arrived, is what makes
+    the answer this shot's own: the worker's reply is on its way across a
+    socket while this runs, so a poll issued microseconds after the request
+    finds nothing on the first shot and the shot before's status thereafter.
+
+    The wait is bounded because lyse calls multishot routines inline and
+    serially, so whatever is spent here delays every shot behind this one. It
+    is not a budget for the worker's work -- the reply is built from memory and
+    sent before the worker fits anything or asks runmanager anything -- but the
+    limit on how long a worker that has stopped answering can hold lyse up, and
+    reaching it means this shot goes unreported rather than that anything is
+    lost.
+
+    Once something has arrived, anything further is taken only if it is already
+    waiting. The slow work that follows a reply can still fail, and its error
+    is worth having as soon as it can be had, but the routine does not wait on
+    work it deliberately did not wait for.
 
     Raises if the worker reported an error, so it surfaces through lyse's
     normal error path.
     """
-    status, error = None, None
+    status, error, timeout = None, None, REPLY_TIMEOUT
     while True:
         try:
-            kind, payload = from_worker.get(timeout=0)
+            kind, payload = from_worker.get(timeout=timeout)
         except TimeoutError:
             break
+        # Answered. What follows is swept up if it is here and left if it is
+        # not, which is how an error from the work behind an earlier reply is
+        # picked up without waiting for one.
+        timeout = 0
         if kind == "error":
             error = payload
         else:
@@ -160,7 +186,11 @@ def optimise(config_path, storage=None, dataframe=None):
         dataframe: The shots to read. Defaults to ``lyse.data(n_sequences=1)``.
 
     Returns:
-        The worker's status, which the caller may save as lyse results.
+        The status the worker sends in answer to this invocation, which the
+        caller may save as lyse results, or ``None`` if it does not answer
+        within :data:`REPLY_TIMEOUT`. On the shot that starts the session the
+        answer is to the configuration this invocation also sent, so it counts
+        a session that has proposed nothing yet.
     """
     if storage is None or dataframe is None:
         import lyse

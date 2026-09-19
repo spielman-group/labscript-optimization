@@ -61,8 +61,9 @@ class FakeClient:
         ]
 
     def shot_status(self, shot_ids):
+        """One entry per id asked about, as runmanager documents it."""
         return {
-            i: {'pending': self.states.get(i, True), 'state': 'running'}
+            i: self.states.get(i, {'pending': True, 'state': 'running'})
             for i in shot_ids
         }
 
@@ -115,16 +116,33 @@ def test_a_refusal_reaches_the_caller_unchanged(interface, client):
         interface.submit([[1.0, 2.0]])
 
 
-def test_pending_reports_only_the_shots_still_coming(interface, client):
-    client.states = {'a': True, 'b': False, 'c': True}
-    assert interface.pending(['a', 'b', 'c']) == {'a', 'c'}
+def test_runmanagers_verdict_and_its_reason_both_reach_the_caller(interface, client):
+    """A shot stops being pending for several different reasons, and they are
+    not the same news. One that has left the queue may still have a cost on its
+    way through lyse; one an operator has to unblock will not move until they
+    do. Reducing the answer to the ids still coming throws that away.
+    """
+    client.states = {
+        'b': {'pending': False, 'state': 'unknown'},
+        'c': {'pending': False, 'state': 'blocked'},
+    }
+    assert interface.shot_status(['a', 'b', 'c']) == {
+        'a': {'pending': True, 'state': 'running'},
+        'b': {'pending': False, 'state': 'unknown'},
+        'c': {'pending': False, 'state': 'blocked'},
+    }
 
 
-def test_an_id_runmanager_does_not_answer_for_is_not_pending(interface, client):
+def test_an_id_runmanager_does_not_answer_for_is_one_it_knows_nothing_of(
+    interface, client
+):
     client.shot_status = lambda ids: {}
-    assert interface.pending(['a', 'b']) == set()
+    assert interface.shot_status(['a', 'b']) == {
+        'a': {'pending': False, 'state': 'unknown'},
+        'b': {'pending': False, 'state': 'unknown'},
+    }
 
 
 def test_nothing_is_asked_about_an_empty_list(interface, client):
     client.shot_status = lambda ids: pytest.fail('asked about nothing')
-    assert interface.pending([]) == set()
+    assert interface.shot_status([]) == {}

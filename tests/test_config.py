@@ -7,9 +7,6 @@ import pytest
 from labscript_optimization import config as config_module
 
 FULL = """
-[COMPILATION]
-mock = false
-
 [ANALYSIS]
 cost_key = ["zTOF", "Nb"]
 maximize = true
@@ -22,7 +19,7 @@ num_training_runs = 20
 max_num_runs = 400
 trust_region = 0.05
 cost_has_noise = true
-controller_type = "gaussian_process"
+learner = "gaussian_process"
 
 [MLOOP_PARAMS.CMOT.width]
 global_name = "CMOTCaptureWidth"
@@ -92,6 +89,29 @@ def test_several_parameters_can_feed_one_global(config):
     assert combined.evaluate({'bx': 0.1, 'by': 0.2}) == (0.1, 0.2)
 
 
+def test_a_switched_off_global_is_not_set():
+    """A parameter switched off is still carried; a global switched off is not.
+
+    The parameter keeps its bounds, because a reader of the file and of
+    ``space.disabled`` wants to see what is being held out. A global has
+    nothing to hold out: not setting it is the whole of the behaviour.
+    """
+    config = config_module.loads(
+        MINIMAL
+        + '[RUNMANAGER_GLOBALS.G.doubled]\n'
+        + 'expr = "lambda v: 2 * v"\nargs = ["x"]\nenable = false\n'
+    )
+    assert [g.name for g in config.globals] == ['gx']
+
+
+def test_a_global_in_a_group_nobody_switched_on_is_not_set():
+    config = config_module.loads(
+        MINIMAL
+        + '[RUNMANAGER_GLOBALS.OFF.doubled]\nexpr = "lambda v: 2 * v"\nargs = ["x"]\n'
+    )
+    assert [g.name for g in config.globals] == ['gx']
+
+
 def test_the_globals_for_a_proposal_cover_every_mapping(config):
     values = config.globals_for([0.25, 0.1, 0.2])
     assert values == {'CMOTCaptureWidth': 0.25, 'ShimVector': (0.1, 0.2)}
@@ -116,19 +136,49 @@ def test_a_per_learner_table_overrides_the_shared_defaults():
     assert config.options_for('directed_random')['trust_region'] == 0.05
 
 
-def test_the_older_name_for_the_learner_key_is_still_read():
-    older = config_module.loads(
-        MINIMAL + '[MLOOP]\ncontroller_type = "differential_evolution"\n'
+def test_the_learner_is_named_in_the_mloop_table():
+    config = config_module.loads(
+        MINIMAL + '[MLOOP]\nlearner = "differential_evolution"\n'
     )
-    assert older.learner == 'differential_evolution'
+    assert config.learner == 'differential_evolution'
 
 
-def test_the_learner_key_wins_when_a_file_carries_both_names():
-    both = config_module.loads(
-        MINIMAL
-        + '[MLOOP]\nlearner = "neural_net"\ncontroller_type = "differential_evolution"\n'
-    )
-    assert both.learner == 'neural_net'
+def test_analysislib_mloops_spelling_of_the_learner_key_is_rejected():
+    """``controller_type`` is that package's name for it; nothing here reads it.
+
+    Kept as an alias it would be one more spelling to carry for ever, in a
+    schema whose whole argument is that a file says exactly what is in force.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(
+            MINIMAL + '[MLOOP]\ncontroller_type = "differential_evolution"\n'
+        )
+    message = str(raised.value)
+    assert 'controller_type' in message
+    assert 'learner' in message
+
+
+@pytest.mark.parametrize('spelling', ['minimum', 'maximum'])
+def test_the_long_spellings_of_the_parameter_bounds_are_rejected(spelling):
+    """A parameter's bounds are written ``min`` and ``max``, and only so."""
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(MINIMAL + f'{spelling} = 2.0\n')
+    message = str(raised.value)
+    assert spelling in message
+    assert 'MLOOP_PARAMS.G.x' in message
+
+
+def test_the_compilation_table_is_rejected():
+    """Nothing in this package has a compilation stage to configure.
+
+    A test that wants runmanager stood in for hands the session an interface
+    of its own, so there is no switch in the lab's file to reach for.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(MINIMAL + '[COMPILATION]\nmock = false\n')
+    message = str(raised.value)
+    assert 'COMPILATION' in message
+    assert 'MLOOP_PARAMS' in message
 
 
 def test_a_file_that_sets_no_options_gets_exactly_the_dataclass_defaults():
@@ -152,7 +202,7 @@ def test_a_file_that_sets_no_options_gets_exactly_the_dataclass_defaults():
 
 
 def test_a_parameter_with_no_global_is_rejected():
-    with pytest.raises(KeyError, match='not mapped to any runmanager global'):
+    with pytest.raises(ValueError, match='not mapped to any runmanager global'):
         config_module.loads(
             """
 [ANALYSIS]
@@ -166,7 +216,7 @@ max = 1.0
 
 
 def test_a_global_taking_an_unknown_parameter_is_rejected():
-    with pytest.raises(KeyError, match='not an enabled parameter'):
+    with pytest.raises(ValueError, match='not an enabled parameter'):
         config_module.loads(
             """
 [ANALYSIS]
@@ -198,7 +248,13 @@ max = 1.0
 
 
 def test_a_missing_cost_key_says_so():
-    with pytest.raises(KeyError, match='cost_key'):
+    """And says it plainly.
+
+    Every complaint about the file is a ValueError, including this one. A
+    KeyError reprs its argument, so a written-out sentence raised as one
+    reaches the reader in quotes with its own quotes backslashed.
+    """
+    with pytest.raises(ValueError) as raised:
         config_module.loads(
             """
 [ANALYSIS]
@@ -209,6 +265,7 @@ min = 0.0
 max = 1.0
 """
         )
+    assert str(raised.value).startswith('ANALYSIS.cost_key is required')
 
 
 def test_a_key_this_package_does_not_act_on_is_rejected():
@@ -258,6 +315,34 @@ def test_a_typo_in_a_runmanager_global_table_is_rejected():
     assert 'arg' in message
     assert 'RUNMANAGER_GLOBALS.G.doubled' in message
     assert 'args' in message
+
+
+def test_an_expression_that_will_not_evaluate_stops_the_load():
+    """Rather than the first proposal, hours later, out through the worker.
+
+    The expression becomes its callable while the file is being read, so a
+    mistyped lambda is a load failure naming the global and what was written
+    for it, not a session that starts and then falls over on a submission.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(
+            MINIMAL
+            + '[RUNMANAGER_GLOBALS.G.doubled]\nexpr = "lambda v: v +"\nargs = ["x"]\n'
+        )
+    message = str(raised.value)
+    assert 'doubled' in message
+    assert 'lambda v: v +' in message
+
+
+def test_an_expression_that_is_not_a_function_stops_the_load():
+    """``expr`` is a lambda taking the args in order; a value is not one."""
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(
+            MINIMAL + '[RUNMANAGER_GLOBALS.G.doubled]\nexpr = "2 * 3"\nargs = ["x"]\n'
+        )
+    message = str(raised.value)
+    assert 'doubled' in message
+    assert '2 * 3' in message
 
 
 def test_a_misspelt_top_level_table_is_rejected():

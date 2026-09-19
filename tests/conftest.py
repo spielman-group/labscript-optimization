@@ -25,9 +25,9 @@ def rng():
     return np.random.default_rng(20260918)
 
 
-def observe(tag, params, cost, uncer=None, bad=False):
+def observe(shot_id, params, cost, uncer=None, bad=False):
     """Build an Observation without ceremony."""
-    return Observation(str(tag), np.asarray(params, dtype=float), cost, uncer, bad)
+    return Observation(str(shot_id), np.asarray(params, dtype=float), cost, uncer, bad)
 
 
 def run_loop(learner, space, cost_function, batches, k, rng, history=None):

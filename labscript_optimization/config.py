@@ -11,15 +11,18 @@
     naming them and ``expr`` a lambda taking them in that order. Used when
     several parameters feed one global.
 
-``[ANALYSIS] groups`` selects which groups take part; a parameter in a group
-that is not listed is left out entirely, as is one with ``enable = false``.
+``[ANALYSIS] groups`` selects which groups take part. A parameter in a group
+that is not listed is left out of the session entirely; one with
+``enable = false`` in a group that is listed is carried, but is not searched
+and gets no mapping, so its runmanager global keeps whatever value it already
+holds.
 
 Every key is either acted on or rejected. A setting this package does not read
 -- one M-LOOP needed, or one spelt wrongly -- stops the load with a message
 naming it: accepting it and ignoring it is how a lab comes to believe an
-option is in force when nothing reads it. A file carried over from
-analysislib-mloop must therefore have M-LOOP's own settings taken out of it
-first.
+option is in force when nothing reads it. No analysislib-mloop file therefore
+loads as it stands: one carried over has to be cut down to the keys this
+module names first.
 
 ``[LEARNER.<name>]`` is the exception. Its contents belong to the learners:
 one lab's table serves whichever learner is selected, and the factory passes
@@ -37,7 +40,6 @@ from .space import Parameter, ParameterSpace
 TOP_LEVEL_TABLES = frozenset(
     {
         "ANALYSIS",
-        "COMPILATION",
         "LEARNER",
         "MLOOP",
         "MLOOP_PARAMS",
@@ -47,9 +49,6 @@ TOP_LEVEL_TABLES = frozenset(
 
 #: The settings ``[ANALYSIS]`` carries.
 ANALYSIS_KEYS = frozenset({"cost_key", "groups", "maximize"})
-
-#: The settings ``[COMPILATION]`` carries.
-COMPILATION_KEYS = frozenset({"mock"})
 
 #: Learner knobs that a configuration puts directly in ``[MLOOP]``.
 SHARED_LEARNER_KEYS = frozenset(
@@ -74,11 +73,9 @@ SHARED_LEARNER_KEYS = frozenset(
 )
 
 #: The session settings ``[MLOOP]`` carries, alongside the learner knobs in
-#: :data:`SHARED_LEARNER_KEYS`. ``controller_type`` is the older spelling of
-#: ``learner``.
+#: :data:`SHARED_LEARNER_KEYS`.
 MLOOP_KEYS = frozenset(
     {
-        "controller_type",
         "learner",
         "max_num_runs",
         "max_num_runs_without_better_params",
@@ -89,11 +86,8 @@ MLOOP_KEYS = frozenset(
     }
 )
 
-#: The keys one ``[MLOOP_PARAMS.<group>.<name>]`` table carries. ``minimum``
-#: and ``maximum`` are the long spellings of ``min`` and ``max``.
-PARAMETER_KEYS = frozenset(
-    {"enable", "global_name", "max", "maximum", "min", "minimum", "start"}
-)
+#: The keys one ``[MLOOP_PARAMS.<group>.<name>]`` table carries.
+PARAMETER_KEYS = frozenset({"enable", "global_name", "max", "min", "start"})
 
 #: The keys one ``[RUNMANAGER_GLOBALS.<group>.<name>]`` table carries.
 GLOBAL_KEYS = frozenset({"args", "enable", "expr"})
@@ -113,20 +107,56 @@ class GlobalMapping:
     name: str
     expr: str | None
     args: tuple[str, ...]
+    #: ``expr`` as a callable, or ``None`` when the single argument passes
+    #: through unchanged. Built here rather than handed in, so that the only
+    #: way to get one is through the checking in ``__post_init__``.
+    function: Callable[..., Any] | None = field(
+        init=False, repr=False, compare=False, default=None
+    )
+
+    def __post_init__(self) -> None:
+        """Turn ``expr`` into its callable now, so that a bad one stops the load.
+
+        Evaluated on demand instead, a mistyped lambda would first be found on
+        a proposal: mid-session, out through the worker's error path, which is
+        the late failure the rest of this module exists to prevent.
+        """
+        if self.expr is None:
+            return
+        try:
+            # The expression comes from the lab's own configuration file,
+            # which is as trusted as the analysis routines themselves.
+            function = eval(self.expr)  # noqa: S307
+        except Exception as error:
+            raise ValueError(
+                f"the expr for global {self.name!r} cannot be evaluated: "
+                f"{self.expr!r} ({error})"
+            ) from error
+        if not callable(function):
+            raise ValueError(
+                f"the expr for global {self.name!r} is not callable: "
+                f"{self.expr!r}. It must be a lambda taking args in order."
+            )
+        object.__setattr__(self, "function", function)
 
     def evaluate(self, values: dict[str, float]) -> Any:
         """Compute this global's value from a parameter-name to value mapping."""
         arguments = [values[a] for a in self.args]
-        if self.expr is None:
+        if self.function is None:
             return arguments[0]
-        # The expression comes from the lab's own configuration file, which is
-        # as trusted as the analysis routines themselves.
-        return eval(self.expr)(*arguments)  # noqa: S307
+        return self.function(*arguments)
 
 
 @dataclass
 class Config:
-    """Everything a session needs to run."""
+    """Everything a session needs to run.
+
+    ``session`` is a label and nothing more. It is reported among the
+    routine's results so that a row can be attributed to the run that produced
+    it; no matching is done on it. A cost reaches the proposal it answers by
+    the shot id runmanager mints for its queue row, which is unique across
+    runs on its own.
+    """
 
     space: ParameterSpace
     globals: tuple[GlobalMapping, ...]
@@ -139,7 +169,6 @@ class Config:
     num_training_runs: int = 5
     max_num_runs: int | None = None
     max_num_runs_without_better_params: int | None = None
-    mock: bool = False
     seed: int | None = None
 
     @property
@@ -158,10 +187,6 @@ class Config:
         """The runmanager globals that realise one parameter vector."""
         values = {p.name: v for p, v in zip(self.space.parameters, params)}
         return {g.name: g.evaluate(values) for g in self.globals}
-
-
-def _enabled(entry: dict, group: str, active_groups: Sequence[str]) -> bool:
-    return group in active_groups and entry.get("enable", True)
 
 
 def _present(
@@ -208,7 +233,6 @@ def _reject_unknown_keys(raw: dict) -> None:
     """
     _reject_unknown(raw, TOP_LEVEL_TABLES, "the top level of the configuration")
     _reject_unknown(raw.get("ANALYSIS", {}), ANALYSIS_KEYS, "[ANALYSIS]")
-    _reject_unknown(raw.get("COMPILATION", {}), COMPILATION_KEYS, "[COMPILATION]")
     _reject_unknown(raw.get("MLOOP", {}), MLOOP_KEYS | SHARED_LEARNER_KEYS, "[MLOOP]")
     for table, allowed in (
         ("MLOOP_PARAMS", PARAMETER_KEYS),
@@ -233,12 +257,18 @@ def load(path) -> Config:
 
 
 def from_dict(raw: dict) -> Config:
-    """Build a :class:`Config` from already-parsed TOML."""
+    """Build a :class:`Config` from already-parsed TOML.
+
+    Every complaint about the file is a :class:`ValueError`, a missing setting
+    as much as a contradictory one. The message is the whole of what somebody
+    with a stale file gets, and ``KeyError`` reprs its argument: a sentence
+    raised as one reaches the reader wrapped in quotes with its own quotes
+    escaped.
+    """
     _reject_unknown_keys(raw)
 
     analysis = raw.get("ANALYSIS", {})
     mloop = raw.get("MLOOP", {})
-    compilation = raw.get("COMPILATION", {})
 
     active_groups = analysis.get("groups", [])
 
@@ -255,8 +285,8 @@ def from_dict(raw: dict) -> Config:
                 Parameter(
                     name=name,
                     global_name=entry.get("global_name", name),
-                    minimum=float(entry["minimum"] if "minimum" in entry else entry["min"]),
-                    maximum=float(entry["maximum"] if "maximum" in entry else entry["max"]),
+                    minimum=float(entry["min"]),
+                    maximum=float(entry["max"]),
                     start=None if entry.get("start") is None else float(entry["start"]),
                     enable=enabled,
                 )
@@ -269,8 +299,13 @@ def from_dict(raw: dict) -> Config:
                 )
 
     for group, entries in raw.get("RUNMANAGER_GLOBALS", {}).items():
+        if group not in active_groups:
+            # A group nobody switched on is not part of this session at all.
+            continue
         for name, entry in entries.items():
-            if not _enabled(entry, group, active_groups):
+            # A switched-off global is simply not set, so there is nothing to
+            # carry: unlike a parameter, it has no bounds anybody looks at.
+            if not entry.get("enable", True):
                 continue
             mappings.append(
                 GlobalMapping(
@@ -292,28 +327,28 @@ def from_dict(raw: dict) -> Config:
     for mapping in mappings:
         for arg in mapping.args:
             if arg not in known:
-                raise KeyError(
+                raise ValueError(
                     f"global {mapping.name!r} takes {arg!r}, which is not an "
                     f"enabled parameter. Enabled: {sorted(known)}"
                 )
     for name in known:
         if not any(name in m.args for m in mappings):
-            raise KeyError(
+            raise ValueError(
                 f"parameter {name!r} is not mapped to any runmanager global. "
                 f"Give it a global_name, or name it in the args of an entry "
                 f"under RUNMANAGER_GLOBALS."
             )
 
     if "cost_key" not in analysis:
-        raise KeyError("ANALYSIS.cost_key is required: [routine_name, result_name]")
+        raise ValueError("ANALYSIS.cost_key is required: [routine_name, result_name]")
     cost_key = tuple(analysis["cost_key"])
     if len(cost_key) != 2:
         raise ValueError(
             f"ANALYSIS.cost_key must be [routine_name, result_name], got {cost_key!r}"
         )
 
-    # Learner knobs: the ones old configurations put in [MLOOP] become the
-    # shared defaults, and [LEARNER.<name>] overrides them per learner.
+    # Learner knobs written straight into [MLOOP] are the shared defaults, and
+    # [LEARNER.<name>] overrides them for one learner.
     learner_options: dict[str, dict[str, Any]] = {
         "shared": {k: v for k, v in mloop.items() if k in SHARED_LEARNER_KEYS}
     }
@@ -325,21 +360,12 @@ def from_dict(raw: dict) -> Config:
     # is written down.
     settings: dict[str, Any] = {
         **_present(analysis, ("maximize",), bool),
-        **_present(mloop, ("session",), str),
+        **_present(mloop, ("learner", "session"), str),
         **_present(mloop, ("num_buffered_runs", "num_training_runs"), int),
         **_present(
             mloop, ("max_num_runs", "max_num_runs_without_better_params", "seed")
         ),
-        **_present(compilation, ("mock",), bool),
     }
-
-    # The learner is named ``controller_type`` in older files. Either spelling
-    # is read, ``learner`` wins when both are given, and a file that names
-    # neither gets the Config field's default.
-    for key in ("learner", "controller_type"):
-        if key in mloop:
-            settings["learner"] = mloop[key]
-            break
 
     return Config(
         space=ParameterSpace(parameters),

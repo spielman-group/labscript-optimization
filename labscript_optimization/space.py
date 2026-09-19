@@ -63,9 +63,6 @@ class ParameterSpace:
         self.maximum = np.array([p.maximum for p in self.parameters], dtype=float)
         self.extent = self.maximum - self.minimum
 
-    def __len__(self) -> int:
-        return len(self.parameters)
-
     @property
     def num_params(self) -> int:
         return len(self.parameters)
@@ -86,7 +83,14 @@ class ParameterSpace:
         return np.clip(x, self.minimum, self.maximum)
 
     def contains(self, x: np.ndarray) -> np.ndarray:
-        """Elementwise-all test of whether each row of ``x`` is within bounds."""
+        """Whether each row of ``x`` is within bounds, one answer per row.
+
+        The answer is an array even for a single point, so a caller wanting a
+        yes or no reduces it with ``.all()`` rather than testing it for truth.
+        numpy allows a truth test only on a size-one array, so the bare form
+        works until the day a second row arrives and then raises instead of
+        answering.
+        """
         x = np.atleast_2d(x)
         return np.all((x >= self.minimum) & (x <= self.maximum), axis=-1)
 
@@ -98,9 +102,23 @@ class ParameterSpace:
         """Map the unit cube back onto real units."""
         return np.asarray(u, dtype=float) * self.extent + self.minimum
 
-    def uniform(self, rng: np.random.Generator, k: int = 1) -> np.ndarray:
-        """``k`` points drawn uniformly from the whole space."""
-        return rng.uniform(self.minimum, self.maximum, size=(k, self.num_params))
+    def uniform(
+        self,
+        rng: np.random.Generator,
+        k: int = 1,
+        centre: np.ndarray | None = None,
+        region: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """``k`` points drawn uniformly from the space.
+
+        Given a ``centre`` and a ``region`` the draw is confined to that trust
+        region as :meth:`bounds_near` clips it; given neither it covers the
+        whole space.
+        """
+        low, high = self.minimum, self.maximum
+        if centre is not None:
+            low, high = self.bounds_near(centre, region)
+        return rng.uniform(low, high, size=(k, self.num_params))
 
     def absolute_trust_region(self, trust_region) -> np.ndarray | None:
         """Resolve a trust region onto an absolute per-parameter distance.
@@ -132,3 +150,20 @@ class ParameterSpace:
                 f"trust_region {region} is wider than the bounds {self.extent}"
             )
         return region
+
+    def bounds_near(
+        self, centre: np.ndarray, region: np.ndarray | None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The bounds within ``region`` of ``centre``, kept inside the space.
+
+        ``region`` is an absolute per-parameter distance, as
+        :meth:`absolute_trust_region` returns it. ``None`` means unrestricted
+        and gives back the whole space, so a learner free to travel anywhere
+        takes the same path as one that is not.
+        """
+        if region is None:
+            return self.minimum, self.maximum
+        return (
+            np.maximum(self.minimum, centre - region),
+            np.minimum(self.maximum, centre + region),
+        )

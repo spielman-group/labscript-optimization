@@ -46,6 +46,18 @@ def test_uniform_draws_stay_inside_the_bounds(space, rng):
     assert space.contains(space.uniform(rng, 500)).all()
 
 
+def test_containment_is_answered_once_per_row(space):
+    """Several points asked about get several answers.
+
+    A caller wanting one answer reduces them itself. Collapsing them here
+    would turn a mixed batch into a silent all-or-nothing, and a caller that
+    tests the array for truth instead works only while it holds one row.
+    """
+    np.testing.assert_array_equal(
+        space.contains(np.array([[0.0, 0.0], [6.0, 0.0]])), [True, False]
+    )
+
+
 def test_a_start_is_only_offered_when_every_parameter_has_one():
     both = ParameterSpace(
         [
@@ -70,6 +82,34 @@ def test_a_fractional_trust_region_scales_with_each_parameter():
 
 def test_no_trust_region_means_the_whole_space(space):
     assert space.absolute_trust_region(None) is None
+
+
+def test_a_trust_region_near_an_edge_does_not_reach_past_it(space):
+    """The region is clipped to the space, not centred on the point.
+
+    Every learner that searches near a point goes through this, so a region
+    that ran past the boundary would put proposals outside the bounds from
+    four places at once.
+    """
+    low, high = space.bounds_near(
+        np.array([4.8, 0.0]), space.absolute_trust_region(0.05)
+    )
+    np.testing.assert_allclose(low, [4.3, -0.5])
+    np.testing.assert_allclose(high, [5.0, 0.5])
+
+
+def test_bounds_near_nothing_are_the_whole_space(space):
+    """A learner free to travel anywhere takes the same path as one that is not."""
+    low, high = space.bounds_near(np.array([4.8, 0.0]), None)
+    np.testing.assert_allclose(low, space.minimum)
+    np.testing.assert_allclose(high, space.maximum)
+
+
+def test_a_uniform_draw_can_be_confined_to_a_trust_region(space, rng):
+    centre = np.array([4.8, 0.0])
+    draws = space.uniform(rng, 200, centre, space.absolute_trust_region(0.05))
+    assert space.contains(draws).all()
+    assert (np.abs(draws - centre) <= 0.5 + 1e-9).all()
 
 
 @pytest.mark.parametrize(

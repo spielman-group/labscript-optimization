@@ -35,6 +35,10 @@ class TwoPhaseLearner:
         self.num_training = int(num_training)
         if self.num_training < 0:
             raise ValueError(f"num_training cannot be negative, got {num_training}")
+        # The phase every learner publishes, kept as an instance attribute
+        # because this is the one that changes. It is answered before anything
+        # has been proposed, since a session may report its status first, and
+        # a wrapper that has proposed nothing has its training ahead of it.
         self.last_phase = "training"
 
     def training(self, history: Sequence[Observation]) -> bool:

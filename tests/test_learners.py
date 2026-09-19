@@ -57,6 +57,97 @@ def test_learners_propose_from_an_empty_history(space, rng):
         assert space.contains(proposals).all(), type(learner).__name__
 
 
+def test_a_learner_without_phases_of_its_own_still_reports_one(space, rng):
+    """The session reads the phase off whatever learner it was handed.
+
+    Reading it with a default would paper over the opposite case as well: a
+    learner that grows phases and forgets to publish them would be reported
+    as the main one throughout.
+    """
+    for learner in [
+        RandomLearner(space, rng),
+        DirectedRandomLearner(space, rng, trust_region=0.1),
+        DifferentialEvolutionLearner(space, rng, population_size=3),
+        GaussianProcessLearner(space, rng),
+    ]:
+        assert learner.last_phase == 'main', type(learner).__name__
+
+
+# --- the opening point -----------------------------------------------------
+
+
+def learners_starting_at(space, rng, first_params):
+    """Every learner that can be told where to begin."""
+    return [
+        RandomLearner(space, rng, first_params=first_params),
+        DirectedRandomLearner(space, rng, trust_region=0.1, first_params=first_params),
+        DifferentialEvolutionLearner(
+            space, rng, population_size=3, first_params=first_params
+        ),
+    ]
+
+
+def test_a_learner_told_where_to_start_proposes_that_point_first(space, rng):
+    """A run begins from the settings the lab already had.
+
+    Only the first proposal, though: the rest of the opening batch has
+    nothing to go on and explores.
+    """
+    start = np.array([1.5, -2.5])
+    for learner in learners_starting_at(space, rng, start):
+        proposals = np.atleast_2d(learner.propose([], 3))
+        np.testing.assert_allclose(proposals[0], start, err_msg=type(learner).__name__)
+        assert not np.allclose(proposals[1], start), type(learner).__name__
+
+
+def test_the_opening_point_defaults_to_the_configured_start(rng):
+    started = ParameterSpace(
+        [
+            Parameter('x', 'g_x', -5.0, 5.0, start=1.5),
+            Parameter('y', 'g_y', -5.0, 5.0, start=-2.5),
+        ]
+    )
+    for learner in learners_starting_at(started, rng, None):
+        np.testing.assert_allclose(
+            learner.propose([], 1)[0], [1.5, -2.5], err_msg=type(learner).__name__
+        )
+
+
+def test_the_opening_point_is_offered_only_while_nothing_has_run(space, rng):
+    history = [observe(0, [0.0, 0.0], 1.0)]
+    start = np.array([1.5, -2.5])
+    for learner in learners_starting_at(space, rng, start):
+        proposal = np.atleast_2d(learner.propose(history, 1))[0]
+        assert not np.allclose(proposal, start), type(learner).__name__
+
+
+@pytest.mark.parametrize(
+    'first_params, message',
+    [
+        ([9.0, 0.0], 'outside the bounds'),
+        ([0.0], 'shape'),
+        ([[0.0, 0.0], [1.0, 1.0]], 'shape'),
+    ],
+)
+def test_an_impossible_opening_point_is_refused_at_construction(
+    space, rng, first_params, message
+):
+    """Construction is the last moment at which it costs nothing to fix.
+
+    A point of the wrong shape is the one that gets through unnoticed: a
+    single coordinate broadcasts over the whole vector, and several points
+    make the bounds check answer once per row, so neither is caught by asking
+    only whether the values are in range.
+    """
+    for build_one in (
+        RandomLearner,
+        DirectedRandomLearner,
+        DifferentialEvolutionLearner,
+    ):
+        with pytest.raises(ValueError, match=message):
+            build_one(space, rng, first_params=first_params)
+
+
 # --- directed random -------------------------------------------------------
 
 
@@ -247,6 +338,12 @@ def test_impossible_differential_evolution_settings_are_rejected(
 # --- gaussian process ------------------------------------------------------
 
 
+def gaussian_process_history(space, seed, count=12):
+    """A spread of observations wide enough for the posterior to mean something."""
+    points = space.uniform(np.random.default_rng(seed), count)
+    return [observe(i, p, offset_sphere(p)) for i, p in enumerate(points)]
+
+
 def test_gaussian_process_refuses_before_it_has_enough_data(space, rng):
     learner = GaussianProcessLearner(space, rng, minimum_observations=6)
     with pytest.raises(InsufficientData):
@@ -255,16 +352,69 @@ def test_gaussian_process_refuses_before_it_has_enough_data(space, rng):
 
 def test_gaussian_process_finds_the_minimum(space, rng):
     learner = GaussianProcessLearner(space, rng)
-    seed = [
-        observe(i, p, offset_sphere(p))
-        for i, p in enumerate(space.uniform(np.random.default_rng(4), 12))
-    ]
     history = run_loop(
-        learner, space, offset_sphere, batches=12, k=4, rng=rng, history=seed
+        learner,
+        space,
+        offset_sphere,
+        batches=12,
+        k=4,
+        rng=rng,
+        history=gaussian_process_history(space, 4),
     )
     best = min(history, key=lambda o: o.cost)
     assert best.cost < 0.05
     np.testing.assert_allclose(best.params, [1.3, -2.1], atol=0.3)
+
+
+#: The generation the exploration tests below configure, and so the number of
+#: proposals the schedule takes to come back round to its greedy step.
+GENERATION = 4
+
+
+def exploring_and_greedy(space, count):
+    """The same proposal made with the exploration weight up and turned off.
+
+    The two learners share a seed and see the same history, so the acquisition
+    weight is the only thing that differs between them.
+    """
+    history = gaussian_process_history(space, 5, count=count)
+    greedy = GaussianProcessLearner(
+        space, np.random.default_rng(3), uncer_bias=0.0, generation_size=GENERATION
+    )
+    explorer = GaussianProcessLearner(
+        space, np.random.default_rng(3), uncer_bias=50.0, generation_size=GENERATION
+    )
+    return float(
+        np.linalg.norm(explorer.propose(history, 1)[0] - greedy.propose(history, 1)[0])
+    )
+
+
+def test_the_exploration_weight_reaches_a_proposal_asked_for_on_its_own(space):
+    """A session running one shot at a time still has to explore.
+
+    It asks for a full batch once and then for a single point per completed
+    shot, so a weight that stepped with the position within a batch would
+    stand at its greedy first step for the whole run and uncer_bias would do
+    nothing whatever in the lab.
+    """
+    assert exploring_and_greedy(space, count=13) > 0.1
+
+
+@pytest.mark.parametrize('count', [12, 13, 14, 15, 16])
+def test_the_exploration_schedule_advances_as_observations_arrive(space, count):
+    """The weight steps once per proposal and cycles over a generation.
+
+    One proposal in each generation is purely greedy and the rest look
+    progressively further afield, which is how M-LOOP spends a generation.
+    Reading the position off the history rather than a counter is what keeps
+    a learner handed the same history proposing the same thing.
+    """
+    apart = exploring_and_greedy(space, count=count)
+    if count % GENERATION:
+        assert apart > 0.1
+    else:
+        # A weight of zero times anything is the greedy proposal itself.
+        assert apart == 0.0
 
 
 def test_a_gaussian_process_batch_does_not_repeat_itself(space, rng):
@@ -275,10 +425,7 @@ def test_a_gaussian_process_batch_does_not_repeat_itself(space, rng):
     repeated proposal is a wasted shot.
     """
     learner = GaussianProcessLearner(space, rng)
-    history = [
-        observe(i, p, offset_sphere(p))
-        for i, p in enumerate(space.uniform(np.random.default_rng(5), 12))
-    ]
+    history = gaussian_process_history(space, 5)
     proposals = learner.propose(history, 6)
     separations = np.linalg.norm(
         proposals[:, None, :] - proposals[None, :, :], axis=2
@@ -290,10 +437,7 @@ def test_a_gaussian_process_batch_does_not_repeat_itself(space, rng):
 def test_a_gaussian_process_describes_the_real_data_after_proposing(space, rng):
     """Proposing must not leave the model believing its own guesses."""
     learner = GaussianProcessLearner(space, rng)
-    history = [
-        observe(i, p, offset_sphere(p))
-        for i, p in enumerate(space.uniform(np.random.default_rng(6), 12))
-    ]
+    history = gaussian_process_history(space, 6)
     learner.propose(history, 1)
     before = learner.predict(history[0].params)[0]
     learner.propose(history, 5)
@@ -314,11 +458,8 @@ def test_a_gaussian_process_describes_the_real_data_after_a_proposal_fails(
     measurements.
     """
     learner = GaussianProcessLearner(space, rng)
-    history = [
-        observe(i, p, offset_sphere(p))
-        for i, p in enumerate(space.uniform(np.random.default_rng(8), 12))
-    ]
-    # The greedy pick of a batch, and so where its first invented point lands.
+    history = gaussian_process_history(space, 8)
+    # The first pick of a batch, and so where its first invented point lands.
     probe = learner.propose(history, 1)[0]
     before = learner.predict(probe)
 

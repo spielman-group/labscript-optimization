@@ -7,11 +7,14 @@ does not carry it into the dataframe, so it is read from the shot file that
 
 What the routine then does with that cost is the other half. Those tests drive
 the entry point against a pair of fake pipes and a fake process, so they say
-what the routine sends and how it shuts the worker down without depending on
-zprocess starting anything.
+what the routine sends, what it makes of the answer, and how it shuts the
+worker down, without depending on zprocess starting anything.
 """
 
+import queue
 import subprocess
+import threading
+import time
 import types
 
 import h5py
@@ -41,17 +44,21 @@ def config():
     return config_module.loads(CONFIG)
 
 
-def frame(rows, multiindex=True):
-    """Build a dataframe shaped the way lyse shapes one."""
-    columns = list(rows[0])
-    if multiindex:
-        columns = pd.MultiIndex.from_tuples(
-            [c if isinstance(c, tuple) else (c, '') for c in columns]
-        )
-        rows = [
-            {(k if isinstance(k, tuple) else (k, '')): v for k, v in r.items()}
-            for r in rows
-        ]
+def frame(rows):
+    """Build a dataframe shaped the way lyse shapes one.
+
+    Every column label is a tuple, padded with empty levels out to the depth of
+    the deepest one and sorted, which is what lyse does. Two levels is the
+    shallowest it ever makes; a shot carrying images makes it deeper.
+    """
+
+    def label(key, depth):
+        key = key if isinstance(key, tuple) else (key,)
+        return key + ('',) * (depth - len(key))
+
+    depth = max([2] + [len(k) for k in rows[0] if isinstance(k, tuple)])
+    rows = [{label(k, depth): v for k, v in r.items()} for r in rows]
+    columns = pd.MultiIndex.from_tuples(sorted(rows[0]))
     return pd.DataFrame(rows, columns=columns)
 
 
@@ -138,9 +145,15 @@ def test_a_cost_column_that_does_not_exist_yet_reads_as_bad(config, shot):
     assert shot_id == 'row-3' and bad
 
 
-def test_flat_columns_work_too(config, shot):
-    """The same reader has to work against a plain dataframe in a test."""
-    shot_id, cost, _, _ = extract(frame([shot()], multiindex=False), config)
+def test_a_shot_carrying_images_deepens_every_column_label(config, shot):
+    """An image's attributes nest a level deeper than an analysis result does,
+    and lyse pads every label out to the deepest, so the cost column is
+    ``('zTOF', 'Nb', '')`` in such a sequence and ``('zTOF', 'Nb')`` in one
+    whose shots have no images. Both name the cost.
+    """
+    row = shot()
+    row[('side', 'atoms', 'exposure_time')] = 0.01
+    shot_id, cost, _, _ = extract(frame([row]), config)
     assert shot_id == 'row-3' and cost == -7.0
 
 
@@ -161,20 +174,56 @@ def test_an_unreadable_shot_file_is_not_ours(config, shot, monkeypatch, failure)
 
 
 class Pipe:
-    """Stands in for a zprocess queue.
+    """Stands in for a zprocess queue: a get waits up to its timeout.
 
-    Nothing ever comes back along it: what the worker replies, and what the
-    routine makes of the reply, is test_worker.py's business.
+    A timeout of zero is the poll zprocess makes of it, and an empty queue
+    raises the TimeoutError zprocess raises.
     """
 
     def __init__(self):
         self.sent = []
+        self.incoming = queue.Queue()
 
     def put(self, item):
         self.sent.append(item)
 
     def get(self, timeout=None):
-        raise TimeoutError
+        try:
+            return self.incoming.get(timeout=timeout)
+        except queue.Empty:
+            raise TimeoutError('get() timed out')
+
+
+class Answering(Pipe):
+    """The end the routine writes to, with a worker behind it that answers.
+
+    The real worker answers over a socket from another process, so its reply is
+    on its way while the routine is looking for it and is never already there.
+    Answering from a thread, a moment later, is what tells a routine that waits
+    for the reply apart from one that glances and takes whatever it finds: the
+    second sees nothing on the first shot and the shot before's status after
+    that. Each answer names the message it answers, so a status belonging to an
+    earlier shot is recognisable as one.
+    """
+
+    def __init__(self, from_worker, delay=0.02):
+        super().__init__()
+        self.from_worker = from_worker
+        self.delay = delay
+        #: Answers to send in place of the default, one per message, in order.
+        self.replies = []
+
+    def put(self, item):
+        super().put(item)
+        if self.replies:
+            reply = self.replies.pop(0)
+        else:
+            reply = ('status', {'answered': len(self.sent)})
+        timer = threading.Timer(self.delay, self.from_worker.incoming.put, [reply])
+        # Nothing need wait at the end of a test for an answer nobody is
+        # listening for any more.
+        timer.daemon = True
+        timer.start()
 
 
 class Worker:
@@ -207,14 +256,19 @@ class Worker:
 
 @pytest.fixture
 def session(monkeypatch, tmp_path):
-    """A running session: a configuration file, and a worker made of fakes."""
+    """A running session: a configuration file, and a worker made of fakes.
+
+    ``worker`` is the end the routine writes to: what it was ``sent``, and the
+    ``replies`` it answers with in place of its default.
+    """
     path = tmp_path / 'mloop_config.toml'
     path.write_text(CONFIG)
-    handles = (Pipe(), Pipe(), Worker())
+    from_worker = Pipe()
+    to_worker = Answering(from_worker)
+    handles = (to_worker, from_worker, Worker())
     monkeypatch.setattr(routine_module, 'start_worker', lambda config_path: handles)
-    to_worker = handles[0]
     storage = types.SimpleNamespace()
-    yield types.SimpleNamespace(storage=storage, path=path, sent=to_worker.sent)
+    yield types.SimpleNamespace(storage=storage, path=path, worker=to_worker)
     # Leaves the atexit hook that optimise() registered with nothing to stop.
     storage.optimisation_worker = None
 
@@ -228,7 +282,7 @@ def test_a_shot_with_no_usable_cost_is_reported_as_a_bad_observation(session, sh
     routine_module.optimise(
         session.path, session.storage, frame([shot(cost=float('nan'))])
     )
-    (command, (shot_id, _, _, bad)), = session.sent
+    (command, (shot_id, _, _, bad)), = session.worker.sent
     assert command == 'observe' and shot_id == 'row-3' and bad
 
 
@@ -242,7 +296,50 @@ def test_the_configuration_is_read_once_for_the_whole_session(session, shot):
     routine_module.optimise(session.path, session.storage, frame([shot(cost=7.0)]))
     session.path.write_text(CONFIG.replace('maximize = true', 'maximize = false'))
     routine_module.optimise(session.path, session.storage, frame([shot(cost=7.0)]))
-    assert [payload[1] for _, payload in session.sent] == [-7.0, -7.0]
+    assert [payload[1] for _, payload in session.worker.sent] == [-7.0, -7.0]
+
+
+def test_the_status_returned_answers_this_shot_and_not_the_one_before(session, shot):
+    """It is written back as lyse results against the shot the routine ran on,
+    so a status from the invocation before is a row of numbers belonging to
+    another shot, and a glance that finds nothing yet is no row at all.
+    """
+    first = routine_module.optimise(
+        session.path, session.storage, frame([shot(cost=1.0)])
+    )
+    second = routine_module.optimise(
+        session.path, session.storage, frame([shot(cost=2.0)])
+    )
+    assert (first, second) == ({'answered': 1}, {'answered': 2})
+
+
+def test_a_worker_that_failed_says_so_through_the_routine(session, shot):
+    """The worker is a process of its own with nowhere to report to. Raising
+    here is the only route by which its failure reaches a person: lyse shows
+    what a routine raises.
+    """
+    session.worker.replies.append(
+        ('error', 'Traceback (most recent call last):\nRuntimeError: no runmanager')
+    )
+    with pytest.raises(RuntimeError, match='no runmanager'):
+        routine_module.optimise(session.path, session.storage, frame([shot()]))
+
+
+def test_a_worker_that_does_not_answer_in_time_is_given_up_on(
+    session, shot, monkeypatch
+):
+    """lyse runs multishot routines inline and one at a time, so every moment
+    spent waiting here delays the analysis of every shot behind this one. A
+    worker that has stopped answering must cost one wait rather than the
+    session.
+    """
+    monkeypatch.setattr(routine_module, 'REPLY_TIMEOUT', 0.05)
+    session.worker.delay = 30.0
+    started = time.monotonic()
+    status = routine_module.optimise(
+        session.path, session.storage, frame([shot()])
+    )
+    assert status is None and time.monotonic() - started < 5.0
 
 
 @pytest.fixture

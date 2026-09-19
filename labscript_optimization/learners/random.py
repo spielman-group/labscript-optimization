@@ -15,6 +15,7 @@ import numpy as np
 
 from ..observations import Observation, costs_array, params_array, usable
 from ..space import ParameterSpace
+from .base import opening_batch, opening_point
 
 
 class RandomLearner:
@@ -28,6 +29,8 @@ class RandomLearner:
             start.
     """
 
+    last_phase = "main"
+
     def __init__(
         self,
         space: ParameterSpace,
@@ -36,19 +39,15 @@ class RandomLearner:
     ):
         self.space = space
         self.rng = rng
-        if first_params is None:
-            first_params = space.start
-        self.first_params = (
-            None if first_params is None else np.array(first_params, dtype=float)
-        )
-        if self.first_params is not None and not self.space.contains(self.first_params):
-            raise ValueError(f"first_params outside the bounds: {self.first_params}")
+        self.first_params = opening_point(space, first_params)
 
     def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
-        proposals = self.space.uniform(self.rng, k)
-        if not history and self.first_params is not None:
-            proposals[0] = self.first_params
-        return proposals
+        opening = opening_batch(
+            self.space, self.rng, history, k, self.first_params
+        )
+        if opening is not None:
+            return opening
+        return self.space.uniform(self.rng, k)
 
 
 class DirectedRandomLearner:
@@ -80,6 +79,8 @@ class DirectedRandomLearner:
         first_params: A point to return as the very first proposal.
     """
 
+    last_phase = "main"
+
     def __init__(
         self,
         space: ParameterSpace,
@@ -107,13 +108,7 @@ class DirectedRandomLearner:
             raise ValueError(f"trust_range values must be in [0, 1], got {trust_range!r}")
         self.trust_range = tuple(sorted(trust_range))
 
-        if first_params is None:
-            first_params = space.start
-        self.first_params = (
-            None if first_params is None else np.array(first_params, dtype=float)
-        )
-        if self.first_params is not None and not self.space.contains(self.first_params):
-            raise ValueError(f"first_params outside the bounds: {self.first_params}")
+        self.first_params = opening_point(space, first_params)
 
     def _centre(self, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
         """Pick the point to draw around.
@@ -135,15 +130,14 @@ class DirectedRandomLearner:
     def _draw_near(self, centre: np.ndarray) -> np.ndarray:
         if self.trust_gaussian:
             return self.space.clip(self.rng.normal(centre, self.trust_region))
-        low = np.maximum(self.space.minimum, centre - self.trust_region)
-        high = np.minimum(self.space.maximum, centre + self.trust_region)
-        return self.rng.uniform(low, high)
+        return self.space.uniform(self.rng, 1, centre, self.trust_region)[0]
 
     def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
-        if not history and self.first_params is not None:
-            proposals = self.space.uniform(self.rng, k)
-            proposals[0] = self.first_params
-            return proposals
+        opening = opening_batch(
+            self.space, self.rng, history, k, self.first_params
+        )
+        if opening is not None:
+            return opening
 
         seen = usable(history)
         if not seen or self.trust_region is None:

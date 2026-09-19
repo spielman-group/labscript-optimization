@@ -1,8 +1,10 @@
 # Configuration for a labscript-optimization session.
 #
-# The schema is the one analysislib-mloop used, less the settings that were
-# M-LOOP's own. Every key here is read: one this package does not act on stops
-# the load with a message naming it, rather than being accepted and ignored.
+# This has the shape of an analysislib-mloop file, but it is not one: the
+# settings that belong to M-LOOP itself are not here, and neither are that
+# package's alternate spellings. Every key here is read, and one this package
+# does not act on stops the load with a message naming it, rather than being
+# accepted and ignored.
 
 [ANALYSIS]
 # Which (routine, result) column of the lyse dataframe holds the cost. The
@@ -21,9 +23,12 @@ maximize = true
 groups = ["CMOT"]
 
 [MLOOP]
-# Change this to start a fresh optimisation. Costs are matched to proposals by
-# a tag built from it, so shots from an earlier session are ignored rather
-# than mixed in.
+# A label for this run, and nothing more. It comes back among this routine's
+# lyse results, so a row can be attributed to the run that produced it. No
+# matching is done on it: a cost reaches the proposal it answers by the shot id
+# runmanager mints for its queue row, which is unique across runs on its own.
+# Restarting the routine is what starts a fresh optimisation; changing this
+# only changes the label.
 session = "2026-09-18a"
 
 # random, directed_random, differential_evolution or gaussian_process.
@@ -64,9 +69,17 @@ trust_range = [0.1, 0.25]
 explore_fraction = 0.0
 
 [LEARNER.gaussian_process]
-# Weight on predicted uncertainty for the first point of a batch; later points
-# step up by one each, so a batch mixes a greedy point with exploratory ones.
+# Weight on predicted uncertainty, one step of the exploration schedule.
+# Successive proposals use 0, 1, 2, ... times this and come back round to zero
+# every generation_size of them, so one proposal in each generation is purely
+# greedy and the rest look progressively further from what is already known.
+# Raise it to explore harder; 0 refines the best point and nothing else.
 uncer_bias = 1.0
+
+# How many proposals make a generation. It sets two things: how often the
+# kernel's hyperparameters are refit, which is the expensive part, and the
+# period of the exploration schedule above.
+generation_size = 4
 
 # One optimised parameter per table. "global_name" is shorthand for a
 # runmanager global that takes this parameter's value directly.
