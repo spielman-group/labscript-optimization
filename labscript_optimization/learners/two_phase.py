@@ -5,11 +5,11 @@ anything, so the first ``num_training`` shots come from a cheap learner that
 explores. After that the main learner takes over, and the trainer stays on as
 the fallback for any proposal the main learner cannot make.
 
-A proposer wrapping two proposers, not a controller: it implements the same
-:class:`~labscript_optimization.learners.base.Learner` protocol as what it
-wraps.
+A proposer wrapping two proposers, not a controller: it proposes the same
+way as what it wraps, so it can be wrapped in turn.
 """
 
+import warnings
 from typing import Sequence
 
 import numpy as np
@@ -34,6 +34,22 @@ class TwoPhaseLearner:
         self.num_training = int(num_training)
         if self.num_training < 0:
             raise ValueError(f"num_training cannot be negative, got {num_training}")
+
+        needed = getattr(main, "minimum_observations", 0)
+        if self.num_training < needed:
+            # Not an error: the fallback covers it, and the shots are not
+            # wasted. But the handover a user configured will not happen when
+            # they expect, and neither number is stated in any document, so
+            # say it once rather than leave them reading "training (fallback)"
+            # and wondering.
+            warnings.warn(
+                f"{type(main).__name__} needs {needed} usable observations "
+                f"before it can propose, and num_training_runs is "
+                f"{self.num_training}, so the first proposals after training "
+                f"come from {type(trainer).__name__} instead. Raise "
+                f"num_training_runs to {needed} or more to hand over cleanly.",
+                stacklevel=2,
+            )
         # An instance attribute because this is the learner whose phase
         # changes, and answered before anything has been proposed because a
         # session may report its status first.

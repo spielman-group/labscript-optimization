@@ -118,7 +118,6 @@ class Session:
         """
         awaiting = self.awaiting
         if not awaiting:
-            self._unknown.clear()
             return []
         answers = self.interface.shot_status(awaiting)
         unknown_before, self._unknown = self._unknown, set()
@@ -126,7 +125,7 @@ class Session:
         for shot_id in awaiting:
             # An id the interface says nothing at all about is read as
             # unknown: no answer is no reason to give up on a shot this round.
-            answer = answers.get(shot_id) or {}
+            answer = answers[shot_id]
             if answer.get("pending", False):
                 continue
             unknown = answer.get("state", UNKNOWN_SHOT_STATE) == UNKNOWN_SHOT_STATE

@@ -4,6 +4,8 @@ Every learner is exercised through the one method the protocol defines, so
 these tests survive any rewrite that keeps the protocol.
 """
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -682,3 +684,18 @@ def test_shots_without_a_usable_cost_do_not_count_as_training(space, rng):
     ]
     learner.propose(history, 1)
     assert learner.last_phase == 'training'
+
+
+def test_a_handover_that_cannot_happen_yet_is_warned_about(space, rng):
+    """The fallback covers it, but the user configured a handover that will
+    not happen when they expect, and neither number is in any document."""
+    main = GaussianProcessLearner(space, rng, minimum_observations=6)
+    with pytest.warns(UserWarning, match='needs 6 usable observations'):
+        TwoPhaseLearner(RandomLearner(space, rng), main, num_training=5)
+
+
+def test_a_handover_that_works_is_not_warned_about(space, rng):
+    main = GaussianProcessLearner(space, rng, minimum_observations=4)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        TwoPhaseLearner(RandomLearner(space, rng), main, num_training=4)

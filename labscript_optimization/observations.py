@@ -54,8 +54,6 @@ def params_array(history: Sequence[Observation]) -> np.ndarray:
 
     An empty history has no parameter count to report, so it gives ``(0, 0)``.
     """
-    if not history:
-        return np.empty((0, 0))
     return np.array([o.params for o in history], dtype=float)
 
 

@@ -58,7 +58,6 @@ class ParameterSpace:
         self.parameters = tuple(p for p in parameters if p.enable)
         if not self.parameters:
             raise ValueError("no enabled parameters to optimise")
-        self.disabled = tuple(p for p in parameters if not p.enable)
         self.minimum = np.array([p.minimum for p in self.parameters], dtype=float)
         self.maximum = np.array([p.maximum for p in self.parameters], dtype=float)
         self.extent = self.maximum - self.minimum
@@ -67,9 +66,6 @@ class ParameterSpace:
     def num_params(self) -> int:
         return len(self.parameters)
 
-    @property
-    def global_names(self) -> tuple[str, ...]:
-        return tuple(p.global_name for p in self.parameters)
 
     @property
     def start(self) -> np.ndarray | None:

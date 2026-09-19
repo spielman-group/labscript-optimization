@@ -12,8 +12,7 @@ def test_disabled_parameters_are_not_searched():
         ]
     )
     assert space.num_params == 1
-    assert space.global_names == ('g_a',)
-    assert [p.name for p in space.disabled] == ['b']
+    assert [p.name for p in space.parameters] == ['a']
 
 
 def test_a_space_with_nothing_enabled_is_rejected():

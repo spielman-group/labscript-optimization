@@ -11,33 +11,12 @@ learner believes. That rule is what keeps the out-of-order arrival of costs out
 of the learners.
 """
 
-from typing import Protocol, Sequence
+from typing import Sequence
 
 import numpy as np
 
 from ..observations import Observation
 from ..space import ParameterSpace
-
-
-class Learner(Protocol):
-    """Proposes the next parameters to try."""
-
-    #: Which of the learner's ways of proposing produced the last batch. The
-    #: session reports it, so every learner answers: one that proposes the same
-    #: way every time says ``"main"`` and never changes it.
-    last_phase: str = "main"
-
-    def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
-        """Return ``k`` parameter vectors to run next.
-
-        Args:
-            history: Completed observations, in proposal order.
-            k: How many proposals to return.
-
-        Returns:
-            A ``(k, num_params)`` array, every row inside the bounds.
-        """
-        ...
 
 
 class InsufficientData(RuntimeError):

@@ -16,18 +16,3 @@ In a lab, the entry point is the routine::
     import labscript_optimization.routine as optimisation
     optimisation.optimise('mloop_config.toml')
 """
-
-from .config import Config, load, loads
-from .observations import Observation
-from .session import Session
-from .space import Parameter, ParameterSpace
-
-__all__ = [
-    "Config",
-    "Observation",
-    "Parameter",
-    "ParameterSpace",
-    "Session",
-    "load",
-    "loads",
-]

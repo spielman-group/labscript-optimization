@@ -4,7 +4,7 @@ import inspect
 
 import numpy as np
 
-from .base import InsufficientData, Learner
+from .base import InsufficientData
 from .differential_evolution import DifferentialEvolutionLearner
 from .gaussian_process import GaussianProcessLearner
 from .random import DirectedRandomLearner, RandomLearner
@@ -15,7 +15,6 @@ __all__ = [
     "DirectedRandomLearner",
     "GaussianProcessLearner",
     "InsufficientData",
-    "Learner",
     "RandomLearner",
     "TwoPhaseLearner",
     "build",

@@ -72,7 +72,7 @@ class RunmanagerInterface:
     def check_unchanged(self) -> None:
         """Raise if the labscript file has changed since the session started."""
         current = self.client.get_labscript_file()
-        if self.labscript_file is not None and current != self.labscript_file:
+        if current != self.labscript_file:
             raise RuntimeError(
                 f"the labscript file changed from {self.labscript_file!r} to "
                 f"{current!r} while this session was running; its shots would "

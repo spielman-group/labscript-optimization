@@ -278,16 +278,16 @@ def _check_keys(raw: dict) -> None:
 
 def loads(text: str) -> Config:
     """Parse a configuration from TOML text."""
-    return from_dict(tomllib.loads(text))
+    return _from_dict(tomllib.loads(text))
 
 
 def load(path) -> Config:
     """Read a configuration from a TOML file."""
     with open(path, "rb") as f:
-        return from_dict(tomllib.load(f))
+        return _from_dict(tomllib.load(f))
 
 
-def from_dict(raw: dict) -> Config:
+def _from_dict(raw: dict) -> Config:
     """Build a :class:`Config` from already-parsed TOML.
 
     Every complaint about the file is a :class:`ValueError`, a missing setting

@@ -78,8 +78,10 @@ def test_only_parameters_in_active_enabled_groups_are_searched(config):
     assert [p.name for p in config.space.parameters] == ['width', 'bx', 'by']
 
 
-def test_a_disabled_parameter_is_remembered_but_not_searched(config):
-    assert [p.name for p in config.space.disabled] == ['disabled_one']
+def test_a_disabled_parameter_keeps_its_global_out_of_every_shot(config):
+    """Switching a parameter off must leave its global at whatever it holds."""
+    assert 'disabled_one' not in [p.name for p in config.space.parameters]
+    assert 'NotUsed' not in config.globals_for([0.25, 0.1, 0.2])
 
 
 def test_global_name_is_shorthand_for_a_direct_mapping(config):
