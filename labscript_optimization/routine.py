@@ -240,7 +240,7 @@ def optimise(config_path, storage=None, dataframe=None):
     return status
 
 
-def _exited_within(popen, timeout=5) -> bool:
+def exited_within(popen, timeout=5) -> bool:
     """Whether the worker has exited, waiting up to ``timeout`` seconds for it.
 
     Waiting is also reaping: a child nobody waits for stays a zombie for as
@@ -274,12 +274,12 @@ def stop_worker(storage=None) -> None:
         # A pipe that will not carry the request changes nothing about what
         # follows: the worker is signalled and reaped either way.
         pass
-    if _exited_within(popen):
+    if exited_within(popen):
         return
     popen.terminate()
-    if _exited_within(popen):
+    if exited_within(popen):
         return
     popen.kill()
     # Nothing stronger is available, and blocking lyse's shutdown on a worker
     # stuck in the kernel would help nobody.
-    _exited_within(popen)
+    exited_within(popen)

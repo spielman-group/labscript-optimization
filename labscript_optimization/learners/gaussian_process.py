@@ -108,9 +108,9 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         self._kernel = None
         self._fitted_to = None
         self.regressor = None
-        self.cost_scaler = None
+        self._cost_scaler = None
 
-    def _new_kernel(self):
+    def new_kernel(self):
         kernel = RBF(
             length_scale=np.ones(self.space.num_params),
             length_scale_bounds=self.length_scale_bounds,
@@ -121,7 +121,7 @@ class GaussianProcessLearner(ParameterSpaceLearner):
             )
         return kernel
 
-    def _alpha(self, seen: Sequence[Observation], scaler):
+    def point_variances(self, seen: Sequence[Observation], scaler):
         """Per-point variances for the regressor, in standardised cost units.
 
         An observation with no uncertainty of its own gets zero here rather
@@ -132,7 +132,7 @@ class GaussianProcessLearner(ParameterSpaceLearner):
             return 1e-10
         return (uncers / scaler.scale_[0]) ** 2
 
-    def _fit_hyperparameters(self, prefix: Sequence[Observation]):
+    def fit_hyperparameters(self, prefix: Sequence[Observation]):
         """Fit the cost scaling and the kernel hyperparameters to ``prefix``.
 
         The scaling belongs with them because it sets the units the noise level
@@ -145,8 +145,8 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         costs = costs_array(prefix).reshape(-1, 1)
         scaler = StandardScaler().fit(costs)
         regressor = GaussianProcessRegressor(
-            kernel=self._new_kernel(),
-            alpha=self._alpha(prefix, scaler),
+            kernel=self.new_kernel(),
+            alpha=self.point_variances(prefix, scaler),
             normalize_y=False,
             n_restarts_optimizer=self.num_restarts,
             random_state=len(prefix),
@@ -173,19 +173,19 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         # unchanged length.
         fitted_to = tuple(o.shot_id for o in prefix)
         if fitted_to != self._fitted_to:
-            self.cost_scaler, self._kernel = self._fit_hyperparameters(prefix)
+            self._cost_scaler, self._kernel = self.fit_hyperparameters(prefix)
             self._fitted_to = fitted_to
 
         costs = costs_array(seen).reshape(-1, 1)
         regressor = GaussianProcessRegressor(
             kernel=self._kernel,
-            alpha=self._alpha(seen, self.cost_scaler),
+            alpha=self.point_variances(seen, self._cost_scaler),
             normalize_y=False,
             optimizer=None,
         )
         regressor.fit(
             self.space.scale(params_array(seen)),
-            self.cost_scaler.transform(costs).ravel(),
+            self._cost_scaler.transform(costs).ravel(),
         )
         self.regressor = regressor
         return True
@@ -196,30 +196,26 @@ class GaussianProcessLearner(ParameterSpaceLearner):
             raise RuntimeError("the learner has not been fit to any history yet")
         params = np.atleast_2d(params)
         mean, std = self.regressor.predict(self.space.scale(params), return_std=True)
-        scale = self.cost_scaler.scale_[0]
+        scale = self._cost_scaler.scale_[0]
         return (
-            self.cost_scaler.inverse_transform(mean.reshape(-1, 1)).ravel(),
+            self._cost_scaler.inverse_transform(mean.reshape(-1, 1)).ravel(),
             std * scale,
         )
 
-    def _search_bounds(self, centre: np.ndarray):
-        """Scaled bounds for the minimiser, narrowed by the trust region."""
-        low, high = self.space.bounds_near(centre, self.trust_region)
-        return list(zip(self.space.scale(low), self.space.scale(high)))
-
-    def _minimise_acquisition(
-        self, regressor, uncer_bias: float, best: np.ndarray, bounds
+    def minimise_acquisition(
+        self, regressor, uncer_bias: float, best: np.ndarray, lows, highs
     ):
-        """Multi-start L-BFGS-B over the acquisition. Returns scaled parameters."""
+        """Multi-start L-BFGS-B over the acquisition. Returns scaled parameters.
+
+        ``lows`` and ``highs`` are the search bounds, already scaled.
+        """
 
         def acquisition(u):
             mean, std = regressor.predict(np.atleast_2d(u), return_std=True)
             return self.cost_bias * mean[0] - uncer_bias * std[0]
 
-        lows = np.array([b[0] for b in bounds])
-        highs = np.array([b[1] for b in bounds])
         starts = [self.space.scale(best)]
-        starts.extend(self.rng.uniform(lows, highs, size=(self.num_restarts, len(bounds))))
+        starts.extend(self.rng.uniform(lows, highs, size=(self.num_restarts, len(lows))))
 
         winner, winning_value = None, np.inf
         for start in starts:
@@ -227,13 +223,13 @@ class GaussianProcessLearner(ParameterSpaceLearner):
                 acquisition,
                 np.clip(start, lows, highs),
                 method="L-BFGS-B",
-                bounds=bounds,
+                bounds=list(zip(lows, highs)),
             )
             if result.fun < winning_value:
                 winner, winning_value = result.x, result.fun
         return np.clip(winner, lows, highs)
 
-    def _condition_on(self, regressor, scaled_point: np.ndarray):
+    def condition_on(self, regressor, scaled_point: np.ndarray):
         """A copy of ``regressor`` with a point folded in at its predicted cost.
 
         Posterior variance depends on where a point was measured, not on what
@@ -271,7 +267,8 @@ class GaussianProcessLearner(ParameterSpaceLearner):
             )
         seen = usable(history)
         best_params = best(history).params
-        bounds = self._search_bounds(best_params)
+        low, high = self.space.bounds_near(best_params, self.trust_region)
+        lows, highs = self.space.scale(low), self.space.scale(high)
 
         # The points of this batch are folded into a fit held here and nowhere
         # else, so the learner goes on describing the measured data.
@@ -284,10 +281,10 @@ class GaussianProcessLearner(ParameterSpaceLearner):
             # for ever in a session that settles into asking for one point at
             # a time, and uncer_bias would do nothing whatever.
             step = (len(seen) + i) % self.generation_size
-            scaled = self._minimise_acquisition(
-                regressor, self.uncer_bias * step, best_params, bounds
+            scaled = self.minimise_acquisition(
+                regressor, self.uncer_bias * step, best_params, lows, highs
             )
             proposals[i] = self.space.clip(self.space.unscale(scaled))
             if i + 1 < k:
-                regressor = self._condition_on(regressor, scaled)
+                regressor = self.condition_on(regressor, scaled)
         return proposals

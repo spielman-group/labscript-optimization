@@ -62,12 +62,8 @@ class TwoPhaseLearner(Learner):
         # session may report its status first.
         self.last_phase = "training"
 
-    def training(self, history: Sequence[Observation]) -> bool:
-        """Whether the training phase is still running."""
-        return len(usable(history)) < self.num_training
-
     def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
-        if self.training(history):
+        if len(usable(history)) < self.num_training:
             self.last_phase = "training"
             return self.trainer.propose(history, k)
         try:

@@ -20,6 +20,7 @@ __all__ = [
     "RandomLearner",
     "TwoPhaseLearner",
     "build",
+    "make_learner",
 ]
 
 #: Learners that can be named in a configuration.
@@ -35,7 +36,7 @@ LEARNERS = {
 NEEDS_TRAINING = {"gaussian_process": "directed_random"}
 
 
-def _make(name: str, space, rng, options):
+def make_learner(name: str, space, rng, options):
     try:
         cls = LEARNERS[name]
     except KeyError:
@@ -69,12 +70,12 @@ def build(config, rng: np.random.Generator | None = None):
         rng = np.random.default_rng(config.seed)
 
     name = config.learner
-    main = _make(name, config.space, rng, config.options_for(name))
+    main = make_learner(name, config.space, rng, config.options_for(name))
     if name not in NEEDS_TRAINING:
         return main
 
     trainer_name = NEEDS_TRAINING[name]
-    trainer = _make(
+    trainer = make_learner(
         trainer_name, config.space, rng, config.options_for(trainer_name)
     )
     return TwoPhaseLearner(trainer, main, config.num_training_runs)

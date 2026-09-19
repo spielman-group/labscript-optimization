@@ -112,7 +112,7 @@ class DirectedRandomLearner(ParameterSpaceLearner):
 
         self.first_params = opening_point(space, first_params)
 
-    def _centre(self, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
+    def centre(self, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
         """Pick the point to draw around.
 
         With nothing inside the band -- which includes the case of a single
@@ -127,7 +127,7 @@ class DirectedRandomLearner(ParameterSpaceLearner):
         candidates = params[inside]
         return candidates[self.rng.integers(len(candidates))]
 
-    def _draw_near(self, centre: np.ndarray) -> np.ndarray:
+    def draw_near(self, centre: np.ndarray) -> np.ndarray:
         if self.trust_gaussian:
             return self.space.clip(self.rng.normal(centre, self.trust_region))
         return self.space.uniform(self.rng, 1, centre, self.trust_region)[0]
@@ -149,5 +149,5 @@ class DirectedRandomLearner(ParameterSpaceLearner):
             if self.rng.uniform() < self.explore_fraction:
                 proposals[i] = self.space.uniform(self.rng, 1)[0]
             else:
-                proposals[i] = self._draw_near(self._centre(params, costs))
+                proposals[i] = self.draw_near(self.centre(params, costs))
         return proposals

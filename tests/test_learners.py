@@ -363,10 +363,10 @@ def test_differential_evolution_state_depends_only_on_the_history(space, rng):
     history = [observe(i, p, sphere(p)) for i, p in enumerate(space.uniform(rng, 40))]
     first = DifferentialEvolutionLearner(
         space, np.random.default_rng(1), population_size=3
-    )._replay(history)
+    ).replay(history)
     second = DifferentialEvolutionLearner(
         space, np.random.default_rng(2), population_size=3
-    )._replay(history)
+    ).replay(history)
     np.testing.assert_allclose(first[1], second[1])
     assert first[2] == second[2]
 
@@ -604,7 +604,7 @@ def test_a_gaussian_process_describes_the_real_data_after_a_proposal_fails(
     before = learner.predict(probe)
 
     searches = []
-    search = learner._minimise_acquisition
+    search = learner.minimise_acquisition
 
     def give_up_after_the_first(*args, **kwargs):
         searches.append(1)
@@ -612,7 +612,7 @@ def test_a_gaussian_process_describes_the_real_data_after_a_proposal_fails(
             raise RuntimeError('the minimiser gave up')
         return search(*args, **kwargs)
 
-    learner._minimise_acquisition = give_up_after_the_first
+    learner.minimise_acquisition = give_up_after_the_first
     with pytest.raises(RuntimeError, match='gave up'):
         learner.propose(history, 4)
 

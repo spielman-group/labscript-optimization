@@ -63,7 +63,7 @@ class Session:
         """The usable observation with the lowest cost, if there is one."""
         return observations.best(self.history)
 
-    def _runs_since_best(self) -> int:
+    def runs_since_best(self) -> int:
         """How many completed shots came after the one holding the best cost.
 
         Counted over every completed shot, usable or not; see
@@ -76,13 +76,13 @@ class Session:
         position = [o.shot_id for o in history].index(best.shot_id)
         return len(history) - 1 - position
 
-    def _check_stop(self) -> None:
+    def check_stop(self) -> None:
         limit = self.config.max_num_runs
         if limit is not None and len(self.results) >= limit:
             self.stopped = f"reached max_num_runs ({limit})"
             return
         patience = self.config.max_num_runs_without_better_params
-        if patience is not None and self._runs_since_best() >= patience:
+        if patience is not None and self.runs_since_best() >= patience:
             self.stopped = (
                 f"no better parameters in {patience} runs "
                 f"(max_num_runs_without_better_params)"
@@ -101,7 +101,7 @@ class Session:
             return False
         self.results[shot_id] = (float(cost), uncer, bool(bad))
         self.dropped.discard(shot_id)
-        self._check_stop()
+        self.check_stop()
         return True
 
     def reconcile(self) -> list[str]:

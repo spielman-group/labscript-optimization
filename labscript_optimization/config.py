@@ -192,7 +192,7 @@ class Config:
         return {g.name: g.evaluate(values) for g in self.globals}
 
 
-def _present(
+def present(
     table: dict, keys: Sequence[str], convert: Callable[[Any], Any] | None = None
 ) -> dict[str, Any]:
     """The ``keys`` this table actually carries, coerced by ``convert``.
@@ -201,18 +201,18 @@ def _present(
     supplies it from the field's own default. No default is written here: each
     one lives on the dataclass and nowhere else, so none can drift.
     """
-    present: dict[str, Any] = {}
+    found: dict[str, Any] = {}
     for key in (k for k in keys if k in table):
         try:
-            present[key] = table[key] if convert is None else convert(table[key])
+            found[key] = table[key] if convert is None else convert(table[key])
         except (TypeError, ValueError) as error:
             raise ValueError(
                 f"{key} must be readable as {convert.__name__}, got {table[key]!r}"
             ) from error
-    return present
+    return found
 
 
-def _reject_unknown(table: dict, allowed: frozenset[str], where: str) -> None:
+def reject_unknown(table: dict, allowed: frozenset[str], where: str) -> None:
     """Fail on any key of ``table`` that nothing in this package reads.
 
     The message names the table as well as the key, because the same spelling
@@ -226,7 +226,7 @@ def _reject_unknown(table: dict, allowed: frozenset[str], where: str) -> None:
         )
 
 
-def _require_present(table: dict, keys: frozenset[str], where: str) -> None:
+def require_present(table: dict, keys: frozenset[str], where: str) -> None:
     """Fail on a required key the table leaves out, in the voice a typo gets."""
     missing = sorted(keys - set(table))
     if missing:
@@ -236,7 +236,7 @@ def _require_present(table: dict, keys: frozenset[str], where: str) -> None:
         )
 
 
-def _require_type(value: Any, kind: type, where: str) -> Any:
+def require_type(value: Any, kind: type, where: str) -> Any:
     """Fail on a setting of the wrong type, which no spelling check catches.
 
     A quoted boolean is truthy and a bare string is a sequence of its own
@@ -248,7 +248,7 @@ def _require_type(value: Any, kind: type, where: str) -> Any:
     return value
 
 
-def _check_keys(raw: dict) -> None:
+def check_keys(raw: dict) -> None:
     """Fail on a key nothing would act on, and on a required one left out.
 
     Accepting a key and ignoring it is how a lab comes to believe a setting is
@@ -257,9 +257,9 @@ def _check_keys(raw: dict) -> None:
     active: a typo left to load in a switched-off group waits for the day
     somebody switches the group on.
     """
-    _reject_unknown(raw, TOP_LEVEL_TABLES, "the top level of the configuration")
-    _reject_unknown(raw.get("ANALYSIS", {}), ANALYSIS_KEYS, "[ANALYSIS]")
-    _reject_unknown(raw.get("MLOOP", {}), MLOOP_KEYS | SHARED_LEARNER_KEYS, "[MLOOP]")
+    reject_unknown(raw, TOP_LEVEL_TABLES, "the top level of the configuration")
+    reject_unknown(raw.get("ANALYSIS", {}), ANALYSIS_KEYS, "[ANALYSIS]")
+    reject_unknown(raw.get("MLOOP", {}), MLOOP_KEYS | SHARED_LEARNER_KEYS, "[MLOOP]")
     for table, allowed, required in (
         ("MLOOP_PARAMS", PARAMETER_KEYS, PARAMETER_REQUIRED),
         ("RUNMANAGER_GLOBALS", GLOBAL_KEYS, GLOBAL_REQUIRED),
@@ -267,42 +267,45 @@ def _check_keys(raw: dict) -> None:
         for group, entries in raw.get(table, {}).items():
             for name, entry in entries.items():
                 where = f"[{table}.{group}.{name}]"
-                _reject_unknown(entry, allowed, where)
-                _require_present(entry, required, where)
+                reject_unknown(entry, allowed, where)
+                require_present(entry, required, where)
                 if "args" in entry:
-                    _require_type(entry["args"], list, f"{where} args")
+                    require_type(entry["args"], list, f"{where} args")
                 if "enable" in entry:
-                    _require_type(entry["enable"], bool, f"{where} enable")
+                    require_type(entry["enable"], bool, f"{where} enable")
     # [LEARNER.<name>] is left alone: those knobs are the learners' own.
 
 
 def loads(text: str) -> Config:
     """Parse a configuration from TOML text."""
-    return _from_dict(tomllib.loads(text))
+    return from_dict(tomllib.loads(text))
 
 
 def load(path) -> Config:
     """Read a configuration from a TOML file."""
     with open(path, "rb") as f:
-        return _from_dict(tomllib.load(f))
+        return from_dict(tomllib.load(f))
 
 
-def _from_dict(raw: dict) -> Config:
+def from_dict(raw: dict) -> Config:
     """Build a :class:`Config` from already-parsed TOML.
+
+    ``raw`` is the whole file as nested dictionaries, checked as strictly as
+    one read from disk: every key is either acted on or rejected.
 
     Every complaint about the file is a :class:`ValueError`, a missing setting
     as much as a contradictory one, because ``KeyError`` reprs its argument and
     a written-out sentence raised as one reaches the reader in quotes with its
     own quotes escaped.
     """
-    _check_keys(raw)
+    check_keys(raw)
 
     analysis = raw.get("ANALYSIS", {})
     mloop = raw.get("MLOOP", {})
 
     if "maximize" in analysis:
-        _require_type(analysis["maximize"], bool, "ANALYSIS.maximize")
-    active_groups = _require_type(analysis.get("groups", []), list, "ANALYSIS.groups")
+        require_type(analysis["maximize"], bool, "ANALYSIS.maximize")
+    active_groups = require_type(analysis.get("groups", []), list, "ANALYSIS.groups")
 
     parameters: list[Parameter] = []
     mappings: list[GlobalMapping] = []
@@ -373,7 +376,7 @@ def _from_dict(raw: dict) -> Config:
 
     if "cost_key" not in analysis:
         raise ValueError("ANALYSIS.cost_key is required: [routine_name, result_name]")
-    _require_type(analysis["cost_key"], list, "ANALYSIS.cost_key")
+    require_type(analysis["cost_key"], list, "ANALYSIS.cost_key")
     cost_key = tuple(analysis["cost_key"])
     if len(cost_key) != 2:
         raise ValueError(
@@ -389,9 +392,9 @@ def _from_dict(raw: dict) -> Config:
         learner_options[name] = dict(table)
 
     settings: dict[str, Any] = {
-        **_present(analysis, ("maximize",)),
-        **_present(mloop, ("learner", "session"), str),
-        **_present(
+        **present(analysis, ("maximize",)),
+        **present(mloop, ("learner", "session"), str),
+        **present(
             mloop,
             (
                 "max_num_runs",

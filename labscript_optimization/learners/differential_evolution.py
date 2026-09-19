@@ -20,7 +20,7 @@ from ..space import ParameterSpace
 from .base import ParameterSpaceLearner, opening_batch, opening_point
 
 #: The mutation strategies, and how many other population members each one
-#: draws on. The counts are read by :meth:`DifferentialEvolutionLearner._mutant`
+#: draws on. The counts are read by :meth:`DifferentialEvolutionLearner.mutant`
 #: and by the population guard, so neither can drift from the other.
 STRATEGIES = {"best1": 2, "best2": 4, "rand1": 3, "rand2": 5}
 
@@ -94,7 +94,7 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
 
         self.first_params = opening_point(space, first_params)
 
-    def _replay(self, history: Sequence[Observation]):
+    def replay(self, history: Sequence[Observation]):
         """Rebuild the population by walking the history in proposal order.
 
         Returns the population parameters, their costs, and the slot the next
@@ -128,20 +128,19 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
 
         return params, costs, slot
 
-    def _sample_new_member(self, params: list, costs: list) -> np.ndarray:
+    def sample_new_member(self, params: list, costs: list) -> np.ndarray:
         """Draw a point while the population is still being filled."""
         if not costs:
             return self.space.uniform(self.rng, 1)[0]
         best = params[int(np.argmin(costs))]
         return self.space.uniform(self.rng, 1, best, self.trust_region)[0]
 
-    def _distinct_indices(self, exclude: int, count: int) -> np.ndarray:
-        choices = np.delete(np.arange(self.num_members), exclude)
-        return self.rng.choice(choices, size=count, replace=False)
-
-    def _mutant(self, slot: int, population: np.ndarray, best: int, scale: float):
+    def mutant(self, slot: int, population: np.ndarray, best: int, scale: float):
+        others = np.delete(np.arange(self.num_members), slot)
         drawn = population[
-            self._distinct_indices(slot, STRATEGIES[self.evolution_strategy])
+            self.rng.choice(
+                others, size=STRATEGIES[self.evolution_strategy], replace=False
+            )
         ]
         if self.evolution_strategy == "best1":
             return population[best] + scale * (drawn[0] - drawn[1])
@@ -153,10 +152,10 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
             )
         return drawn[0] + scale * (drawn[1] + drawn[2] - drawn[3] - drawn[4])
 
-    def _trial(self, slot: int, population: np.ndarray, costs: np.ndarray) -> np.ndarray:
+    def trial(self, slot: int, population: np.ndarray, costs: np.ndarray) -> np.ndarray:
         best = int(np.argmin(costs))
         scale = self.rng.uniform(*self.mutation_scale)
-        mutant = self._mutant(slot, population, best, scale)
+        mutant = self.mutant(slot, population, best, scale)
 
         crossovers = self.rng.random(self.space.num_params) < self.cross_over_probability
         # At least one coordinate must come from the mutant, or the trial would
@@ -179,16 +178,16 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         if opening is not None:
             return opening
 
-        params, costs, slot = self._replay(history)
+        params, costs, slot = self.replay(history)
         proposals = np.empty((k, self.space.num_params))
         for i in range(k):
             if len(costs) < self.num_members:
                 # Still filling: each proposal is another founding member. The
                 # ones already proposed in this batch are not yet members, so
                 # they cannot be drawn around, which only costs some locality.
-                proposals[i] = self._sample_new_member(params, costs)
+                proposals[i] = self.sample_new_member(params, costs)
             else:
-                proposals[i] = self._trial(
+                proposals[i] = self.trial(
                     (slot + i) % self.num_members,
                     np.array(params),
                     np.array(costs),
