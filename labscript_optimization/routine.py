@@ -7,7 +7,7 @@ A lab analysis routine is two lines::
 
 Adding the routine to lyse starts the session; removing it, restarting it, or
 reaching the run budget stops it. :data:`SHOT_RESULTS` is written onto each
-shot the optimiser can claim, as lyse results under :data:`RESULTS_GROUP`, so
+shot the session proposed, as lyse results under :data:`RESULTS_GROUP`, so
 the best cost and where the search has got to are columns of the dataframe.
 
 The routine itself does almost nothing: it reads the cost for the shot it was
@@ -65,10 +65,13 @@ def value(shot, key):
 def extract(dataframe, config):
     """Read the shot id and cost of the most recent shot.
 
-    Returns ``(shot_id, cost, uncer, bad)``, or ``None`` when the shot belongs
-    to somebody else: lyse reads the identifier runmanager wrote into the file
-    as a column, and it is empty for a shot runmanager did not queue -- a
-    user's own, or one of runmanager's defaults. The sign flip for ``maximize``
+    Returns ``(shot_id, cost, uncer, bad)``, or ``None`` when there is no id to
+    read: lyse reads the identifier runmanager wrote into the file as a column,
+    and it is empty for one of runmanager's default shots, which go to BLACS
+    already compiled and so never have an id written into them. An id that is
+    there does not make the shot the session's -- runmanager mints one for
+    every row it compiles, a user's own shots included -- and which ids belong
+    to the session is the session's own answer. The sign flip for ``maximize``
     happens here, once, so everything downstream minimises.
     """
     if not len(dataframe):
@@ -153,16 +156,20 @@ def start_worker(config_path, process_tree=None):
 def _drain(from_worker):
     """Wait for the worker's answer to the message just sent, and return it.
 
+    Returns ``(recorded, status)``: whether the session took the observation
+    just sent, and where the session has got to. The two travel in one message,
+    so a status can never be read against another shot's answer.
+
     The answer is this shot's own: the worker's reply is still crossing a
     socket while this runs. The wait is bounded by :data:`REPLY_TIMEOUT`, which
     caps how long a worker that has stopped answering can hold lyse up;
-    reaching it returns ``None`` and this shot goes unreported.
+    reaching it returns ``(False, None)`` and this shot goes unreported.
 
     Anything behind the answer is swept up too, but only if it is already
     waiting, which is how an error from the slow work behind an earlier reply
     arrives without being waited for. Raises if the worker reported an error.
     """
-    status, error, timeout = None, None, REPLY_TIMEOUT
+    recorded, status, error, timeout = False, None, None, REPLY_TIMEOUT
     while True:
         try:
             kind, payload = from_worker.get(timeout=timeout)
@@ -173,10 +180,10 @@ def _drain(from_worker):
         if kind == "error":
             error = payload
         else:
-            status = payload
+            recorded, status = payload
     if error is not None:
         raise RuntimeError(f"the optimisation worker failed:\n{error}")
-    return status
+    return recorded, status
 
 
 def optimise(config_path, storage=None, dataframe=None):
@@ -190,12 +197,13 @@ def optimise(config_path, storage=None, dataframe=None):
             called on, asked of lyse.
 
     Returns:
-        The whole status the worker sends in answer to this invocation, of
-        which :func:`save_status` has written :data:`SHOT_RESULTS` onto the
-        shot, or ``None`` if the worker does not answer within
-        :data:`REPLY_TIMEOUT`. On the shot that starts the session the answer
-        is to the configuration this invocation also sent, so it counts a
-        session that has proposed nothing yet.
+        The whole status the worker sends in answer to this invocation, or
+        ``None`` if the worker does not answer within :data:`REPLY_TIMEOUT`.
+        When the session took this shot's cost, :func:`save_status` has
+        written :data:`SHOT_RESULTS` of that status onto the shot. On the shot
+        that starts the session the answer is to the configuration this
+        invocation also sent, so it counts a session that has proposed nothing
+        yet.
     """
     if storage is None or dataframe is None:
         import lyse
@@ -234,11 +242,12 @@ def optimise(config_path, storage=None, dataframe=None):
     else:
         to_worker.put(("shot", None))
 
-    status = _drain(from_worker)
-    # Only a shot the optimiser can claim carries the status. A shot with no
-    # id is somebody else's, and a session that has proposed nothing has no
-    # shot of its own yet at all.
-    if observation is not None and status and status.get("submitted"):
+    recorded, status = _drain(from_worker)
+    # The session took this shot's cost, so this shot is one it proposed. The
+    # id alone does not say so: runmanager mints one for every queue row it
+    # compiles, and writing the status onto a shot the session never proposed
+    # would put a column of somebody else's numbers against a user's own shot.
+    if recorded:
         save_status(value(latest(dataframe), "filepath"), status)
     return status
 

@@ -1,8 +1,8 @@
 """Reading a cost out of the lyse dataframe, and handing it to the worker.
 
 lyse labels its columns with a MultiIndex, so an analysis result is the column
-``('routine', 'result')``. The shot's identifier is a column of its own, empty
-for a shot runmanager did not queue.
+``('routine', 'result')``. The shot's identifier is a column of its own, filled
+for every shot runmanager compiled and empty for one of its default shots.
 
 What the routine then does with that cost is the other half. Those tests drive
 the entry point against a pair of fake pipes and a fake process, so they say
@@ -138,8 +138,10 @@ def test_the_most_recent_shot_is_the_one_read(config, shot):
     assert shot_id == 'row-2' and cost == -2.0
 
 
-def test_a_shot_carrying_no_identifier_is_not_ours(config, shot):
-    """A user's own shot, or one of runmanager's defaults, reads as empty.
+def test_a_shot_carrying_no_identifier_has_nothing_to_read(config, shot):
+    """One of runmanager's default shots. It goes to BLACS already compiled, so
+    no queue-row id is ever written into it and no cost can be matched to a
+    proposal by one.
 
     Empty rather than missing: lyse writes the column for every shot.
     """
@@ -219,7 +221,7 @@ class Answering(Pipe):
         if self.replies:
             reply = self.replies.pop(0)
         else:
-            reply = ('status', {'answered': len(self.sent)})
+            reply = ('status', (False, {'answered': len(self.sent)}))
         timer = threading.Timer(self.delay, self.from_worker.incoming.put, [reply])
         # Nothing need wait at the end of a test for an answer nobody is
         # listening for any more.
@@ -372,7 +374,9 @@ def test_an_answer_still_on_its_way_is_left_for_the_next_shot(session, shot):
     the worker exists to absorb, once per shot.
     """
     straggler = threading.Timer(
-        1.0, session.worker.from_worker.incoming.put, [('status', {'answered': 99})]
+        1.0,
+        session.worker.from_worker.incoming.put,
+        [('status', (False, {'answered': 99}))],
     )
     straggler.daemon = True
     straggler.start()
@@ -426,7 +430,10 @@ def test_the_status_is_written_onto_the_shot_as_lyse_results(session, shot, resu
     """
     row = shot()
     session.worker.replies.append(
-        ('status', status(best_cost=-7.0, best_params=[0.25], best_shot_id='row-3'))
+        (
+            'status',
+            (True, status(best_cost=-7.0, best_params=[0.25], best_shot_id='row-3')),
+        )
     )
     routine_module.optimise(session.path, session.storage, frame([row]))
     written = results(row)
@@ -444,7 +451,7 @@ def test_the_sessions_own_counters_are_not_written_onto_every_shot(
     routine that wants them has them: optimise returns the whole status.
     """
     row = shot()
-    session.worker.replies.append(('status', status()))
+    session.worker.replies.append(('status', (True, status())))
     answer = routine_module.optimise(session.path, session.storage, frame([row]))
     # Spelt out rather than read back from the module that wrote them: these
     # names are the promise, df[('labscript_optimization', 'best_cost')].
@@ -465,7 +472,7 @@ def test_a_value_the_session_does_not_have_yet_is_written_as_nan(
     through a session is one lyse cannot plot.
     """
     row = shot()
-    session.worker.replies.append(('status', status()))
+    session.worker.replies.append(('status', (True, status())))
     routine_module.optimise(session.path, session.storage, frame([row]))
     written = results(row)
     assert all(
@@ -474,25 +481,27 @@ def test_a_value_the_session_does_not_have_yet_is_written_as_nan(
     )
 
 
-def test_a_shot_that_is_not_ours_is_not_written_to(session, shot):
-    """A default shot, or the user's own, carries no id. Writing the
-    optimiser's progress onto it would put a column of somebody else's numbers
-    against it.
+def test_a_shot_carrying_no_identifier_is_not_written_to(session, shot):
+    """One of runmanager's default shots. There is no id to send an observation
+    under, so the session has nothing to take and nothing of the optimiser's
+    belongs on the shot.
     """
     row = shot(shot_id=None)
-    session.worker.replies.append(('status', status()))
+    session.worker.replies.append(('status', (False, status())))
     routine_module.optimise(session.path, session.storage, frame([row]))
     with h5py.File(row['filepath'], 'r') as f:
         assert 'results' not in f
 
 
-def test_a_session_that_has_proposed_nothing_writes_to_no_shot(session, shot):
-    """The first invocation's answer is to the configuration it sent alongside
-    the observation, so it describes a session with no shots of its own, and
-    the shot in hand cannot be one of them.
+def test_a_shot_the_session_never_proposed_is_not_written_to(session, shot):
+    """runmanager mints a shot id for every queue row it compiles, so a user's
+    own shot arrives carrying one exactly as the optimiser's do. Only the
+    session knows which ids it proposed, and its answer is what says so:
+    writing on the strength of the id alone puts a column of the optimiser's
+    numbers onto somebody else's shot.
     """
-    row = shot()
-    session.worker.replies.append(('status', status(submitted=0)))
+    row = shot(shot_id='someone-elses-shot')
+    session.worker.replies.append(('status', (False, status())))
     routine_module.optimise(session.path, session.storage, frame([row]))
     with h5py.File(row['filepath'], 'r') as f:
         assert 'results' not in f
@@ -507,7 +516,7 @@ def test_a_status_that_cannot_be_written_does_not_stop_the_session(
     """
     pytest.importorskip('lyse')
     row = shot()
-    session.worker.replies.append(('status', status()))
+    session.worker.replies.append(('status', (True, status())))
     sending = session.worker.put
     session.worker.put = lambda item: (os.unlink(row['filepath']), sending(item))
 

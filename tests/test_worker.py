@@ -109,6 +109,16 @@ def run(messages, interface=FakeInterface):
     return worker.to_parent.sent
 
 
+def status_of(message):
+    """The status in one reply, which is ``('status', (recorded, status))``.
+
+    ``recorded`` is whether the session took the observation the message
+    answered; the tests that are about that unpack it themselves.
+    """
+    _, (_, status) = message
+    return status
+
+
 def test_configuring_fills_the_queue(config_file):
     sent = run([('configure', config_file)])
     assert [kind for kind, _ in sent] == ['status']
@@ -121,8 +131,40 @@ def test_an_observation_is_answered_before_the_next_shots_are_proposed(config_fi
         [('configure', config_file), ('observe', ('shot-0', 1.0, None, False))]
     )
     assert [kind for kind, _ in sent] == ['status', 'status']
-    assert sent[1][1]['completed'] == 1
+    assert status_of(sent[1])['completed'] == 1
     assert FakeInterface.instances[0].submitted == ['shot-0', 'shot-1', 'shot-2']
+
+
+def test_an_observation_the_session_proposed_is_answered_as_taken(config_file):
+    """The routine writes its results onto a shot on this answer and no other.
+
+    runmanager mints a shot id for every queue row it compiles, so a user's own
+    shot reaches the routine carrying one too. Whether the session proposed
+    that id is the only thing that tells the two apart, and the session is the
+    only thing that knows.
+    """
+    sent = run(
+        [('configure', config_file), ('observe', ('shot-0', 1.0, None, False))]
+    )
+    _, (recorded, _) = sent[-1]
+    assert recorded is True
+
+
+def test_an_observation_the_session_never_proposed_is_answered_as_not_taken(
+    config_file,
+):
+    """A user's own shot, engaged alongside the optimisation, carries an id
+    runmanager minted for its queue row -- and the session still did not
+    propose it, so nothing of the optimiser's belongs on it.
+    """
+    sent = run(
+        [
+            ('configure', config_file),
+            ('observe', ('someone-elses-shot', 1.0, None, False)),
+        ]
+    )
+    _, (recorded, _) = sent[-1]
+    assert recorded is False
 
 
 def test_a_status_message_frees_the_places_of_lost_shots(config_file):
@@ -139,7 +181,7 @@ def test_a_status_message_frees_the_places_of_lost_shots(config_file):
     # The reconciliation that dropped the first two shots ran after the second
     # invocation had already replied, so the count reaches the routine on the
     # third. A status is a report of finished work, not of work in progress.
-    assert sent[-1][1]['dropped'] == 2
+    assert status_of(sent[-1])['dropped'] == 2
     # Having dropped them, it refilled rather than waiting on them for ever.
     assert FakeInterface.instances[0].submitted[:4] == [
         'shot-0',
@@ -183,7 +225,7 @@ def test_a_shot_arriving_before_configuring_is_answered_with_nothing(config_file
     """There is no session to report on yet, and the routine is waiting: an
     empty status is the answer, not an error and not silence.
     """
-    assert run([('shot', None)]) == [('status', {})]
+    assert run([('shot', None)]) == [('status', (False, {}))]
 
 
 def test_an_observation_before_configuring_is_an_error(config_file):
@@ -210,7 +252,7 @@ def test_a_failure_stops_the_session_proposing(config_file):
     sent = run([('configure', config_file), ('shot', None)], FailsOnSubmit)
     assert [kind for kind, _ in sent] == ['status', 'error', 'status']
     assert 'runmanager went away' in sent[1][1]
-    assert sent[-1][1]['stopped'] == 'stopped by an error'
+    assert status_of(sent[-1])['stopped'] == 'stopped by an error'
 
 
 def test_quit_returns_without_replying(config_file):
@@ -235,7 +277,7 @@ def test_the_worker_starts_in_a_process_of_its_own(monkeypatch, tmp_path):
     to_worker, from_worker = worker.start()
     try:
         to_worker.put(('shot', None))
-        assert from_worker.get(timeout=60) == ('status', {})
+        assert from_worker.get(timeout=60) == ('status', (False, {}))
     finally:
         to_worker.put(('quit', None))
         assert worker.child.wait(timeout=60) == 0

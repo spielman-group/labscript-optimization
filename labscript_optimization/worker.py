@@ -39,6 +39,12 @@ class Worker(Process):
     def run(self) -> None:
         """Handle messages until told to quit. The child's entry point.
 
+        A reply is ``("status", (recorded, status))``. ``recorded`` is whether
+        the session took the observation this message carried, and it is the
+        only thing that says the shot the routine is holding is one of this
+        session's: runmanager mints a shot id for every queue row it compiles,
+        so a user's own shots carry one too.
+
         The reply goes out before the reconciling, proposing and submitting
         that follow it, so the status the routine reads is one step behind:
         the shots this invocation drops and submits are counted in the next
@@ -51,6 +57,7 @@ class Worker(Process):
             command, payload = self.from_parent.get()
             if command == "quit":
                 return
+            recorded = False
             try:
                 if command == "configure":
                     config = config_module.load(payload)
@@ -62,10 +69,10 @@ class Worker(Process):
                         raise RuntimeError(
                             "got an observation before being configured"
                         )
-                    session.record(*payload)
+                    recorded = session.record(*payload)
                 elif command == "shot":
                     if session is None:
-                        self.to_parent.put(("status", {}))
+                        self.to_parent.put(("status", (False, {})))
                         continue
                 else:
                     raise ValueError(f"unknown command {command!r}")
@@ -74,7 +81,7 @@ class Worker(Process):
                 # routines inline and one at a time, so the routine blocked on
                 # this reply holds up every shot behind it, and both calls
                 # below are round trips to runmanager.
-                self.to_parent.put(("status", session.status()))
+                self.to_parent.put(("status", (recorded, session.status())))
 
                 # Every invocation reconciles, not only those that submit: the
                 # routine may not be called again for a long time, and a shot

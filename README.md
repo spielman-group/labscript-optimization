@@ -47,13 +47,15 @@ optimisation.optimise('mloop_config.toml')
 ```
 
 Adding the routine starts the session; removing it, restarting it, or reaching
-the run budget stops it. Progress is saved onto each shot the optimiser can
-claim, under the results group `labscript_optimization`, so it comes back as
+the run budget stops it. Progress is saved onto each shot the session proposed,
+under the results group `labscript_optimization`, so it comes back as
 dataframe columns: `df[('labscript_optimization', 'best_cost')]` is the best
 cost so far, beside the parameters and the shot that produced it, which phase
 the learner is in, and why the session stopped. Anything the session does not
 have yet reads as `NaN`. Shots that are not the optimiser's own — yours, and
-runmanager's default shots — are left alone.
+runmanager's default shots — are left alone: runmanager mints a shot id for
+every queue row it compiles, so carrying one does not make a shot the
+optimiser's, and the session writes onto an id it proposed and no other.
 
 The session's own counters are one answer for the whole run rather than
 anything about a shot, so they are not written onto every shot of it.
