@@ -119,9 +119,11 @@ the population itself and the second is the first to evolve it.
   `args`, are unchanged. So is `ANALYSIS.groups` selecting which groups take
   part, and `enable = false` keeping a parameter in the file but out of the
   search.
-- `cost_key` is still `[routine_name, result_name]`, `maximize` still flips
-  the sign, and an optional `u_<result>` column alongside is still read as the
-  uncertainty and weights the Gaussian process fit.
+- `cost_key` is still `[routine_name, result_name]`, `maximize` still means
+  your cost column holds something to be made large, and an optional
+  `u_<result>` column alongside is still read as the uncertainty and weights
+  the Gaussian process fit. `best_cost` comes back in the same units and sign
+  as that column.
 - You still compute the cost yourself, in your own lyse routine. This package
   never computes one.
 - `num_training_runs`, `max_num_runs` and `max_num_runs_without_better_params`

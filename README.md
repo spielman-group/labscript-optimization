@@ -89,6 +89,12 @@ You compute the cost yourself, in your own lyse routine, into the column named
 by `cost_key`. A shot whose cost is `NaN` is recorded as a bad observation
 rather than being waited on.
 
+That column has to be there by the time this routine runs. lyse runs multishot
+routines in list order, so the cost has to come from a singleshot routine, or
+from a multishot routine above this one in the list. A column that is not there
+yet is not waited for either: the shot is recorded as a bad observation, and so
+is every other shot of the run, with nothing anywhere saying why.
+
 See [`examples/config_example.toml`](examples/config_example.toml) for the
 configuration. It has the shape of an analysislib-mloop file, without the
 settings that belong to M-LOOP itself and without that package's alternate
