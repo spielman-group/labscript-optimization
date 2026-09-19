@@ -38,20 +38,21 @@ class TwoPhaseLearner(Learner):
     can neither answer for nor pass on, so a learner declaring one is refused
     here rather than wrapped.
 
-    Forwarding the barrier instead was rejected on three grounds. During
-    training the trainer proposes and declares no barrier, so a forwarded
-    generation would describe a phase that is not running: the session would
-    drain the queue every ``generation`` shots throughout training, and
-    ``refill`` does not count starvation for a learner declaring a generation,
-    so the default shots runmanager hands BLACS at each of those drains would
-    be missing from the one number a lab is told to watch. The barrier is also
-    not the whole of what a generational learner needs: it reads a proposal's
-    role off its position in the history it is handed, and behind a trainer
-    that history opens with positions it never proposed and results that are
-    not trials of its population -- so forwarding would make the queueing
-    honest and leave the algorithm still not the one it is named after. And
-    the declaration itself would be false of this object, which spends its
-    training phase proposing through a learner that makes no such promise.
+    The alternative -- forwarding the main learner's generation -- is wrong on
+    three counts. During training the trainer proposes and declares no
+    barrier, so a forwarded generation would describe a phase that is not
+    running: the session would drain the queue every ``generation`` shots
+    throughout training, and ``refill`` does not count starvation for a
+    learner declaring a generation, so the default shots runmanager hands
+    BLACS at each of those drains would be missing from the one number a lab
+    is told to watch. The barrier is also not the whole of what a generational
+    learner needs: it reads a proposal's role off its position in the history
+    it is handed, and behind a trainer that history opens with positions it
+    never proposed and results that are not trials of its population -- so
+    forwarding would make the queueing honest and leave the algorithm still
+    not the one it is named after. And the declaration itself would be false
+    of this object, which spends its training phase proposing through a
+    learner that makes no such promise.
     Wrapping a generational learner needs the history it is handed to begin
     where its own proposals begin; until something does that, the combination
     is refused rather than approximated.
