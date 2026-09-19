@@ -452,6 +452,24 @@ repeatedly: a test that cannot fail is worse than no test, so anything surviving
 this pass should have a mutation that kills it; and a test that asserts a
 published name against the constant that defines it proves nothing.
 
+Three specific items carried forward from earlier slices:
+
+- **A test whose name claims more than it covers.** The test asserting that
+  loading a configuration imports neither scipy nor scikit-learn passes on a
+  minimal file, but the shipped example configuration *does* import both,
+  because it carries a table for a named learner and every named table has its
+  class resolved. Verified. Either make the property true for named tables or
+  rename the test to the narrower thing it actually guards; a name that
+  overclaims is the failure mode this project keeps finding.
+- **The timeout relation test**, asserting one constant is smaller than another.
+  It guards a real invariant that no behavioural test covers, which is why it
+  survives, but see whether the design change to the greeting removes both
+  constants and the test with them.
+- **Nothing tests on the oldest supported interpreter.** `pyproject.toml`
+  requires 3.11; the suite only ever runs on 3.14, whose deferred annotations
+  hid an unresolvable annotation name that would have raised at import on 3.11.
+  That bug is fixed, and the next one of its kind is still invisible.
+
 ### Acceptance criteria
 
 - [ ] Every surviving test has a mutation that makes it fail, and that mutation
