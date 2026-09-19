@@ -257,6 +257,96 @@ class Worker:
         self.state = 'kill'
 
 
+def patch_spawned_worker(monkeypatch, to_worker, from_worker, child):
+    """Make ``start_worker`` own the supplied pipe ends and child."""
+
+    class SpawnedWorker:
+        def __init__(self, *args, **kwargs):
+            self.child = child
+
+        def start(self):
+            return to_worker, from_worker
+
+    from labscript_optimization import worker as worker_module
+
+    monkeypatch.setattr(worker_module, 'Worker', SpawnedWorker)
+
+
+def test_start_worker_waits_for_and_consumes_the_configuration_reply(
+    monkeypatch, tmp_path
+):
+    """A cold connection may take longer than one shot's reply allowance."""
+    from_worker = Pipe()
+
+    class Configuring(Pipe):
+        def __init__(self):
+            super().__init__()
+            self.answered = threading.Event()
+
+        def put(self, item):
+            self.sent.append(item)
+
+            def answer():
+                from_worker.incoming.put(
+                    ('status', (False, {'configured': True}))
+                )
+                self.answered.set()
+
+            timer = threading.Timer(0.02, answer)
+            timer.daemon = True
+            timer.start()
+
+    to_worker = Configuring()
+    child = Worker()
+    patch_spawned_worker(monkeypatch, to_worker, from_worker, child)
+    monkeypatch.setattr(routine_module, 'REPLY_TIMEOUT', 0.001)
+    monkeypatch.setattr(routine_module, 'CONFIGURE_TIMEOUT', 0.2)
+    handles = routine_module.start_worker(tmp_path / 'config.toml', object())
+
+    assert handles == (to_worker, from_worker, child)
+    assert to_worker.sent == [
+        ('configure', os.path.abspath(tmp_path / 'config.toml'))
+    ]
+    assert to_worker.answered.is_set()
+    assert from_worker.incoming.empty()
+
+
+def test_start_worker_reaps_a_worker_that_rejects_its_configuration(
+    monkeypatch, tmp_path
+):
+    from_worker = Pipe()
+
+    class Rejecting(Pipe):
+        def put(self, item):
+            self.sent.append(item)
+            if item[0] == 'configure':
+                from_worker.incoming.put(('error', 'invalid configuration'))
+
+    to_worker = Rejecting()
+    child = Worker()
+    patch_spawned_worker(monkeypatch, to_worker, from_worker, child)
+
+    with pytest.raises(RuntimeError, match='invalid configuration'):
+        routine_module.start_worker(tmp_path / 'config.toml', object())
+
+    assert [command for command, _ in to_worker.sent] == ['configure', 'quit']
+    assert child.reaped
+
+
+def test_start_worker_reaps_a_worker_that_does_not_configure(
+    monkeypatch, tmp_path
+):
+    to_worker, from_worker, child = Pipe(), Pipe(), Worker()
+    patch_spawned_worker(monkeypatch, to_worker, from_worker, child)
+    monkeypatch.setattr(routine_module, 'CONFIGURE_TIMEOUT', 0.01)
+
+    with pytest.raises(TimeoutError, match='did not configure within'):
+        routine_module.start_worker(tmp_path / 'config.toml', object())
+
+    assert [command for command, _ in to_worker.sent] == ['configure', 'quit']
+    assert child.reaped
+
+
 @pytest.fixture
 def session(monkeypatch, tmp_path):
     """A running session: a configuration file, and a worker made of fakes.

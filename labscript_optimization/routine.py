@@ -40,6 +40,10 @@ SHOT_RESULTS = ("phase", "best_cost", "best_params", "best_shot_id", "stopped")
 #: short against a shot cycle.
 REPLY_TIMEOUT = 2.0
 
+#: Seconds allowed for the worker to load its configuration and establish its
+#: first runmanager connection. This is startup, not part of a shot cycle.
+CONFIGURE_TIMEOUT = 30.0
+
 
 def latest(dataframe):
     """The most recent shot, as a one-row frame.
@@ -130,7 +134,8 @@ def save_status(filepath, status) -> None:
 def start_worker(config_path, process_tree=None):
     """Spawn the optimisation worker and configure it.
 
-    Returns ``(to_worker, from_worker, popen)``.
+    Waits for configuration to finish, then returns
+    ``(to_worker, from_worker, popen)``.
     """
     # zprocess sends the class itself to the child, so the parent needs it.
     # Imported here rather than above so that a routine which never starts a
@@ -147,13 +152,24 @@ def start_worker(config_path, process_tree=None):
 
     worker = Worker(process_tree, startup_timeout=30)
     to_worker, from_worker = worker.start()
-    to_worker.put(("configure", os.path.abspath(config_path)))
+    handles = to_worker, from_worker, worker.child
+    try:
+        to_worker.put(("configure", os.path.abspath(config_path)))
+        _, status = _drain(from_worker, CONFIGURE_TIMEOUT)
+        if status is None:
+            raise TimeoutError(
+                f"the optimisation worker did not configure within "
+                f"{CONFIGURE_TIMEOUT:g} seconds"
+            )
+    except BaseException:
+        _stop_worker(handles)
+        raise
     # The Popen, not the Process: stopping the worker escalates from a
     # request to terminate and then to kill, which zprocess does not do.
-    return to_worker, from_worker, worker.child
+    return handles
 
 
-def _drain(from_worker):
+def _drain(from_worker, timeout=None):
     """Wait for the worker's answer to the message just sent, and return it.
 
     Returns ``(recorded, status)``: whether the session took the observation
@@ -161,15 +177,16 @@ def _drain(from_worker):
     so a status can never be read against another shot's answer.
 
     The answer is this shot's own: the worker's reply is still crossing a
-    socket while this runs. The wait is bounded by :data:`REPLY_TIMEOUT`, which
-    caps how long a worker that has stopped answering can hold lyse up;
-    reaching it returns ``(False, None)`` and this shot goes unreported.
+    socket while this runs. ``timeout`` bounds the wait for its first message
+    and defaults to :data:`REPLY_TIMEOUT`; reaching it returns ``(False,
+    None)`` and this shot goes unreported.
 
     Anything behind the answer is swept up too, but only if it is already
     waiting, which is how an error from the slow work behind an earlier reply
     arrives without being waited for. Raises if the worker reported an error.
     """
-    recorded, status, error, timeout = False, None, None, REPLY_TIMEOUT
+    recorded, status, error = False, None, None
+    timeout = REPLY_TIMEOUT if timeout is None else timeout
     while True:
         try:
             kind, payload = from_worker.get(timeout=timeout)
@@ -200,10 +217,9 @@ def optimise(config_path, storage=None, dataframe=None):
         The whole status the worker sends in answer to this invocation, or
         ``None`` if the worker does not answer within :data:`REPLY_TIMEOUT`.
         When the session took this shot's cost, :func:`save_status` has
-        written :data:`SHOT_RESULTS` of that status onto the shot. On the shot
-        that starts the session the answer is to the configuration this
-        invocation also sent, so it counts a session that has proposed nothing
-        yet.
+        written :data:`SHOT_RESULTS` of that status onto the shot. Worker
+        configuration is acknowledged before the worker is stored, so the
+        first shot receives its own answer like every later shot.
     """
     if storage is None or dataframe is None:
         import lyse
@@ -265,21 +281,9 @@ def exited_within(popen, timeout=5) -> bool:
     return True
 
 
-def stop_worker(storage=None) -> None:
-    """Ask the worker to quit, and see that it has. Safe to call when there is none.
-
-    Restarting the routine is the ordinary way to begin a fresh session, so a
-    worker left behind here is one left behind every time.
-    """
-    if storage is None:
-        import lyse
-
-        storage = lyse.routine_storage
-    handles = getattr(storage, "optimisation_worker", None)
-    if handles is None:
-        return
+def _stop_worker(handles) -> None:
+    """Stop and reap one spawned worker, including a partly started one."""
     to_worker, _, popen = handles
-    storage.optimisation_worker = None
     try:
         to_worker.put(("quit", None))
     except Exception:
@@ -295,3 +299,20 @@ def stop_worker(storage=None) -> None:
     # Nothing stronger is available, and blocking lyse's shutdown on a worker
     # stuck in the kernel would help nobody.
     exited_within(popen)
+
+
+def stop_worker(storage=None) -> None:
+    """Ask the worker to quit, and see that it has. Safe to call when there is none.
+
+    Restarting the routine is the ordinary way to begin a fresh session, so a
+    worker left behind here is one left behind every time.
+    """
+    if storage is None:
+        import lyse
+
+        storage = lyse.routine_storage
+    handles = getattr(storage, "optimisation_worker", None)
+    if handles is None:
+        return
+    storage.optimisation_worker = None
+    _stop_worker(handles)
