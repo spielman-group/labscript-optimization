@@ -564,19 +564,12 @@ against the request number for requests it stopped waiting on — a handful at
 most — and when that status arrives during a later drain, writes it onto *that*
 file if the session took it.
 
-**The bound itself is then a policy choice, not a correctness one.** With
-numbering and the poll, a bounded wait can neither misattribute nor mistake busy
-for dead; all it decides is how long lyse's analysis pipeline waits for a busy
-worker before a shot's status is deferred to a later invocation. Keep it
-bounded and generous, a few seconds: the observation is never at risk either way
-because the worker records the cost whether or not the routine waits, and a
-stalled analysis pipeline is the worse failure for someone watching lyse — M-LOOP
-behaved the other way and analysislib-mloop grew a `no_delay` setting because of
-it. Ian has the final word on that number and it is one constant; the design is
-correct either way.
-
-Say in the README that a shot's progress columns may appear an invocation or two
-late when the worker is busy, and that the cost itself is never affected.
+**The bound stays as it is.** It already does its job: the routine puts its
+message and waits a couple of seconds, so it never holds lyse up for longer than
+that, whatever the worker is doing. Nothing about its value needs revisiting —
+the defect here is that a wait which ends early attributes the next reply to the
+wrong shot, and that is wrong at any bound. Numbering fixes it; the number does
+not come into it.
 
 ### Acceptance criteria
 
@@ -593,8 +586,6 @@ late when the worker is busy, and that the cost itself is never affected.
 - [ ] A worker whose child has exited is reported as dead within about a second,
       and the message says the worker died rather than that it was slow —
       mutation: remove the poll; the test waits out the bound
-- [ ] The README states that progress columns may lag by an invocation under
-      load, and that the cost is not affected
 
 ### Blocked by
 
