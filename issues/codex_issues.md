@@ -426,10 +426,10 @@ applications honour it.
 
 ### Acceptance criteria
 
-- [ ] The greeting's deadline comes from labconfig, with the constant as
+- [x] The greeting's deadline comes from labconfig, with the constant as
       fallback, and matches the key BLACS reads
 - [ ] No production code assigns to a client's `timeout`
-- [ ] The interim carries a comment naming the runmanager change it waits on,
+- [x] The interim carries a comment naming the runmanager change it waits on,
       for as long as it remains the interim
 
 ### Blocked by

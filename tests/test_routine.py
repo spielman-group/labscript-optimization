@@ -349,6 +349,11 @@ def test_runmanager_is_given_up_on_before_the_worker_is():
     allowance for configuring it, and the worker is killed when that runs out.
     A greeting allowed to outlast it means a runmanager that is not running is
     never reported as one: the lab is told only that the worker was slow.
+
+    This holds the shipped pair, which is what a lab that sets nothing gets. A
+    lab is free to raise labconfig's ``timeouts/liveness_timeout`` past the
+    allowance and take the consequence, as it is free to do to BLACS; what it
+    may not be handed is a default that already has it.
     """
     assert interface_module.GREETING_TIMEOUT < routine_module.CONFIGURE_TIMEOUT
 
