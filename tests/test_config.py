@@ -52,7 +52,8 @@ args = ["bx", "by"]
 """
 
 #: The least a file can say and still load: one enabled parameter, its global,
-#: and the cost. Every optional setting is left out.
+#: and the cost. Every optional setting is left out. What a test appends to it
+#: opens a table of its own, so no test depends on where this ends.
 MINIMAL = """
 [ANALYSIS]
 cost_key = ["r", "c"]
@@ -162,10 +163,10 @@ def test_analysislib_mloops_spelling_of_the_learner_key_is_rejected():
 def test_the_long_spellings_of_the_parameter_bounds_are_rejected(spelling):
     """A parameter's bounds are written ``min`` and ``max``, and only so."""
     with pytest.raises(ValueError) as raised:
-        config_module.loads(MINIMAL + f'{spelling} = 2.0\n')
+        config_module.loads(MINIMAL + f'[MLOOP_PARAMS.G.y]\n{spelling} = 2.0\n')
     message = str(raised.value)
     assert spelling in message
-    assert 'MLOOP_PARAMS.G.x' in message
+    assert 'MLOOP_PARAMS.G.y' in message
 
 
 def test_the_compilation_table_is_rejected():
@@ -268,6 +269,78 @@ max = 1.0
     assert str(raised.value).startswith('ANALYSIS.cost_key is required')
 
 
+@pytest.mark.parametrize('missing', ['min', 'max'])
+def test_a_parameter_table_without_its_bounds_says_so(missing):
+    """A setting left out is a ValueError like any other complaint."""
+    kept = 'min = 0.0' if missing == 'max' else 'max = 1.0'
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(
+            MINIMAL + f'[MLOOP_PARAMS.G.y]\nglobal_name = "gy"\n{kept}\n'
+        )
+    message = str(raised.value)
+    assert 'MLOOP_PARAMS.G.y' in message
+    assert f"'{missing}'" in message
+    assert 'requires' in message
+
+
+def test_a_global_with_nothing_to_compute_from_says_so():
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(
+            MINIMAL + '[RUNMANAGER_GLOBALS.G.doubled]\nexpr = "lambda v: 2 * v"\n'
+        )
+    message = str(raised.value)
+    assert 'RUNMANAGER_GLOBALS.G.doubled' in message
+    assert 'args' in message
+
+
+@pytest.mark.parametrize(
+    'text, named',
+    [
+        (MINIMAL.replace('groups = ["G"]', 'groups = "G"'), 'ANALYSIS.groups'),
+        (
+            MINIMAL.replace('cost_key = ["r", "c"]', 'cost_key = "rc"'),
+            'ANALYSIS.cost_key',
+        ),
+        (
+            MINIMAL + '[RUNMANAGER_GLOBALS.G.d]\nexpr = "lambda v: v"\nargs = "x"\n',
+            'RUNMANAGER_GLOBALS.G.d',
+        ),
+    ],
+)
+def test_a_list_written_as_a_bare_string_is_rejected(text, named):
+    """A string is a sequence of its own characters, so it passes for a list.
+
+    ``groups = "CMOT"`` then selects by substring and works by coincidence,
+    until a group name is a substring of another.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(text)
+    assert named in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    'text, named',
+    [
+        (MINIMAL.replace('groups', 'maximize = "false"\ngroups'), 'ANALYSIS.maximize'),
+        (
+            MINIMAL.replace('min = 0.0', 'enable = "false"\nmin = 0.0'),
+            'MLOOP_PARAMS.G.x',
+        ),
+    ],
+)
+def test_a_quoted_boolean_is_rejected(text, named):
+    """Every non-empty string is true, so the quotes invert what was written."""
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(text)
+    assert named in str(raised.value)
+
+
+def test_a_run_count_that_is_not_a_number_is_rejected():
+    """Carried through as written it would reach the session as a string."""
+    with pytest.raises(ValueError):
+        config_module.loads(MINIMAL + '[MLOOP]\nmax_num_runs = "many"\n')
+
+
 def test_a_key_this_package_does_not_act_on_is_rejected():
     """A setting nothing reads is worse than one nobody wrote.
 
@@ -299,10 +372,12 @@ def test_the_retired_ignore_bad_setting_is_rejected():
 
 def test_a_typo_in_a_parameter_table_is_rejected():
     with pytest.raises(ValueError) as raised:
-        config_module.loads(MINIMAL + 'strat = 0.5\n')
+        config_module.loads(
+            MINIMAL + '[MLOOP_PARAMS.G.y]\nmin = 0.0\nmax = 1.0\nstrat = 0.5\n'
+        )
     message = str(raised.value)
     assert 'strat' in message
-    assert 'MLOOP_PARAMS.G.x' in message
+    assert 'MLOOP_PARAMS.G.y' in message
     assert 'start' in message
 
 

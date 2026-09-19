@@ -70,8 +70,8 @@ class DirectedRandomLearner:
             is a fraction of each parameter's range; a sequence is absolute
             distances. ``None`` searches the whole space, which makes this
             learner equivalent to :class:`RandomLearner`.
-        trust_range: Two fractions bounding which observations may be chosen as
-            the centre.
+        trust_range: Two fractions, in order, bounding which observations may
+            be chosen as the centre.
         trust_gaussian: Draw from a Gaussian of width ``trust_region`` about
             the centre instead of uniformly within it.
         explore_fraction: Share of proposals that ignore the trust region and
@@ -104,9 +104,15 @@ class DirectedRandomLearner:
 
         if len(trust_range) != 2:
             raise ValueError(f"trust_range needs two values, got {trust_range!r}")
-        if not all(0 <= t <= 1 for t in trust_range):
-            raise ValueError(f"trust_range values must be in [0, 1], got {trust_range!r}")
-        self.trust_range = tuple(sorted(trust_range))
+        # Refused rather than sorted, as mutation_scale is: a pair written
+        # backwards is a misunderstanding of which end is which, and reordering
+        # it quietly hides that from the lab that wrote it.
+        if not 0 <= trust_range[0] <= trust_range[1] <= 1:
+            raise ValueError(
+                f"trust_range must be an ordered pair within [0, 1], got "
+                f"{trust_range!r}"
+            )
+        self.trust_range = tuple(float(t) for t in trust_range)
 
         self.first_params = opening_point(space, first_params)
 

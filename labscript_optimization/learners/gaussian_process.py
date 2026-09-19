@@ -22,10 +22,14 @@ off the history rather than counted, so a learner handed the same history
 proposes the same thing.
 
 Refitting the kernel hyperparameters is the expensive part, so it happens once
-per ``generation_size`` new observations rather than on every call. Between
-refits the posterior is still refit to all the data; only the hyperparameter
-search is skipped. That is a cost control, and the only thing a learner is
-permitted to remember between calls.
+per ``generation_size`` new observations rather than on every call; the
+posterior is refit to all the data every time. The hyperparameters are fitted
+to a whole number of generations of the history, never to the odd observations
+past the last one, so an instance that has been running all session holds the
+kernel one handed the same history for the first time computes, and what it
+remembers is a cache. Short of a full generation there is nothing to hold back:
+the fit takes the whole history and repeats on every arrival until the first
+generation closes.
 """
 
 from typing import Sequence
@@ -36,7 +40,14 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, WhiteKernel
 from sklearn.preprocessing import StandardScaler
 
-from ..observations import Observation, costs_array, params_array, uncers_array, usable
+from ..observations import (
+    Observation,
+    best,
+    costs_array,
+    params_array,
+    uncers_array,
+    usable,
+)
 from .base import InsufficientData
 from ..space import ParameterSpace
 
@@ -105,7 +116,7 @@ class GaussianProcessLearner:
         self.num_restarts = max(10, space.num_params)
 
         self._kernel = None
-        self._epoch = None
+        self._fitted_to = None
         self.regressor = None
         self.cost_scaler = None
 
@@ -120,40 +131,67 @@ class GaussianProcessLearner:
             )
         return kernel
 
+    def _alpha(self, seen: Sequence[Observation], scaler):
+        """Per-point variances for the regressor, in standardised cost units."""
+        uncers = uncers_array(seen)
+        if uncers is None:
+            return 1e-10
+        return (uncers / scaler.scale_[0]) ** 2
+
+    def _fit_hyperparameters(self, prefix: Sequence[Observation]):
+        """Fit the cost scaling and the kernel hyperparameters to ``prefix``.
+
+        The scaling belongs with them because it sets the units the noise level
+        is measured in: restandardising as each observation arrived would leave
+        a cached kernel describing units that had since moved. The restart
+        draws are seeded from the length of ``prefix`` rather than from the
+        learner's rng, which would make the search depend on how much this
+        instance had already proposed.
+        """
+        costs = costs_array(prefix).reshape(-1, 1)
+        scaler = StandardScaler().fit(costs)
+        regressor = GaussianProcessRegressor(
+            kernel=self._new_kernel(),
+            alpha=self._alpha(prefix, scaler),
+            normalize_y=False,
+            n_restarts_optimizer=self.num_restarts,
+            random_state=len(prefix),
+        )
+        regressor.fit(
+            self.space.scale(params_array(prefix)), scaler.transform(costs).ravel()
+        )
+        return scaler, regressor.kernel_
+
     def fit(self, history: Sequence[Observation]) -> bool:
         """Fit the regressor to ``history``. Returns whether a fit was possible."""
         seen = usable(history)
         if len(seen) < self.minimum_observations:
             return False
 
-        x = self.space.scale(params_array(seen))
+        # Hyperparameters come from whole generations, so that refitting once a
+        # generation is a saving rather than a record of when this instance
+        # last looked. Short of one generation there is nothing to hold back.
+        whole = len(seen) - len(seen) % self.generation_size
+        prefix = seen[:whole] if whole else seen
+        # Keyed on which observations they were fitted to and not how many: a
+        # cost arriving late lands in proposal order and rewrites a prefix of
+        # unchanged length.
+        fitted_to = tuple(o.shot_id for o in prefix)
+        if fitted_to != self._fitted_to:
+            self.cost_scaler, self._kernel = self._fit_hyperparameters(prefix)
+            self._fitted_to = fitted_to
+
         costs = costs_array(seen).reshape(-1, 1)
-
-        self.cost_scaler = StandardScaler().fit(costs)
-        y = self.cost_scaler.transform(costs).ravel()
-
-        uncers = uncers_array(seen)
-        if uncers is None:
-            alpha = 1e-10
-        else:
-            # Per-point variances, in the same standardised units as y.
-            alpha = (uncers / self.cost_scaler.scale_[0]) ** 2
-
-        # Refit hyperparameters once per generation; reuse them in between.
-        epoch = len(seen) // self.generation_size
-        refit = self._kernel is None or epoch != self._epoch
         regressor = GaussianProcessRegressor(
-            kernel=self._new_kernel() if refit else self._kernel,
-            alpha=alpha,
+            kernel=self._kernel,
+            alpha=self._alpha(seen, self.cost_scaler),
             normalize_y=False,
-            optimizer="fmin_l_bfgs_b" if refit else None,
-            n_restarts_optimizer=self.num_restarts if refit else 0,
-            random_state=int(self.rng.integers(2**32)),
+            optimizer=None,
         )
-        regressor.fit(x, y)
-        if refit:
-            self._kernel = regressor.kernel_
-            self._epoch = epoch
+        regressor.fit(
+            self.space.scale(params_array(seen)),
+            self.cost_scaler.transform(costs).ravel(),
+        )
         self.regressor = regressor
         return True
 
@@ -238,8 +276,8 @@ class GaussianProcessLearner:
                 f"observations and has {len(usable(history))}"
             )
         seen = usable(history)
-        best = params_array(seen)[int(np.argmin(costs_array(seen)))]
-        bounds = self._search_bounds(best)
+        best_params = best(history).params
+        bounds = self._search_bounds(best_params)
 
         # The points of this batch are folded into a fit held here and nowhere
         # else, so the learner goes on describing the measured data.
@@ -252,7 +290,7 @@ class GaussianProcessLearner:
             # is what makes it survive being asked one point at a time.
             step = (len(seen) + i) % self.generation_size
             scaled = self._minimise_acquisition(
-                regressor, self.uncer_bias * step, best, bounds
+                regressor, self.uncer_bias * step, best_params, bounds
             )
             proposals[i] = self.space.clip(self.space.unscale(scaled))
             if i + 1 < k:

@@ -89,8 +89,16 @@ MLOOP_KEYS = frozenset(
 #: The keys one ``[MLOOP_PARAMS.<group>.<name>]`` table carries.
 PARAMETER_KEYS = frozenset({"enable", "global_name", "max", "min", "start"})
 
+#: Of those, the ones a parameter table must carry: bounds are what a search
+#: has to have.
+PARAMETER_REQUIRED = frozenset({"max", "min"})
+
 #: The keys one ``[RUNMANAGER_GLOBALS.<group>.<name>]`` table carries.
 GLOBAL_KEYS = frozenset({"args", "enable", "expr"})
+
+#: Of those, the one a globals table must carry: ``expr`` is optional, the
+#: parameters it is given are not.
+GLOBAL_REQUIRED = frozenset({"args"})
 
 
 @dataclass(frozen=True)
@@ -221,8 +229,30 @@ def _reject_unknown(table: dict, allowed: frozenset[str], where: str) -> None:
         )
 
 
-def _reject_unknown_keys(raw: dict) -> None:
-    """Fail on every key in the file that nothing would act on.
+def _require_present(table: dict, keys: frozenset[str], where: str) -> None:
+    """Fail on a required key the table leaves out, in the voice a typo gets."""
+    missing = sorted(keys - set(table))
+    if missing:
+        raise ValueError(
+            f"{where} is missing {', '.join(repr(k) for k in missing)}. "
+            f"It requires: {', '.join(sorted(keys))}."
+        )
+
+
+def _require_type(value: Any, kind: type, where: str) -> Any:
+    """Fail on a setting of the wrong type, which no spelling check catches.
+
+    A quoted boolean is truthy and a bare string is a sequence of its own
+    characters, so either goes through and acts as something nobody wrote.
+    """
+    if not isinstance(value, kind):
+        written = {bool: "true or false, unquoted", list: "a list in [brackets]"}[kind]
+        raise ValueError(f"{where} must be written as {written}, not {value!r}.")
+    return value
+
+
+def _check_keys(raw: dict) -> None:
+    """Fail on a key nothing would act on, and on a required one left out.
 
     Accepting one and ignoring it is how a lab comes to believe a setting is
     in force when it is not, so a stale file is stopped at the door instead.
@@ -234,13 +264,19 @@ def _reject_unknown_keys(raw: dict) -> None:
     _reject_unknown(raw, TOP_LEVEL_TABLES, "the top level of the configuration")
     _reject_unknown(raw.get("ANALYSIS", {}), ANALYSIS_KEYS, "[ANALYSIS]")
     _reject_unknown(raw.get("MLOOP", {}), MLOOP_KEYS | SHARED_LEARNER_KEYS, "[MLOOP]")
-    for table, allowed in (
-        ("MLOOP_PARAMS", PARAMETER_KEYS),
-        ("RUNMANAGER_GLOBALS", GLOBAL_KEYS),
+    for table, allowed, required in (
+        ("MLOOP_PARAMS", PARAMETER_KEYS, PARAMETER_REQUIRED),
+        ("RUNMANAGER_GLOBALS", GLOBAL_KEYS, GLOBAL_REQUIRED),
     ):
         for group, entries in raw.get(table, {}).items():
             for name, entry in entries.items():
-                _reject_unknown(entry, allowed, f"[{table}.{group}.{name}]")
+                where = f"[{table}.{group}.{name}]"
+                _reject_unknown(entry, allowed, where)
+                _require_present(entry, required, where)
+                if "args" in entry:
+                    _require_type(entry["args"], list, f"{where} args")
+                if "enable" in entry:
+                    _require_type(entry["enable"], bool, f"{where} enable")
     # [LEARNER.<name>] is left alone: those knobs are the learners' own, and
     # the factory takes the ones each constructor accepts.
 
@@ -265,12 +301,14 @@ def from_dict(raw: dict) -> Config:
     raised as one reaches the reader wrapped in quotes with its own quotes
     escaped.
     """
-    _reject_unknown_keys(raw)
+    _check_keys(raw)
 
     analysis = raw.get("ANALYSIS", {})
     mloop = raw.get("MLOOP", {})
 
-    active_groups = analysis.get("groups", [])
+    if "maximize" in analysis:
+        _require_type(analysis["maximize"], bool, "ANALYSIS.maximize")
+    active_groups = _require_type(analysis.get("groups", []), list, "ANALYSIS.groups")
 
     parameters: list[Parameter] = []
     mappings: list[GlobalMapping] = []
@@ -341,6 +379,7 @@ def from_dict(raw: dict) -> Config:
 
     if "cost_key" not in analysis:
         raise ValueError("ANALYSIS.cost_key is required: [routine_name, result_name]")
+    _require_type(analysis["cost_key"], list, "ANALYSIS.cost_key")
     cost_key = tuple(analysis["cost_key"])
     if len(cost_key) != 2:
         raise ValueError(
@@ -359,11 +398,18 @@ def from_dict(raw: dict) -> Config:
     # in the rest from its field defaults, which are the one place a default
     # is written down.
     settings: dict[str, Any] = {
-        **_present(analysis, ("maximize",), bool),
+        **_present(analysis, ("maximize",)),
         **_present(mloop, ("learner", "session"), str),
-        **_present(mloop, ("num_buffered_runs", "num_training_runs"), int),
         **_present(
-            mloop, ("max_num_runs", "max_num_runs_without_better_params", "seed")
+            mloop,
+            (
+                "max_num_runs",
+                "max_num_runs_without_better_params",
+                "num_buffered_runs",
+                "num_training_runs",
+                "seed",
+            ),
+            int,
         ),
     }
 

@@ -6,7 +6,9 @@ A lab analysis routine is two lines::
     optimisation.optimise('mloop_config.toml')
 
 Adding the routine to lyse starts the session; removing it, restarting it, or
-reaching the run budget stops it. Progress appears as results on the routine.
+reaching the run budget stops it. Progress is written onto each shot the
+optimiser can claim, as lyse results under :data:`RESULTS_GROUP`, so the best
+cost and the rest of the session's status are columns of the dataframe.
 
 The routine itself does almost nothing: it reads the cost for the shot it was
 called on, hands it to the worker, and waits for the worker to say where the
@@ -23,12 +25,20 @@ completed run and keeps it out of the fits.
 import atexit
 import os
 import subprocess
+import sys
 
 import numpy as np
 
 from .runmanager_interface import SHOT_ID_ATTR
 
 WORKER_PATH = os.path.join(os.path.dirname(__file__), "worker.py")
+
+#: The lyse results group the session's status is written to, and so the first
+#: level of every column it produces: ``df[('labscript_optimization',
+#: 'best_cost')]``. lyse names a routine's group after the routine's file, so
+#: the package's own name is a group a lab collides with only by naming a
+#: routine after the package it imports.
+RESULTS_GROUP = "labscript_optimization"
 
 #: Seconds the routine waits for the worker to answer the message it has just
 #: sent. Generous for an answer that is a dictionary and a socket hop, and
@@ -113,6 +123,43 @@ def extract(dataframe, config):
     return shot_id, cost, uncer, bad
 
 
+def save_status(filepath, status) -> None:
+    """Write the session's status onto one shot, as lyse results.
+
+    lyse reads the attributes of ``/results/<group>`` back as dataframe
+    columns, so this is what makes progress visible: each key of the status
+    becomes ``df[(RESULTS_GROUP, key)]`` against the shot the routine ran on.
+    Only attributes are read that way, which is why ``best_params`` is saved
+    with ``save_result`` although it is a list -- ``save_result_array`` would
+    write it as a dataset, into a part of the file the dataframe never looks
+    at.
+
+    A value the session does not have yet is written as NaN, because an h5
+    attribute cannot be ``None`` and NaN is what pandas means by a missing
+    value in a column of any type; it is also what lyse itself puts in a
+    column a shot carries nothing for.
+
+    A write that fails is reported to lyse's output and otherwise passed over.
+    The status is a progress report: losing one is worth less than the
+    optimisation that stopping here would end.
+    """
+    try:
+        import lyse
+
+        run = lyse.Run(filepath)
+        run.set_group(RESULTS_GROUP)
+        # One open for the whole status. Left to itself each save_result opens
+        # and locks the file again, and this runs inline in lyse.
+        with run.open("r+"):
+            for name, value in status.items():
+                run.save_result(name, float("nan") if value is None else value)
+    except Exception as exc:
+        print(
+            f"could not write the optimisation status to {filepath}: {exc!r}",
+            file=sys.stderr,
+        )
+
+
 def start_worker(config_path, process_tree=None):
     """Spawn the optimisation worker and configure it.
 
@@ -186,11 +233,11 @@ def optimise(config_path, storage=None, dataframe=None):
         dataframe: The shots to read. Defaults to ``lyse.data(n_sequences=1)``.
 
     Returns:
-        The status the worker sends in answer to this invocation, which the
-        caller may save as lyse results, or ``None`` if it does not answer
-        within :data:`REPLY_TIMEOUT`. On the shot that starts the session the
-        answer is to the configuration this invocation also sent, so it counts
-        a session that has proposed nothing yet.
+        The status the worker sends in answer to this invocation, already
+        written onto the shot by :func:`save_status`, or ``None`` if the
+        worker does not answer within :data:`REPLY_TIMEOUT`. On the shot that
+        starts the session the answer is to the configuration this invocation
+        also sent, so it counts a session that has proposed nothing yet.
     """
     if storage is None or dataframe is None:
         import lyse
@@ -230,7 +277,14 @@ def optimise(config_path, storage=None, dataframe=None):
     else:
         to_worker.put(("status", None))
 
-    return _drain(from_worker)
+    status = _drain(from_worker)
+    # Only a shot the optimiser can claim carries the status. A shot with no
+    # id is somebody else's -- the user's own, or one of runmanager's defaults
+    # -- and a session that has proposed nothing has no shot of its own yet at
+    # all, which is what the answer to the configuration message describes.
+    if observation is not None and status and status.get("submitted"):
+        save_status(latest(dataframe, "filepath"), status)
+    return status
 
 
 def _exited_within(popen, timeout=5) -> bool:

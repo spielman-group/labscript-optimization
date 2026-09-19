@@ -220,7 +220,10 @@ class Session:
         return shot_ids
 
     def status(self) -> dict:
-        """A snapshot for the routine to write back as lyse results."""
+        """A snapshot for the routine to write back as lyse results.
+
+        ``None`` means the session has nothing to report for that key yet.
+        """
         best = self.best
         return {
             "session": self.config.session,

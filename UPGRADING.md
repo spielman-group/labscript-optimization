@@ -131,7 +131,8 @@ own queued. If it keeps climbing, the fit is taking longer than a shot: raise
   differently from the one you have been running**, as it was always meant to.
   `trust_range` still defaults to `[0.1, 0.25]`, which centres the search on
   middling results rather than the best one: that is deliberate, and is what
-  makes it explore rather than refine.
+  makes it explore rather than refine. A pair written the wrong way round is
+  now refused at construction, where M-LOOP quietly sorted it.
 - **Per-learner settings** may go under `[LEARNER.<name>]`, overriding the
   same keys in `[MLOOP]`. Knobs in `[MLOOP]` still apply to whichever learner
   takes them, so nothing has to move.
@@ -139,9 +140,12 @@ own queued. If it keeps climbing, the fit is taking longer than a shot: raise
 
 ## What the routine reports
 
-Saved as the routine's results, one row per shot: `session`, `phase`,
-`submitted`, `completed`, `awaiting`, `dropped`, `starved`, `best_cost`,
-`best_params` and `best_shot_id`.
+Written onto each shot the optimiser owns, so they come back as dataframe
+columns under `labscript_optimization` — `df[('labscript_optimization',
+'best_cost')]` and so on. The keys are `session`, `phase`, `submitted`,
+`completed`, `awaiting`, `dropped`, `starved`, `best_cost`, `best_params`,
+`best_shot_id` and `stopped`. A key the session has nothing to report for yet
+reads as `NaN`.
 
 `dropped` counts shots runmanager no longer expects to produce anything —
 cancelled, unable to compile, or gone. A few over a long run are ordinary; a

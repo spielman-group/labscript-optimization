@@ -46,8 +46,13 @@ optimisation.optimise('mloop_config.toml')
 ```
 
 Adding the routine starts the session; removing it, restarting it, or reaching
-the run budget stops it. Progress comes back as the routine's results: the best
-cost so far, how many shots are in flight, and which phase the learner is in.
+the run budget stops it. Progress is saved onto each shot the optimiser can
+claim, under the results group `labscript_optimization`, so it comes back as
+dataframe columns: `df[('labscript_optimization', 'best_cost')]` is the best
+cost so far, beside the parameters that produced it, how many shots are in
+flight, and which phase the learner is in. Anything the session does not have
+yet reads as `NaN`. Shots that are not the optimiser's own — yours, and
+runmanager's default shots — are left alone.
 
 `num_buffered_runs` is usually set above one. BLACS asks for its next shot as
 soon as it finishes the last, which is before this optimiser has seen the cost
@@ -130,7 +135,9 @@ for step in range(100):
 Failures stop the session and are reported through lyse's normal error path:
 runmanager unreachable, a broken global, a labscript file changed underneath a
 running session, or a learner raising. There are no retries, timeouts or
-watchdogs.
+watchdogs. The exception is a status that cannot be written to its shot, which
+is printed and passed over: a progress report is worth less than the
+optimisation that stopping for it would end.
 
 One failure stops the optimisation and cannot be reported from here: a shot
 that fails to compile stays at the head of runmanager's queue until someone

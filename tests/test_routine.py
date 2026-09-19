@@ -7,15 +7,29 @@ does not carry it into the dataframe, so it is read from the shot file that
 
 What the routine then does with that cost is the other half. Those tests drive
 the entry point against a pair of fake pipes and a fake process, so they say
-what the routine sends, what it makes of the answer, and how it shuts the
-worker down, without depending on zprocess starting anything.
+what the routine sends, what it makes of the answer, what it writes back onto
+the shot, and how it shuts the worker down, without depending on zprocess
+starting anything.
 """
 
+import math
+import os
 import queue
 import subprocess
 import threading
 import time
 import types
+
+try:
+    # The lock lyse puts over h5py refuses to be imported once h5py has been,
+    # and the routine writes its results through lyse. A test file that
+    # reached for h5py first would make lyse unimportable in the test run and
+    # nowhere else.
+    import labscript_utils.h5_lock  # noqa: F401
+except ImportError:
+    # The suite is an optional dependency, and the tests that need it skip
+    # themselves.
+    pass
 
 import h5py
 import pandas as pd
@@ -340,6 +354,119 @@ def test_a_worker_that_does_not_answer_in_time_is_given_up_on(
         session.path, session.storage, frame([shot()])
     )
     assert status is None and time.monotonic() - started < 5.0
+
+
+def status(**overrides):
+    """A status of the shape the session sends, with nothing found yet."""
+    return {
+        'session': 'run-a',
+        'phase': 'main',
+        'submitted': 1,
+        'completed': 0,
+        'awaiting': 1,
+        'dropped': 0,
+        'starved': 0,
+        'best_cost': None,
+        'best_params': None,
+        'best_shot_id': None,
+        'stopped': None,
+    } | overrides
+
+
+@pytest.fixture
+def results():
+    """Read a shot's results back the way lyse reads them into its dataframe.
+
+    Only the attributes of ``/results/<group>`` become columns, so reading
+    them is also what says the status was saved where lyse will find it. lyse
+    itself is an optional dependency -- the learners do not need the suite --
+    so a checkout without it skips what reaches a shot file rather than
+    passing on a write that never happened.
+    """
+    pytest.importorskip('lyse')
+    from labscript_utils.properties import get_attributes
+
+    def read(row):
+        with h5py.File(row['filepath'], 'r') as f:
+            return get_attributes(f[f'results/{routine_module.RESULTS_GROUP}'])
+
+    return read
+
+
+def test_the_status_is_written_onto_the_shot_as_lyse_results(session, shot, results):
+    """lyse turns each attribute into a column, so this is the whole point of
+    computing a status: the lab reads it as ``df[('labscript_optimization',
+    'best_cost')]`` alongside the shot it belongs to.
+    """
+    row = shot()
+    session.worker.replies.append(
+        ('status', status(best_cost=-7.0, best_params=[0.25], best_shot_id='row-3'))
+    )
+    routine_module.optimise(session.path, session.storage, frame([row]))
+    written = results(row)
+    assert written['best_cost'] == -7.0
+    assert list(written['best_params']) == [0.25]
+    assert written['best_shot_id'] == 'row-3'
+    assert written['submitted'] == 1
+
+
+def test_a_value_the_session_does_not_have_yet_is_written_as_nan(
+    session, shot, results
+):
+    """An h5 attribute cannot be None, and a column that changes type partway
+    through a session is one lyse cannot plot.
+    """
+    row = shot()
+    session.worker.replies.append(('status', status()))
+    routine_module.optimise(session.path, session.storage, frame([row]))
+    written = results(row)
+    assert all(
+        math.isnan(written[key])
+        for key in ('best_cost', 'best_params', 'best_shot_id', 'stopped')
+    )
+
+
+def test_a_shot_that_is_not_ours_is_not_written_to(session, shot):
+    """A default shot, or the user's own, carries no id. Writing the
+    optimiser's progress onto it would put a column of somebody else's numbers
+    against it.
+    """
+    row = shot(shot_id=None)
+    session.worker.replies.append(('status', status()))
+    routine_module.optimise(session.path, session.storage, frame([row]))
+    with h5py.File(row['filepath'], 'r') as f:
+        assert 'results' not in f
+
+
+def test_a_session_that_has_proposed_nothing_writes_to_no_shot(session, shot):
+    """The first invocation's answer is to the configuration it sent alongside
+    the observation, so it describes a session with no shots of its own, and
+    the shot in hand cannot be one of them.
+    """
+    row = shot()
+    session.worker.replies.append(('status', status(submitted=0)))
+    routine_module.optimise(session.path, session.storage, frame([row]))
+    with h5py.File(row['filepath'], 'r') as f:
+        assert 'results' not in f
+
+
+def test_a_status_that_cannot_be_written_does_not_stop_the_session(
+    session, shot, capsys
+):
+    """The shot can go between the routine reading it and the status being
+    written, because the routine waits for the worker in between. A progress
+    report that cannot be saved is worth saying so about and nothing more.
+    """
+    pytest.importorskip('lyse')
+    row = shot()
+    session.worker.replies.append(('status', status()))
+    sending = session.worker.put
+    session.worker.put = lambda item: (os.unlink(row['filepath']), sending(item))
+
+    answer = routine_module.optimise(session.path, session.storage, frame([row]))
+
+    assert answer == status()
+    assert 'shot0.h5' in capsys.readouterr().err
 
 
 @pytest.fixture

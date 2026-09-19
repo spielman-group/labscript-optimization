@@ -2,9 +2,12 @@
 
 A learner is a function from the observation history to ``k`` proposals. It is
 given the whole history every time, in the order the proposals were made, and
-containing only shots that have reported a cost. Anything a learner remembers
-between calls is a cache: it must produce the same proposals as an instance
-that had just been handed the same history for the first time.
+containing only shots that have reported a cost. Anything a learner computes
+from the history and keeps between calls is a cache: it must hold what an
+instance handed the same history for the first time would compute. The one
+thing a learner carries that the history does not fix is the position of its
+own rng stream, which decides where a draw lands and nothing about what the
+learner believes.
 
 That rule is what keeps the out-of-order arrival of costs out of the learners.
 The worker holds back shots that have no cost yet and orders the rest; a

@@ -240,6 +240,20 @@ def test_directed_random_falls_back_to_the_best_point_when_the_band_is_empty(
     assert set(np.unique(nearest)) == {0}
 
 
+@pytest.mark.parametrize(
+    'trust_range', [(0.25, 0.1), (0.1,), (0.1, 1.5), (-0.1, 0.25)]
+)
+def test_an_impossible_trust_range_is_refused(space, rng, trust_range):
+    """Including one written backwards, which is not silently put in order.
+
+    A backwards pair asks for a band running from the best cost towards the
+    worst, which is nothing the learner can honour; sorting it would run a
+    search the lab did not ask for and never say so.
+    """
+    with pytest.raises(ValueError, match='trust_range'):
+        DirectedRandomLearner(space, rng, trust_region=0.05, trust_range=trust_range)
+
+
 # --- differential evolution ------------------------------------------------
 
 
@@ -366,6 +380,41 @@ def test_gaussian_process_finds_the_minimum(space, rng):
     np.testing.assert_allclose(best.params, [1.3, -2.1], atol=0.3)
 
 
+@pytest.mark.parametrize('generation_size, carried, count', [(4, 12, 15), (8, 6, 7)])
+def test_gaussian_process_state_depends_only_on_the_history(
+    space, generation_size, carried, count
+):
+    """Two learners given the same history must hold the same model.
+
+    The kernel hyperparameters are cached between calls, so they have to be a
+    function of the history alone: an instance that has been fitting all
+    session must arrive at what a fresh one computes, not at a kernel fitted to
+    however much it happened to hold when the cache was last filled. The second
+    case is a history short of one full generation, where there is no whole
+    generation to fit to and the cache has to give way on every arrival.
+    """
+    history = gaussian_process_history(space, 9, count=count)
+    all_session = GaussianProcessLearner(
+        space, np.random.default_rng(1), generation_size=generation_size
+    )
+    all_session.fit(history[:carried])
+    all_session.fit(history)
+
+    fresh = GaussianProcessLearner(
+        space, np.random.default_rng(2), generation_size=generation_size
+    )
+    fresh.fit(history)
+
+    np.testing.assert_allclose(all_session._kernel.theta, fresh._kernel.theta)
+    # And so the same proposals, once the two stand at the same point in their
+    # own rng streams: that position is the one thing the history does not fix.
+    all_session.rng = np.random.default_rng(3)
+    fresh.rng = np.random.default_rng(3)
+    np.testing.assert_allclose(
+        all_session.propose(history, 1), fresh.propose(history, 1)
+    )
+
+
 #: The generation the exploration tests below configure, and so the number of
 #: proposals the schedule takes to come back round to its greedy step.
 GENERATION = 4
@@ -418,20 +467,22 @@ def test_the_exploration_schedule_advances_as_observations_arrive(space, count):
 
 
 def test_a_gaussian_process_batch_does_not_repeat_itself(space, rng):
-    """Every point of a batch must be somewhere new.
+    """Two picks made at the same exploration weight must land apart.
 
-    Points chosen for their uncertainty all chase the same unexplored corner
-    unless each one is folded into the fit before the next is chosen, and a
-    repeated proposal is a wasted shot.
+    Points chosen for their uncertainty chase the same unexplored corner unless
+    each one is folded into the fit before the next is chosen, and a repeated
+    proposal is a wasted shot. The greedy pick is the exception and is left out
+    below: at a weight of zero the acquisition is the posterior mean, and
+    folding a point in at its own predicted cost leaves that mean where it was,
+    so a batch spanning two generations asks for the same greedy point twice.
     """
-    learner = GaussianProcessLearner(space, rng)
+    learner = GaussianProcessLearner(space, rng, generation_size=GENERATION)
     history = gaussian_process_history(space, 5)
-    proposals = learner.propose(history, 6)
-    separations = np.linalg.norm(
-        proposals[:, None, :] - proposals[None, :, :], axis=2
-    )
-    off_diagonal = separations[~np.eye(len(proposals), dtype=bool)]
-    assert off_diagonal.min() > 1e-6
+    proposals = learner.propose(history, GENERATION + 2)
+    # Twelve observations in hand, so the weights run 0, 1, 2, 3, 0, 1 and the
+    # sixth pick repeats the weight of the second. Nothing but the fold-in
+    # keeps it off that point: without it the two land 4e-6 apart.
+    assert np.linalg.norm(proposals[5] - proposals[1]) > 1e-3
 
 
 def test_a_gaussian_process_describes_the_real_data_after_proposing(space, rng):
