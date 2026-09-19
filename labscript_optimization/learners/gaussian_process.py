@@ -141,7 +141,6 @@ class GaussianProcessLearner:
             self._kernel = regressor.kernel_
             self._epoch = epoch
         self.regressor = regressor
-        self._x, self._y, self._alpha = x, y, alpha
         return True
 
     def predict(self, params: np.ndarray):
@@ -164,11 +163,13 @@ class GaussianProcessLearner:
             high = np.minimum(high, centre + self.trust_region)
         return list(zip(self.space.scale(low), self.space.scale(high)))
 
-    def _minimise_acquisition(self, uncer_bias: float, best: np.ndarray, bounds):
+    def _minimise_acquisition(
+        self, regressor, uncer_bias: float, best: np.ndarray, bounds
+    ):
         """Multi-start L-BFGS-B over the acquisition. Returns scaled parameters."""
 
         def acquisition(u):
-            mean, std = self.regressor.predict(np.atleast_2d(u), return_std=True)
+            mean, std = regressor.predict(np.atleast_2d(u), return_std=True)
             return self.cost_bias * mean[0] - uncer_bias * std[0]
 
         lows = np.array([b[0] for b in bounds])
@@ -188,29 +189,36 @@ class GaussianProcessLearner:
                 winner, winning_value = result.x, result.fun
         return np.clip(winner, lows, highs)
 
-    def _condition_on(self, scaled_point: np.ndarray) -> None:
-        """Fold a point into the fit at its own predicted cost.
+    def _condition_on(self, regressor, scaled_point: np.ndarray):
+        """A copy of ``regressor`` with a point folded in at its predicted cost.
 
         Posterior variance depends on where a point was measured, not on what
         came back, so adding a proposal at its predicted mean shrinks the
         uncertainty around it exactly as the real shot will. Without this every
         point in a batch with a high uncertainty weight chases the same
         unexplored corner and the batch is spent on one location.
+
+        The conditioned fit is returned rather than stored. Invented points
+        never reach the learner, so predict() and global_minimum() describe the
+        measured data however a batch turns out, including one abandoned
+        halfway by a minimiser that gave up.
         """
-        mean = self.regressor.predict(np.atleast_2d(scaled_point))
-        self._x = np.vstack([self._x, scaled_point])
-        self._y = np.append(self._y, mean)
-        if not np.isscalar(self._alpha):
+        mean = regressor.predict(np.atleast_2d(scaled_point))
+        alpha = regressor.alpha
+        if not np.isscalar(alpha):
             # A fantasy point is as certain as the data it was predicted from.
-            self._alpha = np.append(self._alpha, np.median(self._alpha))
-        regressor = GaussianProcessRegressor(
+            alpha = np.append(alpha, np.median(alpha))
+        conditioned = GaussianProcessRegressor(
             kernel=self._kernel,
-            alpha=self._alpha,
+            alpha=alpha,
             normalize_y=False,
             optimizer=None,
         )
-        regressor.fit(self._x, self._y)
-        self.regressor = regressor
+        conditioned.fit(
+            np.vstack([regressor.X_train_, scaled_point]),
+            np.append(regressor.y_train_, mean),
+        )
+        return conditioned
 
     def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
         if not self.fit(history):
@@ -221,18 +229,18 @@ class GaussianProcessLearner:
         seen = usable(history)
         best = params_array(seen)[int(np.argmin(costs_array(seen)))]
         bounds = self._search_bounds(best)
-        fitted = self.regressor
 
+        # The points of this batch are folded into a fit held here and nowhere
+        # else, so the learner goes on describing the measured data.
+        regressor = self.regressor
         proposals = np.empty((k, self.space.num_params))
         for i in range(k):
-            scaled = self._minimise_acquisition(self.uncer_bias * i, best, bounds)
+            scaled = self._minimise_acquisition(
+                regressor, self.uncer_bias * i, best, bounds
+            )
             proposals[i] = self.space.clip(self.space.unscale(scaled))
             if i + 1 < k:
-                self._condition_on(scaled)
-
-        # Leave the learner describing the real data, not the fantasy points,
-        # so predict() and global_minimum() answer about what was measured.
-        self.regressor = fitted
+                regressor = self._condition_on(regressor, scaled)
         return proposals
 
     def global_minimum(self, history: Sequence[Observation]) -> np.ndarray:
@@ -246,4 +254,5 @@ class GaussianProcessLearner:
         seen = usable(history)
         best = params_array(seen)[int(np.argmin(costs_array(seen)))]
         bounds = list(zip(self.space.scale(self.space.minimum), self.space.scale(self.space.maximum)))
-        return self.space.clip(self.space.unscale(self._minimise_acquisition(0.0, best, bounds)))
+        scaled = self._minimise_acquisition(self.regressor, 0.0, best, bounds)
+        return self.space.clip(self.space.unscale(scaled))

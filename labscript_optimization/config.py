@@ -1,8 +1,5 @@
 """Reading the TOML configuration.
 
-The schema is the one analysislib-mloop used, so existing lab configuration
-files load unchanged:
-
 ``[MLOOP_PARAMS.<group>.<name>]``
     One optimised parameter, with ``min``, ``max``, optional ``start``,
     optional ``enable`` (default true), and optional ``global_name``. Giving
@@ -17,33 +14,44 @@ files load unchanged:
 ``[ANALYSIS] groups`` selects which groups take part; a parameter in a group
 that is not listed is left out entirely, as is one with ``enable = false``.
 
-Keys M-LOOP needed and this package does not -- ``visualisations``,
-``no_delay``, archive paths -- are ignored rather than rejected, so a file that
-still carries them keeps working.
+Every key is either acted on or rejected. A setting this package does not read
+-- one M-LOOP needed, or one spelt wrongly -- stops the load with a message
+naming it: accepting it and ignoring it is how a lab comes to believe an
+option is in force when nothing reads it. A file carried over from
+analysislib-mloop must therefore have M-LOOP's own settings taken out of it
+first.
+
+``[LEARNER.<name>]`` is the exception. Its contents belong to the learners:
+one lab's table serves whichever learner is selected, and the factory passes
+each learner the knobs its constructor takes.
 """
 
 import tomllib
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from .space import Parameter, ParameterSpace
 
-#: Keys that M-LOOP needed and this package has no use for. Ignored on load.
-OBSOLETE_KEYS = frozenset(
+#: The tables a configuration file carries. Anything else at the top level is
+#: a misspelling, and every setting written under it would go unread.
+TOP_LEVEL_TABLES = frozenset(
     {
-        "no_delay",
-        "visualisations",
-        "visualizations",
-        "archive_type",
-        "archive_filename",
-        "controller_archive_filename",
-        "learner_archive_filename",
-        "controller_archive_file_type",
-        "learner_archive_file_type",
+        "ANALYSIS",
+        "COMPILATION",
+        "LEARNER",
+        "MLOOP",
+        "MLOOP_PARAMS",
+        "RUNMANAGER_GLOBALS",
     }
 )
 
-#: Learner knobs that older configurations put directly in ``[MLOOP]``.
+#: The settings ``[ANALYSIS]`` carries.
+ANALYSIS_KEYS = frozenset({"cost_key", "groups", "maximize"})
+
+#: The settings ``[COMPILATION]`` carries.
+COMPILATION_KEYS = frozenset({"mock"})
+
+#: Learner knobs that a configuration puts directly in ``[MLOOP]``.
 SHARED_LEARNER_KEYS = frozenset(
     {
         "trust_region",
@@ -64,6 +72,31 @@ SHARED_LEARNER_KEYS = frozenset(
         "minimum_observations",
     }
 )
+
+#: The session settings ``[MLOOP]`` carries, alongside the learner knobs in
+#: :data:`SHARED_LEARNER_KEYS`. ``controller_type`` is the older spelling of
+#: ``learner``.
+MLOOP_KEYS = frozenset(
+    {
+        "controller_type",
+        "learner",
+        "max_num_runs",
+        "max_num_runs_without_better_params",
+        "num_buffered_runs",
+        "num_training_runs",
+        "seed",
+        "session",
+    }
+)
+
+#: The keys one ``[MLOOP_PARAMS.<group>.<name>]`` table carries. ``minimum``
+#: and ``maximum`` are the long spellings of ``min`` and ``max``.
+PARAMETER_KEYS = frozenset(
+    {"enable", "global_name", "max", "maximum", "min", "minimum", "start"}
+)
+
+#: The keys one ``[RUNMANAGER_GLOBALS.<group>.<name>]`` table carries.
+GLOBAL_KEYS = frozenset({"args", "enable", "expr"})
 
 
 @dataclass(frozen=True)
@@ -99,7 +132,6 @@ class Config:
     globals: tuple[GlobalMapping, ...]
     cost_key: tuple[str, str]
     maximize: bool = False
-    ignore_bad: bool = False
     session: str = "default"
     learner: str = "gaussian_process"
     learner_options: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -132,6 +164,63 @@ def _enabled(entry: dict, group: str, active_groups: Sequence[str]) -> bool:
     return group in active_groups and entry.get("enable", True)
 
 
+def _present(
+    table: dict, keys: Sequence[str], convert: Callable[[Any], Any] | None = None
+) -> dict[str, Any]:
+    """The ``keys`` this table actually carries, coerced by ``convert``.
+
+    A key the file leaves out is left out of the result, so :class:`Config`
+    supplies it from the field's own default. That is why no default appears
+    here: each one is written down once, on the dataclass, and cannot drift
+    away from a second copy kept for the files that omit it.
+    """
+    return {
+        key: table[key] if convert is None else convert(table[key])
+        for key in keys
+        if key in table
+    }
+
+
+def _reject_unknown(table: dict, allowed: frozenset[str], where: str) -> None:
+    """Fail on any key of ``table`` that nothing in this package reads.
+
+    The message names the table as well as the key because the same spelling
+    can be a setting in one table and meaningless in another, and somebody
+    editing a lab file has nothing to go on but what is printed here.
+    """
+    unknown = sorted(set(table) - allowed)
+    if unknown:
+        raise ValueError(
+            f"{where} does not accept {', '.join(repr(k) for k in unknown)}. "
+            f"It accepts: {', '.join(sorted(allowed))}."
+        )
+
+
+def _reject_unknown_keys(raw: dict) -> None:
+    """Fail on every key in the file that nothing would act on.
+
+    Accepting one and ignoring it is how a lab comes to believe a setting is
+    in force when it is not, so a stale file is stopped at the door instead.
+
+    Parameter and global tables are checked whether or not their group is
+    active: their shape does not depend on that, and a typo left to load in a
+    switched-off group waits for the day somebody switches the group on.
+    """
+    _reject_unknown(raw, TOP_LEVEL_TABLES, "the top level of the configuration")
+    _reject_unknown(raw.get("ANALYSIS", {}), ANALYSIS_KEYS, "[ANALYSIS]")
+    _reject_unknown(raw.get("COMPILATION", {}), COMPILATION_KEYS, "[COMPILATION]")
+    _reject_unknown(raw.get("MLOOP", {}), MLOOP_KEYS | SHARED_LEARNER_KEYS, "[MLOOP]")
+    for table, allowed in (
+        ("MLOOP_PARAMS", PARAMETER_KEYS),
+        ("RUNMANAGER_GLOBALS", GLOBAL_KEYS),
+    ):
+        for group, entries in raw.get(table, {}).items():
+            for name, entry in entries.items():
+                _reject_unknown(entry, allowed, f"[{table}.{group}.{name}]")
+    # [LEARNER.<name>] is left alone: those knobs are the learners' own, and
+    # the factory takes the ones each constructor accepts.
+
+
 def loads(text: str) -> Config:
     """Parse a configuration from TOML text."""
     return from_dict(tomllib.loads(text))
@@ -145,6 +234,8 @@ def load(path) -> Config:
 
 def from_dict(raw: dict) -> Config:
     """Build a :class:`Config` from already-parsed TOML."""
+    _reject_unknown_keys(raw)
+
     analysis = raw.get("ANALYSIS", {})
     mloop = raw.get("MLOOP", {})
     compilation = raw.get("COMPILATION", {})
@@ -229,21 +320,31 @@ def from_dict(raw: dict) -> Config:
     for name, table in raw.get("LEARNER", {}).items():
         learner_options[name] = dict(table)
 
+    # Only the settings the file actually carries are passed on; Config fills
+    # in the rest from its field defaults, which are the one place a default
+    # is written down.
+    settings: dict[str, Any] = {
+        **_present(analysis, ("maximize",), bool),
+        **_present(mloop, ("session",), str),
+        **_present(mloop, ("num_buffered_runs", "num_training_runs"), int),
+        **_present(
+            mloop, ("max_num_runs", "max_num_runs_without_better_params", "seed")
+        ),
+        **_present(compilation, ("mock",), bool),
+    }
+
+    # The learner is named ``controller_type`` in older files. Either spelling
+    # is read, ``learner`` wins when both are given, and a file that names
+    # neither gets the Config field's default.
+    for key in ("learner", "controller_type"):
+        if key in mloop:
+            settings["learner"] = mloop[key]
+            break
+
     return Config(
         space=ParameterSpace(parameters),
         globals=tuple(mappings),
         cost_key=cost_key,
-        maximize=bool(analysis.get("maximize", False)),
-        ignore_bad=bool(analysis.get("ignore_bad", False)),
-        session=str(mloop.get("session", "default")),
-        learner=mloop.get("learner", mloop.get("controller_type", "gaussian_process")),
         learner_options=learner_options,
-        num_buffered_runs=int(mloop.get("num_buffered_runs", 3)),
-        num_training_runs=int(mloop.get("num_training_runs", 5)),
-        max_num_runs=mloop.get("max_num_runs"),
-        max_num_runs_without_better_params=mloop.get(
-            "max_num_runs_without_better_params"
-        ),
-        mock=bool(compilation.get("mock", False)),
-        seed=mloop.get("seed"),
+        **settings,
     )

@@ -114,10 +114,48 @@ def test_a_status_message_frees_the_places_of_lost_shots(config_file):
         def pending(self, shot_ids):
             return set()
 
-    sent = run([('configure', config_file), ('status', None)], LosesEverything)
+    sent = run(
+        [('configure', config_file), ('status', None), ('status', None)],
+        LosesEverything,
+    )
+    # The reconciliation that dropped the first two shots ran after the second
+    # invocation had already replied, so the count reaches the routine on the
+    # third. A status is a report of finished work, not of work in progress.
     assert sent[-1][1]['dropped'] == 2
     # Having dropped them, it refilled rather than waiting on them for ever.
-    assert FakeInterface.instances[0].submitted == ['shot-0', 'shot-1', 'shot-2', 'shot-3']
+    assert FakeInterface.instances[0].submitted[:4] == [
+        'shot-0',
+        'shot-1',
+        'shot-2',
+        'shot-3',
+    ]
+
+
+def test_the_reply_is_sent_before_runmanager_is_asked_which_shots_remain(config_file):
+    """Reconciling is a blocking round trip to runmanager, and the routine is
+    blocked on this reply for as long as it takes -- up to the configured
+    communication timeout if runmanager is busy or wedged. Asking before
+    replying would hand lyse the very delay the worker exists to absorb, once
+    per shot. Every question to runmanager must come after the reply.
+    """
+    to_parent = Pipe()
+    outbox_when_asked = []
+
+    class NotesTheOutbox(FakeInterface):
+        def pending(self, shot_ids):
+            outbox_when_asked.append([kind for kind, _ in to_parent.sent])
+            return super().pending(shot_ids)
+
+    serve(
+        Pipe([('configure', config_file), ('status', None), ('quit', None)]),
+        to_parent,
+        NotesTheOutbox,
+    )
+
+    # Configuring has nothing awaiting to ask about, so the one question comes
+    # on the second invocation -- by which time that invocation's reply, and
+    # the first one's, had both already gone out.
+    assert outbox_when_asked == [['status', 'status']]
 
 
 def test_a_runmanager_that_cannot_sustain_the_session_is_refused(config_file):

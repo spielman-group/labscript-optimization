@@ -270,3 +270,20 @@ def test_a_refused_submission_leaves_the_session_untouched(session, runmanager):
     assert session.proposals == {}
     assert session.awaiting == []
     assert session.history == []
+
+
+def test_a_submission_that_returns_too_few_ids_fails_loudly(session, runmanager):
+    """Ids that cannot be paired with the proposals must stop the session.
+
+    Pairing them anyway would leave a proposal out of the record while its
+    shot is queued and running: the cost comes back for an id the session
+    never recorded, record() ignores it, and the session waits for a buffer
+    depth it can no longer reach. Guessing the pairing instead would charge a
+    cost to parameters that were never the ones requested.
+    """
+    runmanager.submit = lambda proposals: ['shot-0']
+
+    with pytest.raises(RuntimeError, match='3 proposals but got 1'):
+        session.refill()
+    assert session.proposals == {}
+    assert session.awaiting == []

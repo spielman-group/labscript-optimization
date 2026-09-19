@@ -73,8 +73,12 @@ by `cost_key`. A shot whose cost is `NaN` is recorded as a bad observation
 rather than being waited on.
 
 See [`examples/config_example.toml`](examples/config_example.toml) for the
-configuration, which is the schema analysislib-mloop used: an existing
-`mloop_config` file loads unchanged.
+configuration. It is the schema analysislib-mloop used, less the settings that
+were M-LOOP's own: every key is read, and one this package does not act on
+stops the load with a message naming it, rather than being accepted and
+ignored — a setting nothing reads is one a lab believes is in force when it is
+not. An `mloop_config` file carried over therefore needs those keys deleted,
+typically `ignore_bad`, `no_delay`, `visualisations` and the log levels.
 
 ## Learners
 

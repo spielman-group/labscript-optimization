@@ -34,10 +34,16 @@ from labscript_optimization.session import Session
 def serve(from_parent, to_parent, interface_factory=interface_for) -> None:
     """Handle messages until told to quit.
 
-    The reply goes out before the proposing and submitting that follow it, so
-    the routine waiting on the other end is never held up by a fit. The status
-    it reads is therefore one step behind the work in progress, which is what
-    a progress report is anyway.
+    The reply goes out first, before the reconciling, proposing and submitting
+    that follow it, so the routine waiting on the other end is held up by
+    neither a fit nor a runmanager that is slow to answer. The status it reads
+    is therefore one step behind both the reconciliation and the refill: the
+    shots this invocation drops and submits are counted in the next reply,
+    which is what a progress report is anyway.
+
+    A failure in that trailing work still stops the session and still sends an
+    error, but the routine has already taken this invocation's reply, so the
+    error may not reach it until the next one.
     """
     session = None
     while True:
@@ -61,11 +67,15 @@ def serve(from_parent, to_parent, interface_factory=interface_for) -> None:
             else:
                 raise ValueError(f"unknown command {command!r}")
 
+            # Reply before anything slow. Reconciling is a blocking round trip
+            # to runmanager, which answers within communication_timeout at
+            # worst, and the routine is blocked on this reply until it does.
+            to_parent.put(("status", session.status()))
+
             # Every invocation reconciles, not only those that submit. The
             # routine may not be called again for a long time, and a shot that
             # is no longer coming must not go on holding its place until it is.
             session.reconcile()
-            to_parent.put(("status", session.status()))
             session.refill()
         except Exception:
             # Fail loudly and stop proposing, rather than carrying on with a

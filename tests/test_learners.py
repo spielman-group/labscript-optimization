@@ -7,6 +7,8 @@ these tests survive any rewrite that keeps the protocol.
 import numpy as np
 import pytest
 
+from labscript_optimization import learners
+from labscript_optimization.config import Config
 from labscript_optimization.learners import (
     DifferentialEvolutionLearner,
     DirectedRandomLearner,
@@ -14,7 +16,9 @@ from labscript_optimization.learners import (
     InsufficientData,
     RandomLearner,
     TwoPhaseLearner,
+    build,
 )
+from labscript_optimization.space import Parameter, ParameterSpace
 
 from conftest import observe, run_loop
 
@@ -148,6 +152,17 @@ def test_directed_random_falls_back_to_the_best_point_when_the_band_is_empty(
 # --- differential evolution ------------------------------------------------
 
 
+#: The smallest population each strategy can mutate: it draws distinct members
+#: from the population minus the slot it is replacing, so it needs one more
+#: member than it draws on.
+SMALLEST_POPULATIONS = [('best1', 3), ('rand1', 4), ('best2', 5), ('rand2', 6)]
+
+
+def one_parameter_space():
+    """A single parameter, so a population of any size is reachable."""
+    return ParameterSpace([Parameter('x', 'g_x', -5.0, 5.0)])
+
+
 @pytest.mark.parametrize('strategy', ['best1', 'best2', 'rand1', 'rand2'])
 def test_differential_evolution_finds_the_minimum(space, rng, strategy):
     learner = DifferentialEvolutionLearner(
@@ -174,10 +189,49 @@ def test_differential_evolution_state_depends_only_on_the_history(space, rng):
     assert first[2] == second[2]
 
 
+@pytest.mark.parametrize('strategy, smallest', SMALLEST_POPULATIONS)
+def test_every_strategy_evolves_at_its_own_smallest_population(rng, strategy, smallest):
+    """A population the constructor accepted has to survive the mutation.
+
+    The strategies draw different numbers of distinct members, so one minimum
+    does not serve all four. A population that passes construction but is too
+    small to mutate gets through the filling phase and then fails on the first
+    trial, which is mid-session, with the apparatus running.
+    """
+    space = one_parameter_space()
+    learner = DifferentialEvolutionLearner(
+        space, rng, population_size=smallest, evolution_strategy=strategy
+    )
+    history = run_loop(learner, space, sphere, batches=8, k=2, rng=rng)
+    # Long past the filling phase, so mutation did the bulk of the proposing.
+    assert len(history) > 2 * learner.num_members
+    assert space.contains(np.array([o.params for o in history])).all()
+
+
+@pytest.mark.parametrize('strategy, smallest', SMALLEST_POPULATIONS)
+def test_a_population_too_small_for_its_strategy_is_refused(rng, strategy, smallest):
+    """And a population below that minimum is refused at construction.
+
+    Construction is the last moment at which the configuration can be fixed
+    for free; the alternative is finding out on the first trial.
+    """
+    with pytest.raises(ValueError, match=strategy) as refusal:
+        DifferentialEvolutionLearner(
+            one_parameter_space(),
+            rng,
+            population_size=smallest - 1,
+            evolution_strategy=strategy,
+        )
+    # Naming the strategy alone does not say what to do about it: the message
+    # has to carry the population it got and the one that strategy needs.
+    assert str(smallest) in str(refusal.value)
+    assert str(smallest - 1) in str(refusal.value)
+
+
 @pytest.mark.parametrize(
     'kwargs, message',
     [
-        (dict(population_size=1), 'at least 5 members'),
+        (dict(population_size=1), 'at least 3'),
         (dict(evolution_strategy='nope'), 'evolution_strategy'),
         (dict(cross_over_probability=2.0), 'cross_over_probability'),
         (dict(mutation_scale=(1.0, 0.5)), 'mutation_scale'),
@@ -247,6 +301,43 @@ def test_a_gaussian_process_describes_the_real_data_after_proposing(space, rng):
     np.testing.assert_allclose(before, after)
 
 
+def test_a_gaussian_process_describes_the_real_data_after_a_proposal_fails(
+    space, rng
+):
+    """Even a batch that dies partway must leave no invented points behind.
+
+    Folding a batch's own picks into the fit is what stops them all chasing one
+    corner, but those picks are guesses at what the apparatus will report. If
+    the search then raises -- a minimiser giving up, a prediction on a
+    degenerate kernel -- anything reading the model next, for a prediction or
+    for where it thinks the optimum is, would be reading those guesses back as
+    measurements.
+    """
+    learner = GaussianProcessLearner(space, rng)
+    history = [
+        observe(i, p, offset_sphere(p))
+        for i, p in enumerate(space.uniform(np.random.default_rng(8), 12))
+    ]
+    # The greedy pick of a batch, and so where its first invented point lands.
+    probe = learner.propose(history, 1)[0]
+    before = learner.predict(probe)
+
+    searches = []
+    search = learner._minimise_acquisition
+
+    def give_up_after_the_first(*args, **kwargs):
+        searches.append(1)
+        if len(searches) > 1:
+            raise RuntimeError('the minimiser gave up')
+        return search(*args, **kwargs)
+
+    learner._minimise_acquisition = give_up_after_the_first
+    with pytest.raises(RuntimeError, match='gave up'):
+        learner.propose(history, 4)
+
+    np.testing.assert_allclose(learner.predict(probe), before)
+
+
 def test_gaussian_process_uses_per_point_uncertainties(space, rng):
     """A noisy point should be trusted less than an exact one."""
     points = space.uniform(np.random.default_rng(7), 12)
@@ -260,6 +351,62 @@ def test_gaussian_process_uses_per_point_uncertainties(space, rng):
 
     probe = np.array([0.0, 0.0])
     assert loose.predict(probe)[1][0] > tight.predict(probe)[1][0]
+
+
+# --- building from a configuration -----------------------------------------
+
+
+def a_config(space, learner, options):
+    """A configuration whose only interesting part is the shared learner table."""
+    return Config(
+        space=space,
+        globals=(),
+        cost_key=('routine', 'cost'),
+        learner=learner,
+        learner_options={'shared': options},
+        seed=11,
+    )
+
+
+def test_a_learner_is_built_from_a_table_holding_other_learners_knobs(space):
+    """One [MLOOP] table serves every learner.
+
+    A lab's knobs are written once and shared, so most of them mean nothing to
+    whichever learner is selected. Building takes the ones this learner accepts
+    and passes over the rest in silence; rejecting them would mean a file that
+    works for one learner breaks the moment another is chosen.
+    """
+    config = a_config(
+        space,
+        'differential_evolution',
+        {
+            'population_size': 4,
+            'cost_has_noise': False,
+            'length_scale_bounds': (1e-3, 1e3),
+        },
+    )
+    assert build(config).num_members == 4 * space.num_params
+
+
+def test_a_shared_knob_is_matched_against_arguments_not_constructor_locals(
+    space, monkeypatch
+):
+    """What a constructor accepts is its arguments, and nothing else.
+
+    A name a constructor happens to use as a scratch variable is not a knob it
+    takes. Matching against anything wider than the signature lets such a key
+    through on the strength of that name, and the TypeError blames the shared
+    table for a collision the user cannot see.
+    """
+
+    class Scratch:
+        def __init__(self, space, rng, population_size=3):
+            cost_has_noise = population_size  # a local, not an argument
+            self.population_size = cost_has_noise
+
+    monkeypatch.setitem(learners.LEARNERS, 'scratch', Scratch)
+    config = a_config(space, 'scratch', {'cost_has_noise': True, 'population_size': 4})
+    assert build(config).population_size == 4
 
 
 # --- two phase -------------------------------------------------------------

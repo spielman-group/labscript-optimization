@@ -1,5 +1,7 @@
 """The learners, and how a configuration names one."""
 
+import inspect
+
 import numpy as np
 
 from .base import InsufficientData, Learner
@@ -39,9 +41,11 @@ def _make(name: str, space, rng, options):
         raise ValueError(
             f"unknown learner {name!r}; choose one of {sorted(LEARNERS)}"
         ) from None
-    accepted = cls.__init__.__code__.co_varnames
+    accepted = inspect.signature(cls).parameters
     # A shared table carries knobs for every learner, so pass on the ones this
     # learner actually takes rather than making the user split them by hand.
+    # The question is what the constructor accepts, which is its parameters and
+    # nothing else: a name it happens to use as a local variable is not a knob.
     return cls(space, rng, **{k: v for k, v in options.items() if k in accepted})
 
 

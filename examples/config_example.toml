@@ -1,22 +1,21 @@
 # Configuration for a labscript-optimization session.
 #
-# The schema is the one analysislib-mloop used, so an existing mloop_config
-# file loads here unchanged.
+# The schema is the one analysislib-mloop used, less the settings that were
+# M-LOOP's own. Every key here is read: one this package does not act on stops
+# the load with a message naming it, rather than being accepted and ignored.
 
 [ANALYSIS]
 # Which (routine, result) column of the lyse dataframe holds the cost. The
 # routine that writes it is one of your own; this package never computes a
 # cost. An optional "u_<result>" column alongside it is read as the
-# uncertainty and weights the Gaussian process fit.
+# uncertainty and weights the Gaussian process fit. A shot whose cost is NaN
+# is recorded as a bad observation: it counts as a completed run and is left
+# out of the fits, rather than being waited on for a cost that has already
+# been and gone.
 cost_key = ["zTOF_singleShot", "Nb"]
 
 # The cost column holds something to be made as large as possible.
 maximize = true
-
-# A shot whose cost is NaN is treated as "no cost yet" rather than as a
-# failure, so a routine that averages several repeats can write NaN until it
-# has enough of them. The optimiser waits rather than counting the shot.
-ignore_bad = true
 
 # Only parameter groups named here take part.
 groups = ["CMOT"]

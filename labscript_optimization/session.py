@@ -113,7 +113,8 @@ class Session:
         """Submit enough proposals to keep the queue topped up.
 
         Returns the shot ids submitted, which is empty once the session has
-        stopped.
+        stopped. Raises if the interface does not answer with one shot id per
+        proposal, because a pairing that is not one to one cannot be trusted.
         """
         if self.stopped:
             return []
@@ -130,7 +131,7 @@ class Session:
             # Do not queue shots beyond the budget. Dropped shots are not
             # counted against it: they produced nothing, so replacing one is
             # not spending a run.
-            room = self.config.max_num_runs - len(self.results) - len(self.awaiting)
+            room = self.config.max_num_runs - len(self.results) - awaiting
             wanted = min(wanted, room)
         if wanted <= 0:
             return []
@@ -138,6 +139,20 @@ class Session:
         self.interface.check_unchanged()
         proposals = np.atleast_2d(self.learner.propose(self.history, wanted))
         shot_ids = self.interface.submit(proposals)
+        if len(shot_ids) != len(proposals):
+            # Pairing what came back against the proposals would either leave
+            # out a proposal whose shot is queued and running -- its cost then
+            # arrives for an id this session never recorded, and the buffer
+            # depth is never reached again -- or attribute a cost to
+            # parameters that were not the ones requested. Nothing is recorded
+            # here: an id that cannot be trusted to name its proposal is worth
+            # no more than one this session did not submit, and a submission
+            # that goes wrong leaves the session untouched.
+            raise RuntimeError(
+                f"submitted {len(proposals)} proposals but got "
+                f"{len(shot_ids)} shot ids back; the two cannot be paired, "
+                f"and shots may be queued that this session cannot account for"
+            )
         for shot_id, params in zip(shot_ids, proposals):
             self.proposals[shot_id] = np.asarray(params, dtype=float)
         return shot_ids

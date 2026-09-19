@@ -18,7 +18,10 @@ import numpy as np
 from ..observations import Observation, usable
 from ..space import ParameterSpace
 
-STRATEGIES = ("best1", "best2", "rand1", "rand2")
+#: The mutation strategies, and how many other population members each one
+#: draws on. The counts are read by :meth:`DifferentialEvolutionLearner._mutant`
+#: and by the population guard, so neither can drift from the other.
+STRATEGIES = {"best1": 2, "best2": 4, "rand1": 3, "rand2": 5}
 
 
 class DifferentialEvolutionLearner:
@@ -28,7 +31,8 @@ class DifferentialEvolutionLearner:
         space: The parameter space to search.
         rng: Source of randomness.
         population_size: Multiplier on the parameter count; the population
-            holds ``population_size * num_params`` members.
+            holds ``population_size * num_params`` members. How few members
+            will do depends on the strategy: see :data:`STRATEGIES`.
         evolution_strategy: Which mutation to use, one of :data:`STRATEGIES`.
         mutation_scale: ``(low, high)`` bounds on the differential weight,
             redrawn each generation.
@@ -54,19 +58,23 @@ class DifferentialEvolutionLearner:
     ):
         self.space = space
         self.rng = rng
-        self.num_members = int(population_size) * space.num_params
-        if self.num_members < 5:
-            raise ValueError(
-                f"the population needs at least 5 members for the mutation "
-                f"strategies to have distinct points to draw on, got "
-                f"{self.num_members}"
-            )
         if evolution_strategy not in STRATEGIES:
             raise ValueError(
-                f"evolution_strategy must be one of {STRATEGIES}, got "
+                f"evolution_strategy must be one of {tuple(STRATEGIES)}, got "
                 f"{evolution_strategy!r}"
             )
         self.evolution_strategy = evolution_strategy
+        self.num_members = int(population_size) * space.num_params
+        # A mutation draws distinct members from the population minus the slot
+        # it is replacing, so it needs one member more than it draws on.
+        draws = STRATEGIES[evolution_strategy]
+        if self.num_members < draws + 1:
+            raise ValueError(
+                f"evolution_strategy {evolution_strategy!r} draws on {draws} "
+                f"other members, so it needs a population of at least "
+                f"{draws + 1}; population_size {population_size} over "
+                f"{space.num_params} parameters gives {self.num_members}"
+            )
         self.mutation_scale = tuple(float(m) for m in mutation_scale)
         if len(self.mutation_scale) != 2 or not 0 <= self.mutation_scale[0] <= self.mutation_scale[1]:
             raise ValueError(
@@ -138,21 +146,21 @@ class DifferentialEvolutionLearner:
         return self.rng.choice(choices, size=count, replace=False)
 
     def _mutant(self, slot: int, population: np.ndarray, best: int, scale: float):
+        # How many members to draw comes from STRATEGIES, which is also what
+        # sets the minimum population, so a strategy can never ask for more
+        # points than the constructor guaranteed it.
+        drawn = population[
+            self._distinct_indices(slot, STRATEGIES[self.evolution_strategy])
+        ]
         if self.evolution_strategy == "best1":
-            r0, r1 = self._distinct_indices(slot, 2)
-            return population[best] + scale * (population[r0] - population[r1])
+            return population[best] + scale * (drawn[0] - drawn[1])
         if self.evolution_strategy == "rand1":
-            r0, r1, r2 = self._distinct_indices(slot, 3)
-            return population[r0] + scale * (population[r1] - population[r2])
+            return drawn[0] + scale * (drawn[1] - drawn[2])
         if self.evolution_strategy == "best2":
-            r0, r1, r2, r3 = self._distinct_indices(slot, 4)
             return population[best] + scale * (
-                population[r0] + population[r1] - population[r2] - population[r3]
+                drawn[0] + drawn[1] - drawn[2] - drawn[3]
             )
-        r0, r1, r2, r3, r4 = self._distinct_indices(slot, 5)
-        return population[r0] + scale * (
-            population[r1] + population[r2] - population[r3] - population[r4]
-        )
+        return drawn[0] + scale * (drawn[1] + drawn[2] - drawn[3] - drawn[4])
 
     def _trial(self, slot: int, population: np.ndarray, costs: np.ndarray) -> np.ndarray:
         best = int(np.argmin(costs))
