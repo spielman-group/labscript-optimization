@@ -17,7 +17,7 @@ import numpy as np
 
 from ..observations import Observation, usable
 from ..space import ParameterSpace
-from .base import opening_batch, opening_point
+from .base import Learner, opening_batch, opening_point
 
 #: The mutation strategies, and how many other population members each one
 #: draws on. The counts are read by :meth:`DifferentialEvolutionLearner._mutant`
@@ -25,7 +25,7 @@ from .base import opening_batch, opening_point
 STRATEGIES = {"best1": 2, "best2": 4, "rand1": 3, "rand2": 5}
 
 
-class DifferentialEvolutionLearner:
+class DifferentialEvolutionLearner(Learner):
     """Evolve a population of parameter vectors.
 
     Args:
@@ -59,8 +59,7 @@ class DifferentialEvolutionLearner:
         trust_region=None,
         first_params: np.ndarray | None = None,
     ):
-        self.space = space
-        self.rng = rng
+        super().__init__(space, rng)
         if evolution_strategy not in STRATEGIES:
             raise ValueError(
                 f"evolution_strategy must be one of {tuple(STRATEGIES)}, got "

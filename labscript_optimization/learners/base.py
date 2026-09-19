@@ -11,12 +11,63 @@ learner believes. That rule is what keeps the out-of-order arrival of costs out
 of the learners.
 """
 
+from abc import ABC, abstractmethod
 from typing import Sequence
 
 import numpy as np
 
 from ..observations import Observation
 from ..space import ParameterSpace
+
+
+class Learner(ABC):
+    """A learner that searches a :class:`ParameterSpace`.
+
+    The base class fixes how a learner is built, not how it proposes: ``space``
+    first and ``rng`` second, positionally, then the learner's own knobs as
+    keyword arguments with defaults. Every learner named in a configuration is
+    built as ``cls(space, rng, **options)``, with the options matched by name
+    against the signature -- so the two spelled the other way round searches
+    the wrong thing, and knobs collected in ``**kwargs`` are matched by
+    nothing.
+
+    Nothing else is shared. A learner keeps its own state, resolves its own
+    opening point, and is free not to have one.
+
+    Inheriting is how a learner gets a name in a configuration. It is not how a
+    learner gets used: a session proposes from anything answering
+    :meth:`propose`, so your own object driven from your own loop needs no base
+    class.
+    """
+
+    #: Which of the learner's ways of proposing produced the last batch, which
+    #: the session reports. Declared without a value: a learner that grows
+    #: phases and forgets to publish them then fails, rather than being
+    #: reported as the main one for a whole run.
+    last_phase: str
+
+    def __init__(self, space: ParameterSpace, rng: np.random.Generator):
+        if not isinstance(space, ParameterSpace) or not isinstance(
+            rng, np.random.Generator
+        ):
+            raise TypeError(
+                f"a learner takes a ParameterSpace and a Generator, in that "
+                f"order; got {type(space).__name__} and {type(rng).__name__}"
+            )
+        self.space = space
+        self.rng = rng
+
+    @abstractmethod
+    def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
+        """Return ``k`` parameter vectors to run next.
+
+        Args:
+            history: Completed observations, in proposal order.
+            k: How many proposals to return.
+
+        Returns:
+            A ``(k, num_params)`` array, every row inside the bounds.
+        """
 
 
 class InsufficientData(RuntimeError):

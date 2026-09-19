@@ -4,7 +4,7 @@ import inspect
 
 import numpy as np
 
-from .base import InsufficientData
+from .base import InsufficientData, Learner
 from .differential_evolution import DifferentialEvolutionLearner
 from .gaussian_process import GaussianProcessLearner
 from .random import DirectedRandomLearner, RandomLearner
@@ -15,6 +15,7 @@ __all__ = [
     "DirectedRandomLearner",
     "GaussianProcessLearner",
     "InsufficientData",
+    "Learner",
     "RandomLearner",
     "TwoPhaseLearner",
     "build",
@@ -46,6 +47,12 @@ def _make(name: str, space, rng, options):
     # and letting one through blames the shared table for a collision the user
     # cannot see.
     accepted = inspect.signature(cls).parameters
+    if any(p.kind is p.VAR_KEYWORD for p in accepted.values()):
+        raise TypeError(
+            f"learner {name!r} collects its knobs in **kwargs, which names "
+            f"none of them, so every option would be dropped and the learner "
+            f"built entirely from its defaults; spell the knobs out"
+        )
     return cls(space, rng, **{k: v for k, v in options.items() if k in accepted})
 
 

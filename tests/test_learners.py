@@ -1,9 +1,10 @@
 """Learner behaviour, against analytic cost functions.
 
-Every learner is exercised through the one method the protocol defines, so
-these tests survive any rewrite that keeps the protocol.
+Every learner is exercised through the one method the base class declares, so
+these tests survive any rewrite that keeps the interface.
 """
 
+import inspect
 import warnings
 
 import numpy as np
@@ -16,6 +17,7 @@ from labscript_optimization.learners import (
     DirectedRandomLearner,
     GaussianProcessLearner,
     InsufficientData,
+    Learner,
     RandomLearner,
     TwoPhaseLearner,
     build,
@@ -75,7 +77,64 @@ def test_a_learner_without_phases_of_its_own_still_reports_one(space, rng):
         assert learner.last_phase == 'main', type(learner).__name__
 
 
+# --- the interface ---------------------------------------------------------
+
+
+@pytest.mark.parametrize('name, cls', sorted(learners.LEARNERS.items()))
+def test_a_learner_named_in_a_configuration_takes_the_space_first(name, cls):
+    """Building one is ``cls(space, rng, **options)``, the options matched by
+    name against the signature. A learner spelling the first two the other way
+    round constructs happily and searches the wrong thing, and a knob with no
+    default cannot be left out of a shared table that serves every learner.
+    """
+    assert issubclass(cls, Learner)
+    params = list(inspect.signature(cls).parameters.values())
+    assert [p.name for p in params[:2]] == ['space', 'rng']
+    for knob in params[2:]:
+        assert knob.default is not knob.empty, knob.name
+
+
+def test_a_learner_handed_its_two_arguments_backwards_is_refused(space, rng):
+    for cls in learners.LEARNERS.values():
+        with pytest.raises(TypeError, match='in that order'):
+            cls(rng, space)
+
+
+def test_a_learner_that_does_not_propose_cannot_be_built(space, rng):
+    class Forgetful(Learner):
+        last_phase = 'main'
+
+    with pytest.raises(TypeError, match='propose'):
+        Forgetful(space, rng)
+
+
+def test_there_is_no_last_phase_to_inherit(space, rng):
+    """The other half of reporting the phase off the learner itself.
+
+    A learner that grows phases and forgets to publish them has to fail, so
+    the base class declares the attribute without giving it a value.
+    """
+
+    class Silent(Learner):
+        def propose(self, history, k):
+            return self.space.uniform(self.rng, k)
+
+    with pytest.raises(AttributeError, match='last_phase'):
+        Silent(space, rng).last_phase
+
+
 # --- the opening point -----------------------------------------------------
+
+
+@pytest.fixture
+def started_space():
+    """A space in which every parameter has a configured start."""
+    return ParameterSpace(
+        [
+            Parameter('x', 'g_x', -5.0, 5.0, start=1.5),
+            Parameter('y', 'g_y', -5.0, 5.0, start=-2.5),
+        ]
+    )
 
 
 def learners_starting_at(space, rng, first_params):
@@ -102,14 +161,8 @@ def test_a_learner_told_where_to_start_proposes_that_point_first(space, rng):
         assert not np.allclose(proposals[1], start), type(learner).__name__
 
 
-def test_the_opening_point_defaults_to_the_configured_start(rng):
-    started = ParameterSpace(
-        [
-            Parameter('x', 'g_x', -5.0, 5.0, start=1.5),
-            Parameter('y', 'g_y', -5.0, 5.0, start=-2.5),
-        ]
-    )
-    for learner in learners_starting_at(started, rng, None):
+def test_the_opening_point_defaults_to_the_configured_start(started_space, rng):
+    for learner in learners_starting_at(started_space, rng, None):
         np.testing.assert_allclose(
             learner.propose([], 1)[0], [1.5, -2.5], err_msg=type(learner).__name__
         )
@@ -364,6 +417,18 @@ def test_gaussian_process_refuses_before_it_has_enough_data(space, rng):
     learner = GaussianProcessLearner(space, rng, minimum_observations=6)
     with pytest.raises(InsufficientData):
         learner.propose([observe(0, [0.0, 0.0], 1.0)], 1)
+
+
+def test_a_gaussian_process_has_no_opening_point(started_space, rng):
+    """An empty history is refused even where every parameter has a start.
+
+    The other learners fall back to that start when told nothing. This one
+    must not: :func:`build` always wraps it, so an opening point here is
+    unreachable through a configuration, and bare it would answer from no
+    data instead of saying it cannot.
+    """
+    with pytest.raises(InsufficientData):
+        GaussianProcessLearner(started_space, rng).propose([], 1)
 
 
 def test_gaussian_process_finds_the_minimum(space, rng):
@@ -641,6 +706,29 @@ def test_a_shared_knob_is_matched_against_arguments_not_constructor_locals(
     monkeypatch.setitem(learners.LEARNERS, 'scratch', Scratch)
     config = a_config(space, 'scratch', {'cost_has_noise': True, 'population_size': 4})
     assert build(config).population_size == 4
+
+
+def test_a_learner_that_hides_its_knobs_in_kwargs_is_refused(space, monkeypatch):
+    """Matching against the signature is what makes the filtering silent here.
+
+    ``**kwargs`` names nothing, so every knob in the table is passed over and
+    the learner is built entirely from its defaults, with no error and a
+    search the lab did not configure.
+    """
+
+    class Swallower(Learner):
+        last_phase = 'main'
+
+        def __init__(self, space, rng, **kwargs):
+            super().__init__(space, rng)
+            self.population_size = kwargs.get('population_size', 3)
+
+        def propose(self, history, k):
+            return self.space.uniform(self.rng, k)
+
+    monkeypatch.setitem(learners.LEARNERS, 'swallower', Swallower)
+    with pytest.raises(TypeError, match='kwargs'):
+        build(a_config(space, 'swallower', {'population_size': 4}))
 
 
 # --- two phase -------------------------------------------------------------

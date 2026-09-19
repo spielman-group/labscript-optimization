@@ -14,10 +14,10 @@ import numpy as np
 
 from ..observations import Observation, costs_array, params_array, usable
 from ..space import ParameterSpace
-from .base import opening_batch, opening_point
+from .base import Learner, opening_batch, opening_point
 
 
-class RandomLearner:
+class RandomLearner(Learner):
     """Uniform random draws from the whole space.
 
     Args:
@@ -36,8 +36,7 @@ class RandomLearner:
         rng: np.random.Generator,
         first_params: np.ndarray | None = None,
     ):
-        self.space = space
-        self.rng = rng
+        super().__init__(space, rng)
         self.first_params = opening_point(space, first_params)
 
     def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
@@ -49,7 +48,7 @@ class RandomLearner:
         return self.space.uniform(self.rng, k)
 
 
-class DirectedRandomLearner:
+class DirectedRandomLearner(Learner):
     """Random draws centred on a previously seen point.
 
     Each proposal is either a pure random draw, with probability
@@ -89,8 +88,7 @@ class DirectedRandomLearner:
         explore_fraction: float = 0.0,
         first_params: np.ndarray | None = None,
     ):
-        self.space = space
-        self.rng = rng
+        super().__init__(space, rng)
         self.trust_region = space.absolute_trust_region(trust_region)
         self.trust_gaussian = bool(trust_gaussian)
 

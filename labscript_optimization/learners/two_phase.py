@@ -21,6 +21,11 @@ from .base import InsufficientData
 class TwoPhaseLearner:
     """Delegate to ``trainer`` while training, then to ``main``.
 
+    Not a :class:`~labscript_optimization.learners.base.Learner`: it searches
+    no space of its own, takes no ``space`` or ``rng``, and cannot be named in
+    a configuration. :func:`~labscript_optimization.learners.build` wraps one
+    around the two learners it builds instead.
+
     Args:
         trainer: The learner used for the training phase, and as the fallback.
         main: The learner used once training is done.

@@ -130,6 +130,17 @@ for step in range(100):
         history.append(Observation(str(step), params, float(params[0] ** 2)))
 ```
 
+### Writing your own
+
+A session proposes from anything that answers `propose` and carries a
+`last_phase` string, so an object driven from your own loop needs no base
+class. Naming one in a configuration does: inherit `Learner` from
+`labscript_optimization.learners` and add the class to its `LEARNERS` table.
+Every entry there is built as `cls(space, rng, **options)`, with the options
+matched by name against the signature — so `space` and `rng` come first, in
+that order, and each of the learner's own knobs is a keyword argument with a
+default.
+
 ## Failures
 
 Failures stop the session and are reported through lyse's normal error path:

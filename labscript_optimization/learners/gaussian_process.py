@@ -36,11 +36,11 @@ from ..observations import (
     uncers_array,
     usable,
 )
-from .base import InsufficientData
+from .base import InsufficientData, Learner
 from ..space import ParameterSpace
 
 
-class GaussianProcessLearner:
+class GaussianProcessLearner(Learner):
     """Fit a Gaussian process to the history and search its posterior.
 
     Args:
@@ -86,8 +86,7 @@ class GaussianProcessLearner:
         trust_region=None,
         minimum_observations: int | None = None,
     ):
-        self.space = space
-        self.rng = rng
+        super().__init__(space, rng)
         self.cost_has_noise = bool(cost_has_noise)
         self.length_scale_bounds = tuple(length_scale_bounds)
         self.noise_level_bounds = tuple(noise_level_bounds)
