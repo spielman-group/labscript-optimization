@@ -27,8 +27,9 @@ House rules that apply to every slice:
 - [ ] Slice 5: The greeting's deadline belongs to the question
 - [x] Slice 6: A wrapper cannot silently drop a generation barrier
 - [ ] Slice 7: One deadline cannot outlive the one that contains it
-- [ ] Slice 8: Benchmark the shipped DE
-- [ ] Slice 9: Test cleanup
+- [ ] Slice 8: A barrier declared the ordinary way is not seen
+- [ ] Slice 9: Benchmark the shipped DE
+- [ ] Slice 10: Test cleanup
 
 ---
 
@@ -551,7 +552,68 @@ None - can start immediately.
 
 ---
 
-## Slice 8: Benchmark the shipped DE
+## Slice 8: A barrier declared the ordinary way is not seen
+
+### Type
+
+`AFK`
+
+### What to build
+
+The refusal that stops `num_buffered_runs` being set beside a generational
+learner reads `generation` **off the class**. That works for the one learner
+that has one today only because its `generation` is a `property`, so the class
+attribute is a truthy property object. A learner that declares the barrier the
+ordinary way — `self.generation = ...` in `__init__` — is invisible to it.
+
+Reproduced against `7b6ec7b` with a learner whose `__init__` sets
+`self.generation`:
+
+```
+class-level read sees: None
+RESULT: num_buffered_runs was ACCEPTED -> 3
+        the barrier is real (the instance has generation = 8)
+```
+
+So the file loads, the session runs with a queue depth the learner never asked
+for, `refill` tops the queue up mid-generation, and — because starvation is not
+counted for a generational learner — the default shots runmanager hands BLACS at
+each of those drains are missing from the one number a lab is told to watch.
+Nothing reports any of it.
+
+**This was believed to be guarded and is not.** The test named as the guard
+exercises only the learner whose attribute is a property, so it passes while the
+mechanism it is supposed to protect does not work. That is the third finding of
+this exact shape in this batch — an attribute read the wrong way, a case that
+happens to work, and a clean-looking check — and the pattern is worth naming in
+whatever it teaches the contract.
+
+Settle what a learner owes and enforce it, rather than patching the read. Two
+shapes worth weighing: require `generation` to be a class-level declaration and
+hold every registered learner to that, or stop reading it off the class at all.
+Whichever is chosen, the guard must be one that would have failed against the
+reproduction above — a test over the registry rather than over one learner.
+
+### Acceptance criteria
+
+- [ ] A learner declaring `generation` in `__init__` is treated the same as one
+      declaring it on the class — mutation: the reproduction above is accepted
+      again
+- [ ] The guard covers every registered learner, not one of them
+- [ ] The learner contract says how a barrier must be declared, if that is the
+      answer chosen
+
+### Blocked by
+
+None - can start immediately.
+
+### User stories covered
+
+- Introduced by Slice 4's load-time refusal; found while validating Slice 6.
+
+---
+
+## Slice 9: Benchmark the shipped DE
 
 ### Type
 
@@ -596,7 +658,7 @@ mutation strategy.
 
 ---
 
-## Slice 9: Test cleanup
+## Slice 10: Test cleanup
 
 ### Type
 
@@ -652,7 +714,7 @@ Three specific items carried forward from earlier slices:
 
 ### Blocked by
 
-- Slices 1 through 8
+- Slices 1 through 9
 
 ### User stories covered
 
