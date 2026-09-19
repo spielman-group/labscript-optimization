@@ -1,17 +1,29 @@
-"""The observation record and the history helpers learners share.
+"""The proposal record, and the history helpers learners share.
 
-An :class:`Observation` is one completed shot: the parameters that were
-requested, the cost that came back, and the shot id that ties the two
-together. Learners never see a shot that has not reported a cost yet.
+An :class:`Observation` is one proposal and what became of it: the parameters
+that were requested, the state that proposal is in, and the cost if one has
+come back. Learners are handed every proposal a session has made, in the order
+it made them, so a position spent on a shot that is still running or on one
+that will never report is visible to them as a position spent.
 """
 
 from typing import NamedTuple, Sequence
 
 import numpy as np
 
+#: Submitted, and a cost may still arrive.
+PENDING = "pending"
+
+#: No cost will ever arrive: the shot was cancelled, deleted, refused, or is
+#: behind a row only an operator can clear.
+DROPPED = "dropped"
+
+#: The shot ran and its cost is in the record, whether or not it is usable.
+COMPLETE = "complete"
+
 
 class Observation(NamedTuple):
-    """One completed shot.
+    """One proposal, and what became of it.
 
     Args:
         shot_id: The identifier runmanager minted for this shot's queue row,
@@ -20,28 +32,37 @@ class Observation(NamedTuple):
             proposals by.
         params: The parameter vector that was requested, in real units, in
             :class:`~labscript_optimization.space.ParameterSpace` order.
-        cost: The measured cost. Lower is better; a maximised quantity has
-            already had its sign flipped by the time it gets here.
+        cost: The measured cost, or ``None`` while there is none. Lower is
+            better; a maximised quantity has already had its sign flipped by
+            the time it gets here.
         uncer: Standard error on ``cost``, or ``None`` when the configuration
             names no uncertainty column.
         bad: True when the shot ran but its cost is not usable.
+        state: :data:`PENDING`, :data:`DROPPED` or :data:`COMPLETE`. The two
+            without a cost are one thing to a learner -- a position spent that
+            has produced nothing -- and two to the session, which counts the
+            shots a run has lost, so the record keeps them apart rather than
+            leaving the difference to be guessed from a missing cost.
     """
 
     shot_id: str
     params: np.ndarray
-    cost: float
+    cost: float | None
     uncer: float | None = None
     bad: bool = False
+    state: str = COMPLETE
 
     @property
     def usable(self) -> bool:
         """Whether this observation can inform a fit.
 
-        A non-finite cost is excluded along with a bad one: it carries no
-        gradient information and would poison any statistic over the cost
-        range.
+        Only a completed shot has a cost to offer. A non-finite one is
+        excluded along with a bad one: it carries no gradient information and
+        would poison any statistic over the cost range.
         """
-        return not self.bad and bool(np.isfinite(self.cost))
+        if self.state != COMPLETE or self.bad:
+            return False
+        return bool(np.isfinite(self.cost))
 
 
 def usable(history: Sequence[Observation]) -> list[Observation]:

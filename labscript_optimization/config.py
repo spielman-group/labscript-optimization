@@ -68,7 +68,6 @@ SHARED_LEARNER_KEYS = frozenset(
         "evolution_strategy",
         "mutation_scale",
         "cross_over_probability",
-        "restart_tolerance",
         "cost_bias",
         "uncer_bias",
         "batch_size",

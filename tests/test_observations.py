@@ -1,6 +1,8 @@
 import numpy as np
 
 from labscript_optimization.observations import (
+    DROPPED,
+    PENDING,
     best,
     costs_array,
     params_array,
@@ -20,6 +22,19 @@ def test_unusable_observations_are_excluded_from_fits():
         observe('better', [5.0], 2.0),
     ]
     assert [o.shot_id for o in usable(history)] == ['good', 'better']
+
+
+def test_a_proposal_that_has_produced_no_cost_cannot_inform_a_fit():
+    """A shot still running and one that will never report are both positions
+    the session spent, and neither is something to fit to.
+    """
+    history = [
+        observe('waiting', [1.0], None, state=PENDING),
+        observe('gone', [2.0], None, state=DROPPED),
+        observe('measured', [3.0], 4.0),
+    ]
+    assert [o.shot_id for o in usable(history)] == ['measured']
+    assert best(history).shot_id == 'measured'
 
 
 def test_best_is_the_lowest_usable_cost():

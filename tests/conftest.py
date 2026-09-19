@@ -8,7 +8,7 @@ os.environ.setdefault('LABSCRIPT_NO_ERROR_DIALOG', '1')
 import numpy as np
 import pytest
 
-from labscript_optimization.observations import Observation
+from labscript_optimization.observations import COMPLETE, Observation
 from labscript_optimization.space import Parameter, ParameterSpace
 
 
@@ -25,9 +25,15 @@ def rng():
     return np.random.default_rng(20260918)
 
 
-def observe(shot_id, params, cost, uncer=None, bad=False):
-    """Build an Observation without ceremony."""
-    return Observation(str(shot_id), np.asarray(params, dtype=float), cost, uncer, bad)
+def observe(shot_id, params, cost, uncer=None, bad=False, state=COMPLETE):
+    """Build an Observation without ceremony.
+
+    A cost of ``None`` with a state of PENDING or DROPPED is a proposal that
+    has produced nothing: a position the session spent.
+    """
+    return Observation(
+        str(shot_id), np.asarray(params, dtype=float), cost, uncer, bad, state
+    )
 
 
 def run_loop(learner, space, cost_function, batches, k, rng, history=None):

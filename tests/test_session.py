@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from labscript_optimization import config as config_module
+from labscript_optimization.observations import COMPLETE, DROPPED, PENDING, usable
 from labscript_optimization.session import Session
 
 BASE = """
@@ -109,16 +110,64 @@ def test_a_cost_frees_a_slot(session):
 
 
 def test_costs_arriving_out_of_order_land_in_proposal_order(session):
+    """The history is the proposals, in the order they were made, so a cost
+    that arrives late fills its own place rather than being appended to the
+    end of one.
+    """
     session.refill()
     session.record('shot-2', 3.0, None, False)
     session.record('shot-0', 9.0, None, False)
-    assert [o.shot_id for o in session.history] == ['shot-0', 'shot-2']
+    assert [o.shot_id for o in session.history] == ['shot-0', 'shot-1', 'shot-2']
+    with_a_cost = [o.shot_id for o in session.history if o.cost is not None]
+    assert with_a_cost == ['shot-0', 'shot-2']
 
 
 def test_a_shot_this_session_did_not_submit_is_ignored(session):
     session.refill()
     assert session.record('someone-elses-shot', 1.0, None, False) is False
-    assert session.history == []
+    assert [o.shot_id for o in session.history] == ['shot-0', 'shot-1', 'shot-2']
+    assert all(o.cost is None for o in session.history)
+
+
+def test_the_history_tells_a_shot_still_coming_from_one_that_never_will(
+    session, runmanager
+):
+    """Both are a position spent that has produced nothing, which is all a
+    learner needs of them. The session needs more: ``dropped`` is the number a
+    user reads to see whether shots are being lost, so the record keeps the
+    two apart instead of leaving them to be told from a missing cost.
+    """
+    session.refill()
+    runmanager.lose('shot-0')
+    session.reconcile()
+
+    assert {o.shot_id: o.state for o in session.history} == {
+        'shot-0': DROPPED,
+        'shot-1': PENDING,
+        'shot-2': PENDING,
+    }
+    assert usable(session.history) == []
+
+
+def test_a_proposal_still_waiting_is_a_position_spent_and_nothing_more(runmanager):
+    """It is in the history, because a learner reading a role off a position
+    has to see the positions that produced nothing. It is not an observation:
+    nothing fits to it, it is not a completed run, and the patience limit does
+    not count it -- counting it would stop a session for the shots it is
+    waiting on.
+    """
+    session = Session(
+        make_config(buffered=3, max_num_runs_without_better_params=2), runmanager
+    )
+    session.refill()
+    session.record('shot-0', 1.0, None, False)
+
+    waiting = [o for o in session.history if o.state != COMPLETE]
+    assert [o.shot_id for o in waiting] == ['shot-1', 'shot-2']
+    assert usable(waiting) == []
+    assert session.status()['completed'] == 1
+    assert session.runs_since_best() == 0
+    assert session.stopped is None
 
 
 def test_a_second_cost_for_one_shot_is_ignored(session):
@@ -384,6 +433,38 @@ def test_a_minimised_best_cost_is_reported_as_it_was_measured(runmanager):
 
     status = session.status()
     assert (status['best_cost'], status['best_shot_id']) == (3.0, 'shot-0')
+
+
+def test_the_configured_start_point_is_proposed_once(runmanager):
+    """The history holds a proposal from the moment it is made, so the opening
+    batch is the opening batch. Every shot of it is lost here, so not one cost
+    has come back when the session refills again -- and the session still does
+    not start over from the point the file named.
+    """
+    config = config_module.loads(
+        """
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = ["G"]
+[MLOOP]
+learner = "random"
+num_buffered_runs = 2
+[MLOOP_PARAMS.G.x]
+global_name = "gx"
+min = 0.0
+max = 1.0
+start = 0.25
+"""
+    )
+    session = Session(config, runmanager)
+    submitted = session.refill()
+    runmanager.lose(*submitted)
+    session.reconcile()
+    submitted += session.refill()
+
+    started = [session.proposals[shot_id][0] for shot_id in submitted]
+    assert len(submitted) == 4
+    assert started.count(0.25) == 1
 
 
 def test_an_empty_queue_at_refill_is_counted(runmanager):

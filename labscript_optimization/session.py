@@ -5,14 +5,18 @@ still coming is runmanager's answer, asked for afresh each time it matters,
 because a number kept here can only be decremented by a shot coming back --
 and a shot that never comes back would hold its place for ever.
 
-History is kept in proposal order: a cost arriving out of order fills the slot
-its shot id names, and a shot that is no longer coming is dropped.
+History holds every proposal the session has made, in the order it made them,
+each carrying what became of it: a cost arriving out of order fills the slot
+its shot id names, and a shot that is no longer coming is marked dropped
+rather than taken out. A learner therefore sees a position spent on a shot
+that produced nothing as a position spent, which is what lets one read a role
+off a proposal's position.
 """
 
 import numpy as np
 
 from . import learners, observations
-from .observations import Observation
+from .observations import COMPLETE, DROPPED, PENDING, Observation
 from .runmanager_interface import BLOCKED_SHOT_STATE, UNKNOWN_SHOT_STATE
 
 
@@ -25,7 +29,8 @@ class Session:
             and ``shot_status(shot_ids)``. Readiness is the worker's to check
             before a session is built.
         learner: The learner to use, or ``None`` to build the configured one.
-            It answers ``propose(history, k)`` and carries ``last_phase``.
+            It answers ``propose(history, k)`` and carries ``last_phase``
+            and ``generation``.
     """
 
     def __init__(self, config, interface, learner=None):
@@ -43,12 +48,21 @@ class Session:
 
     @property
     def history(self) -> list[Observation]:
-        """Completed observations, in the order they were proposed."""
-        return [
-            Observation(shot_id, params, *self.results[shot_id])
-            for shot_id, params in self.proposals.items()
-            if shot_id in self.results
-        ]
+        """Every proposal, in the order it was made, with what became of it.
+
+        A proposal still waiting and one that will never report are both a
+        position spent without a usable cost, and both are here: a learner
+        that reads a role off a position needs the positions that produced
+        nothing as much as the ones that produced a cost.
+        """
+        records = []
+        for shot_id, params in self.proposals.items():
+            if shot_id in self.results:
+                records.append(Observation(shot_id, params, *self.results[shot_id]))
+                continue
+            state = DROPPED if shot_id in self.dropped else PENDING
+            records.append(Observation(shot_id, params, None, state=state))
+        return records
 
     @property
     def awaiting(self) -> list[str]:
@@ -70,12 +84,12 @@ class Session:
         Counted over every completed shot, usable or not; see
         :attr:`~labscript_optimization.config.Config.max_num_runs_without_better_params`.
         """
-        history = self.history
-        best = observations.best(history)
+        completed = [o for o in self.history if o.state == COMPLETE]
+        best = observations.best(completed)
         if best is None:
-            return len(history)
-        position = [o.shot_id for o in history].index(best.shot_id)
-        return len(history) - 1 - position
+            return len(completed)
+        position = [o.shot_id for o in completed].index(best.shot_id)
+        return len(completed) - 1 - position
 
     def check_stop(self) -> None:
         limit = self.config.max_num_runs

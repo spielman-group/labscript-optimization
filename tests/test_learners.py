@@ -12,6 +12,7 @@ import pytest
 
 from labscript_optimization import learners
 from labscript_optimization.config import Config
+from labscript_optimization.observations import COMPLETE, DROPPED
 from labscript_optimization.learners import (
     DifferentialEvolutionLearner,
     DirectedRandomLearner,
@@ -355,20 +356,156 @@ def test_differential_evolution_finds_the_minimum(space, rng, strategy):
 
 
 def test_differential_evolution_state_depends_only_on_the_history(space, rng):
-    """Two learners given the same history must be in the same state.
+    """The population is not carried between calls; it is rebuilt every time.
 
-    The population is not carried between calls; it is rebuilt from the
-    history, which is what keeps costs arriving out of order from mattering.
+    A learner that has been proposing all session therefore holds nothing a
+    fresh one handed the same history would not, which is what keeps costs
+    arriving out of order out of the algorithm.
     """
     history = [observe(i, p, sphere(p)) for i, p in enumerate(space.uniform(rng, 40))]
-    first = DifferentialEvolutionLearner(
+    driven = DifferentialEvolutionLearner(
         space, np.random.default_rng(1), population_size=3
-    ).replay(history)
-    second = DifferentialEvolutionLearner(
+    )
+    driven.propose(history, 3)
+    fresh = DifferentialEvolutionLearner(
         space, np.random.default_rng(2), population_size=3
-    ).replay(history)
-    np.testing.assert_allclose(first[1], second[1])
-    assert first[2] == second[2]
+    )
+
+    earlier = history[:7]
+    np.testing.assert_allclose(driven.replay(earlier)[0], fresh.replay(earlier)[0])
+    np.testing.assert_allclose(driven.replay(earlier)[1], fresh.replay(earlier)[1])
+
+
+# --- differential evolution: position in the block is the role --------------
+
+
+def walk_space():
+    """Four parameters, so a trial sharing all but one coordinate with a
+    member picks that member out and no other.
+    """
+    return ParameterSpace([Parameter(name, -5.0, 5.0) for name in 'wxyz'])
+
+
+def walk_history(space, rng, *blocks):
+    """A history of whole blocks of four, one proposal per slot.
+
+    A cost of ``None`` is a proposal that produced nothing -- dropped here,
+    and the learner cannot tell that from one still running -- and ``nan`` is
+    a shot that ran and measured nothing usable.
+    """
+    records = []
+    for block in blocks:
+        for cost in block:
+            records.append(
+                observe(
+                    f'p{len(records)}',
+                    space.uniform(rng, 1)[0],
+                    cost,
+                    state=DROPPED if cost is None else COMPLETE,
+                )
+            )
+    return records
+
+
+def held_by(learner, history, positions):
+    """Check the population is the records at ``positions``, slot by slot."""
+    params, costs = learner.replay(history)
+    for slot, position in enumerate(positions):
+        np.testing.assert_allclose(params[slot], history[position].params, err_msg=slot)
+        assert costs[slot] == history[position].cost, slot
+
+
+def test_a_dropped_founder_leaves_its_slot_vacant_and_shifts_no_other_slot(rng):
+    """Founding from the first four *usable* records instead promotes the
+    first trial to founder and re-indexes every role after it: the population
+    comes out holding p5, p6, p7 and p4, and the next proposal is read as a
+    trial for slot 3 rather than slot 0.
+    """
+    space = walk_space()
+    learner = DifferentialEvolutionLearner(space, rng, population_size=4)
+    history = walk_history(
+        space, rng, [None, 10.0, 20.0, 30.0], [1.0, 2.0, 3.0, 4.0]
+    )
+
+    vacant = learner.replay(history[:4])[1]
+    assert np.isnan(vacant[0])
+    np.testing.assert_allclose(vacant[1:], [10.0, 20.0, 30.0])
+
+    held_by(learner, history, [4, 5, 6, 7])
+
+
+def test_a_late_returning_founder_changes_no_other_proposals_role(rng):
+    """It competes for its own slot, and for no other.
+
+    Founding by usable count re-reads every role the moment it lands, because
+    the founding block then ends one record earlier than it did; the test is
+    what the other slots held before it arrived, not what they hold after.
+    """
+    space = walk_space()
+    learner = DifferentialEvolutionLearner(space, rng, population_size=4)
+    history = walk_history(
+        space, rng, [None, 10.0, 20.0, 30.0], [1.0, 2.0, 3.0, 4.0]
+    )
+    before = learner.replay(history)
+
+    history[0] = history[0]._replace(cost=0.5, state=COMPLETE)
+    after = learner.replay(history)
+
+    np.testing.assert_allclose(after[0][1:], before[0][1:])
+    np.testing.assert_allclose(after[1][1:], before[1][1:])
+    held_by(learner, history, [0, 5, 6, 7])
+
+
+def test_a_trial_with_no_usable_cost_leaves_its_slots_member_alone(rng):
+    """A bad trial spends its slot's turn and displaces nothing. Walking the
+    usable records instead closes the gap it left and hands every trial after
+    it to the wrong slot.
+    """
+    space = walk_space()
+    learner = DifferentialEvolutionLearner(space, rng, population_size=4)
+    history = walk_history(
+        space, rng, [10.0, 20.0, 30.0, 40.0], [float('nan'), 2.0, 3.0, 4.0]
+    )
+
+    held_by(learner, history, [0, 5, 6, 7])
+
+
+def test_a_trial_is_bred_from_the_member_holding_its_own_block_position(rng):
+    """With crossover off, one coordinate of a trial comes from the mutant and
+    the rest from the incumbent, so the trial names the slot it was drawn for.
+    """
+    space = walk_space()
+    learner = DifferentialEvolutionLearner(
+        space, rng, population_size=4, cross_over_probability=0.0
+    )
+    history = walk_history(
+        space, rng, [None, 10.0, 20.0, 30.0], [1.0, 2.0, 3.0, 4.0]
+    )
+    members = learner.replay(history)[0]
+
+    for slot, proposal in enumerate(learner.propose(history, 4)):
+        shared = int(np.isclose(proposal, members[slot]).sum())
+        assert shared == space.num_params - 1, slot
+
+
+def test_a_slot_whose_founder_produced_nothing_is_drawn_founder_style(rng):
+    """There is no incumbent in an empty slot, so there is nothing to cross
+    over with: the proposal for it is a fresh point rather than a trial.
+    """
+    space = walk_space()
+    learner = DifferentialEvolutionLearner(
+        space, rng, population_size=4, cross_over_probability=0.0
+    )
+    history = walk_history(space, rng, [None, 10.0, 20.0, 30.0])
+    members = learner.replay(history)[0]
+
+    proposals = learner.propose(history, 4)
+    assert space.contains(proposals).all()
+    for member in members[1:]:
+        assert int(np.isclose(proposals[0], member).sum()) < space.num_params - 1
+    for slot in (1, 2, 3):
+        shared = int(np.isclose(proposals[slot], members[slot]).sum())
+        assert shared == space.num_params - 1, slot
 
 
 @pytest.mark.parametrize('strategy, smallest', SMALLEST_POPULATIONS)

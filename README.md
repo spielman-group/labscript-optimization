@@ -129,16 +129,17 @@ not read either.
 | `differential_evolution` | Evolves a population. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds: around eight searches well, and a budget over a thousand shots is worth sixteen. |
 | `gaussian_process` | Fits a Gaussian process and searches its posterior. Runs `directed_random` for its training shots first, and falls back to it for any proposal it cannot make. |
 
-A learner is a function from the observation history to `k` proposals:
+A learner is a function from the proposal history to `k` proposals:
 
 ```python
 def propose(self, history: Sequence[Observation], k: int) -> np.ndarray: ...
 ```
 
-It is handed the whole history every time, in proposal order, containing only
-shots that reported a cost. That is what keeps the bookkeeping for shots in
-flight out of the algorithms, and it means a learner can be used on its own
-against any cost function:
+It is handed the whole history every time, in the order the proposals were
+made, and holding every one of them: a shot still running and a shot that will
+never report are both in there as a position spent without a usable cost. That
+is what keeps the bookkeeping for shots in flight out of the algorithms, and it
+means a learner can be used on its own against any cost function:
 
 ```python
 import numpy as np

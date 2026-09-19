@@ -506,6 +506,26 @@ DE = MINIMAL + '[MLOOP]\nlearner = "differential_evolution"\n'
 
 
 @pytest.mark.parametrize(
+    'text',
+    [
+        MINIMAL + '[MLOOP]\nrestart_tolerance = 0.01\n',
+        MINIMAL + '[LEARNER.differential_evolution]\nrestart_tolerance = 0.01\n',
+    ],
+    ids=['[MLOOP]', '[LEARNER.differential_evolution]'],
+)
+def test_a_population_is_never_re_seeded_on_its_own_spread(text):
+    """The restart is gone, so the key that sized it is refused.
+
+    Taken at a generation boundary from the costs resolved by then, the
+    decision could be changed by a cost arriving afterwards, which would turn
+    a block generated as trials into founders of a new epoch;
+    ``max_num_runs_without_better_params`` is the stop it was standing in for.
+    """
+    with pytest.raises(ValueError, match='restart_tolerance'):
+        config_module.loads(text)
+
+
+@pytest.mark.parametrize(
     'written, refused, accepted',
     [('', 15, 16), ('population_size = 5\n', 9, 10)],
     ids=['the default population', 'a population the file sizes'],

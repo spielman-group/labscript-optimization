@@ -1,10 +1,12 @@
 """What a learner is.
 
-A learner is a function from the observation history to ``k`` proposals. It is
+A learner is a function from the proposal history to ``k`` proposals. It is
 given the whole history every time, in the order the proposals were made, and
-containing only shots that have reported a cost. Anything a learner computes
-from the history and keeps between calls is a cache: it must hold what an
-instance handed the same history for the first time would compute. The one
+holding every one of them: a shot still running and a shot that will never
+report are both in there as a position spent without a usable cost. Anything a
+learner computes from the history and keeps between calls is a cache: it must
+hold what an instance handed the same history for the first time would
+compute. The one
 thing a learner carries that the history does not fix is the position of its
 own rng stream, which decides where a draw lands and nothing about what the
 learner believes. That rule is what keeps the out-of-order arrival of costs out
@@ -43,7 +45,8 @@ class Learner(ABC):
         """Return ``k`` parameter vectors to run next.
 
         Args:
-            history: Completed observations, in proposal order.
+            history: Every proposal made so far, in the order they were made,
+                each with what became of it.
             k: How many proposals to return.
 
         Returns:
@@ -119,9 +122,11 @@ def opening_batch(
 ) -> np.ndarray | None:
     """The opening batch, or ``None`` when this is not the opening call.
 
-    A starting point is the first thing proposed and only that; the rest of the
-    opening batch is drawn uniformly, since a learner with no history has
-    nothing better to go on.
+    A starting point is the first thing proposed and only that: the history
+    holds a proposal from the moment it is made, so the second call sees the
+    first batch whether or not any of it has reported. The rest of the opening
+    batch is drawn uniformly, since a learner with no history has nothing
+    better to go on.
     """
     if history or first_params is None:
         return None

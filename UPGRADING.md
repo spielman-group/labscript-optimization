@@ -50,6 +50,7 @@ Delete these from your configuration:
 | `[MLOOP]` | `no_delay` | The Gaussian process runs in a worker process that never blocks the routine, so there is no delay to avoid. |
 | `[MLOOP]` | `visualisations` | No plots and no GUI. Progress comes back as the routine's results. |
 | `[MLOOP]` | `console_log_level`, `console_log_string` | As above. |
+| `[MLOOP]`, `[LEARNER.differential_evolution]` | `restart_tolerance` | The population is no longer re-seeded when its costs converge. That decision was taken at a generation boundary from the costs resolved by then, so a cost arriving afterwards could change it and turn a block generated as trials into founders of a new epoch; and within a lab's budget it re-seeded populations that had converged to within a fraction of their initial spread but not to the minimum. `max_num_runs_without_better_params` is the stop to use instead. |
 | whole table | `[COMPILATION]` | Its only key was `mock`, which selected a dry-run interface that has been removed. |
 
 And rename two:
