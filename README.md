@@ -140,7 +140,7 @@ not read either.
 | --- | --- |
 | `random` | Uniform draws. The reference the others are measured against. |
 | `directed_random` | Draws near a previously seen point, chosen from a band of middling costs rather than from the best one, so it explores rather than refines. |
-| `differential_evolution` | Evolves a population, one whole generation at a time: it proposes `population_size` shots together and is not asked again until all of them have been answered for. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds — around eight searches well and a budget over a thousand shots is worth sixteen, measured over four analytic test functions at two to eight parameters (`codex_issues_proposal.md`, "Re-run against the shipped learner", has the table and the caveats) — and it is the queue depth too, so `num_buffered_runs` is not accepted beside it. |
+| `differential_evolution` | Evolves a population, one whole generation at a time: it proposes `population_size` shots together and is not asked again until all of them have been answered for. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds — around eight searches well and a budget over a thousand shots is worth sixteen, measured over four analytic test functions at two to eight parameters (`codex_issues_proposal.md`, "The dimension sweep", has the tables and the caveats; `benchmarks/` has the harness that produced them) — and it is the queue depth too, so `num_buffered_runs` is not accepted beside it. |
 | `gaussian_process` | Fits a Gaussian process and searches its posterior. Runs `directed_random` for its training shots first, and falls back to it for any proposal it cannot make. |
 
 A learner is a function from the proposal history to `k` proposals:
@@ -282,6 +282,14 @@ python -m pytest tests/ -q
 The tests run the learners against analytic cost functions and the session
 against a stand-in for runmanager; none of them needs a lab, a GUI or a
 running suite.
+
+## Benchmarks
+
+[`benchmarks/`](benchmarks/) holds the harness behind every measured figure
+quoted here and in `codex_issues_proposal.md`, the rows it produced, and a
+README naming the command and the commit for each table. A benchmark measures
+search quality, which is a number that moves; the tests prove behaviour. The
+suite runs one second of the harness, to keep it from rotting.
 
 ## Licence
 
