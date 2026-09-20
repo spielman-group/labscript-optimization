@@ -71,7 +71,8 @@ git show 842c0f6:labscript_optimization/learners/differential_evolution.py
 ```
 
 — and hand the class to a `Session` the way `de_pipeline.run` hands it the
-asynchronous reference. Its constructor takes the same arguments.
+asynchronous reference. Its constructor takes the same arguments; its three
+relative imports need making absolute if it is saved outside the package.
 
 **The withdrawn stopping rule.** `benchmarks/results/truncated_4d.csv` is the
 `barrier` sweep run with the defect deliberately reapplied, which is what identifies the
