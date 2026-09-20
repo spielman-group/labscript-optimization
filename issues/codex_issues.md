@@ -36,7 +36,7 @@ backlog, which would also let BLACS stop mutating a client's deadline per call.
 - [x] Slice 5: The greeting's deadline is a constant again
 - [x] Slice 6: A wrapper cannot silently drop a generation barrier
 - [x] Slice 7: A reply says which request it answers
-- [ ] Slice 8: The configure deadline covers the waits inside it
+- [x] Slice 8: The configure deadline covers the waits inside it
 - [ ] Slice 9: A learner's declarations are facts about an instance
 - [ ] Slice 10: Benchmark the shipped DE
 - [ ] Slice 11: Test cleanup
@@ -632,12 +632,12 @@ reported in a second.
 
 ### Acceptance criteria
 
-- [ ] The derived deadline grows when the client's deadline grows — mutation:
+- [x] The derived deadline grows when the client's deadline grows — mutation:
       restore a constant; a labconfig giving a larger value leaves it unchanged
-- [ ] A runmanager that greets and then times out on a later request surfaces
+- [x] A runmanager that greets and then times out on a later request surfaces
       that request's own failure, naming it — mutation: set the outer deadline
       below the client's; the routine reports its own timeout instead
-- [ ] The relation "the greeting's deadline lies inside the configure deadline"
+- [x] The relation "the greeting's deadline lies inside the configure deadline"
       still holds and is still tested
 
 ### Blocked by
