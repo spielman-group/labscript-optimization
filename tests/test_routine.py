@@ -6,11 +6,13 @@ for every shot runmanager compiled and empty for one of its default shots.
 
 What the routine then does with those costs is the other half. lyse runs a
 multishot routine once per drained batch of singleshot analyses, so an
-invocation answers for every shot analysed since the one before it. Those
-tests drive the entry point against a pair of fake pipes and a fake process,
-so they say which shots the routine sends and in how many messages, what it
-makes of the answer, what it writes back onto each shot, and how it shuts the
-worker down, without depending on zprocess starting anything.
+invocation answers for every shot analysed since the one before it. Most of
+those tests drive the entry point against a pair of fake pipes and a fake
+process, so they say which shots the routine sends and in how many messages,
+what it makes of the answer, what it writes back onto each shot, and how it
+shuts the worker down, without depending on zprocess starting anything. The
+last two drive it against the worker's own message loop in a thread, where
+the replies come when the worker really sends them.
 """
 
 import math
@@ -638,6 +640,42 @@ def test_a_worker_that_does_not_answer_in_time_is_given_up_on(
     assert status is None and time.monotonic() - started < 5.0
 
 
+def test_a_worker_whose_child_has_exited_is_reported_as_dead(
+    session, analysed, shot, monkeypatch
+):
+    """A reply that has not come yet means the worker is busy, not that it is
+    gone: it answers before the reconciling and submitting behind the reply
+    before, and that work is a whole population of files under generational
+    submission. So the deadline cannot be what reports a death. Looking at the
+    child between short waits is what tells the two apart, within about a
+    second and saying which it was.
+    """
+    monkeypatch.setattr(routine_module, 'REPLY_TIMEOUT', 5.0)
+    session.worker.delay = 30.0
+    session.child.exited = True
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match='died'):
+        analysed(shot())
+    assert time.monotonic() - started < 2.0
+
+
+def test_a_failure_behind_an_earlier_reply_names_the_request_it_came_from(
+    session, analysed, shot
+):
+    """Reconciling and submitting run after the reply they follow, so a
+    failure in them is a second message for a request already answered, and it
+    arrives while the routine is waiting on a later one. Read as that
+    request's reply it condemns a healthy shot and sends whoever goes looking
+    to the wrong invocation.
+    """
+    assert analysed(shot()) is not None
+    _, answered, _ = session.worker.sent[-1]
+    session.worker.send('error', answered, 'runmanager went away', delay=0)
+
+    with pytest.raises(RuntimeError, match=f'request {answered}:'):
+        analysed(shot())
+
+
 def test_an_answer_still_on_its_way_is_left_for_the_next_shot(
     session, analysed, shot
 ):
@@ -647,14 +685,12 @@ def test_an_answer_still_on_its_way_is_left_for_the_next_shot(
     without being waited for. Waiting for more would hand lyse back the delay
     the worker exists to absorb, once per shot.
     """
-    straggler = threading.Timer(
-        1.0,
-        session.worker.from_worker.incoming.put,
-        [('status', ((), {'answered': 99}))],
-    )
-    straggler.daemon = True
-    straggler.start()
+    # The failure of the work behind an earlier reply, still on its way: the
+    # next invocation raises it, this one is not held up for it.
+    session.worker.send('error', 99, 'runmanager went away', delay=1.0)
+    started = time.monotonic()
     assert analysed(shot()) == {'answered': 1}
+    assert time.monotonic() - started < 0.5
 
 
 def status(**overrides):
@@ -817,6 +853,37 @@ def test_the_status_is_written_onto_each_shot_the_session_took(
         assert 'results' not in f
 
 
+def test_a_status_the_routine_gave_up_waiting_for_is_written_onto_its_own_shots(
+    session, analysed, shot, results, monkeypatch
+):
+    """A reply that misses the deadline is neither lost nor the next
+    invocation's. The shots its request handed over are remembered against
+    that request's number, and its status is written onto them when it
+    arrives, while the invocation that happens to read it writes its own
+    answer onto its own shots.
+    """
+    monkeypatch.setattr(routine_module, 'REPLY_TIMEOUT', 0.05)
+    waited, current = shot(shot_id='row-1'), shot(shot_id='row-2')
+
+    session.worker.delay = 30.0
+    assert analysed(waited) is None
+    _, gave_up_on, _ = session.worker.sent[-1]
+
+    # The worker comes out of the work behind an earlier reply and answers the
+    # request it had in hand, an invocation late.
+    session.worker.delay = 0.02
+    session.worker.send(
+        'status', gave_up_on, ((True,), status(best_shot_id='row-1')), delay=0
+    )
+    session.worker.replies.append(
+        ('status', ((True,), status(best_shot_id='row-2')))
+    )
+
+    assert analysed(current)['best_shot_id'] == 'row-2'
+    assert results(waited)['best_shot_id'] == 'row-1'
+    assert results(current)['best_shot_id'] == 'row-2'
+
+
 def test_a_status_that_cannot_be_written_does_not_stop_the_session(
     session, analysed, shot, capsys
 ):
@@ -834,6 +901,194 @@ def test_a_status_that_cannot_be_written_does_not_stop_the_session(
 
     assert answer == status()
     assert os.path.basename(row['filepath']) in capsys.readouterr().err
+
+
+WORKER_CONFIG = """
+[ANALYSIS]
+cost_key = ["zTOF", "Nb"]
+groups = ["G"]
+[MLOOP]
+session = "run-a"
+learner = "random"
+num_buffered_runs = 2
+[MLOOP_PARAMS.G.x]
+global_name = "gx"
+min = 0.0
+max = 1.0
+"""
+
+#: Seconds the worker below spends writing shot files, once per refill, and
+#: longer than the routine will wait for a reply. That is what a generation
+#: submitted at once is: a population of files evaluated and written through
+#: runmanager's GUI thread, many seconds by construction.
+TRAILING_WORK = 0.5
+
+
+class Link:
+    """A pipe end joined to a worker that is really running.
+
+    ``Pipe`` records what the routine sent and answers from a script. This one
+    carries messages both ways, so the replies the routine reads are the ones
+    the worker's own code sends, when it sends them.
+    """
+
+    def __init__(self):
+        self.messages = queue.Queue()
+
+    def put(self, item):
+        self.messages.put(item)
+
+    def get(self, timeout=None):
+        try:
+            return self.messages.get(timeout=timeout)
+        except queue.Empty:
+            raise TimeoutError('get() timed out')
+
+
+@pytest.fixture
+def running(monkeypatch, tmp_path):
+    """Start a session whose worker is the real message loop, in a thread.
+
+    ``interface`` is what the worker turns the configuration into. The thread
+    stands in for the child process, and the process handle beside it reports
+    a worker that is alive, which is what a slow reply must not be mistaken
+    for.
+    """
+    started = []
+
+    def start(interface, reply_timeout=0.2):
+        from labscript_optimization import worker as worker_module
+
+        to_worker, from_worker, child = Link(), Link(), Worker()
+        worker = worker_module.Worker(None, interface_factory=interface)
+        worker.from_parent, worker.to_parent = to_worker, from_worker
+        thread = threading.Thread(target=worker.run, daemon=True)
+
+        class Spawned:
+            def __init__(self, *args, **kwargs):
+                self.child = child
+
+            def start(self):
+                thread.start()
+                return to_worker, from_worker
+
+        monkeypatch.setattr(worker_module, 'Worker', Spawned)
+        monkeypatch.setattr(routine_module, 'REPLY_TIMEOUT', reply_timeout)
+        path = tmp_path / 'mloop_config.toml'
+        path.write_text(WORKER_CONFIG)
+        storage = types.SimpleNamespace()
+        started.append((storage, to_worker, thread))
+        return types.SimpleNamespace(path=path, storage=storage, child=child)
+
+    yield start
+    for storage, to_worker, thread in started:
+        # Leaves the atexit hook that optimise() registered with nothing to
+        # stop, and lets the loop out of its wait for the next request.
+        storage.optimisation_worker = None
+        to_worker.put(('quit', None, None))
+        thread.join(timeout=5)
+
+
+def test_a_request_the_worker_could_not_handle_ends_the_wait(
+    running, shot, monkeypatch
+):
+    """The error is that request's reply: the worker sends it in place of a
+    status, and nothing else for that request is coming. A routine that held
+    out for a status would wait out its deadline on a worker that is alive and
+    well, and report it as slow.
+    """
+
+    class Refusing:
+        def __init__(self, config):
+            pass
+
+        def check_ready(self):
+            raise RuntimeError('runmanager reports an error in its globals')
+
+    monkeypatch.setattr(routine_module, 'CONFIGURE_TIMEOUT', 5.0)
+    session = running(Refusing)
+    started = time.monotonic()
+
+    with pytest.raises(RuntimeError, match='error in its globals'):
+        routine_module.optimise(
+            session.path, session.storage, frame([shot(shot_id='row-0')])
+        )
+
+    assert time.monotonic() - started < 2.0
+
+
+def test_each_status_reaches_the_shot_that_earned_it_behind_slow_trailing_work(
+    running, shot, results
+):
+    """The worker replies before it reconciles and submits, so a reply that
+    misses the deadline says it is inside the previous request's trailing
+    work, not that it is dead. Under generational submission that load does
+    not let up: every invocation times out and every reply arrives an
+    invocation or two after the shots it belongs to were handed over.
+
+    Attributed by arrival, a verdict of ``True`` earned by the optimiser's own
+    shot lands on whatever the invocation reading it is holding -- a user's
+    shot engaged alongside the run gets a column of the optimiser's numbers,
+    and the shots that earned them get none.
+    """
+    pytest.importorskip('lyse')
+
+    class SlowToSubmit:
+        """A runmanager that takes longer over a submission than the routine
+        will wait for a reply.
+        """
+
+        def __init__(self, config):
+            self.submitted = []
+
+        def check_ready(self):
+            pass
+
+        def check_unchanged(self):
+            pass
+
+        def submit(self, proposals):
+            time.sleep(TRAILING_WORK)
+            ids = [
+                f'shot-{len(self.submitted) + n}' for n in range(len(proposals))
+            ]
+            self.submitted.extend(ids)
+            return ids
+
+        def shot_status(self, shot_ids):
+            return {i: {'pending': True, 'state': 'running'} for i in shot_ids}
+
+    def has_results(row):
+        with h5py.File(row['filepath'], 'r') as f:
+            return 'results/labscript_optimization' in f
+
+    session = running(SlowToSubmit)
+    sequence = [shot(shot_id='before-this-session')]
+    def invoke():
+        return routine_module.optimise(
+            session.path, session.storage, frame(sequence)
+        )
+
+    invoke()
+
+    # Costs improving shot by shot, so that the best shot id in a status names
+    # the shot whose request produced it.
+    rows = {}
+    for n, shot_id in enumerate(['shot-0', 'shot-1', 'someone-elses', 'shot-2']):
+        rows[shot_id] = shot(shot_id=shot_id, cost=5.0 - n)
+        sequence.append(rows[shot_id])
+        invoke()
+
+    ours = ['shot-0', 'shot-1', 'shot-2']
+    for _ in range(40):
+        if all(has_results(rows[shot_id]) for shot_id in ours):
+            break
+        # Nothing new to hand over, and the worker catches up behind it.
+        invoke()
+
+    assert [results(rows[shot_id])['best_shot_id'] for shot_id in ours] == ours
+    with h5py.File(rows['someone-elses']['filepath'], 'r') as f:
+        assert 'results' not in f
 
 
 @pytest.fixture
