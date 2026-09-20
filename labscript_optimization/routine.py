@@ -14,6 +14,12 @@ The routine itself does almost nothing: it reads the costs of the shots lyse
 has analysed since it last ran, hands them to the worker, and waits for the
 worker to say where the session has got to.
 
+Each message it sends carries a request number, and each message the worker
+sends carries the number of the request it belongs to. A worker inside the
+work behind an earlier reply takes longer to answer than the routine is
+willing to wait for it, which is ordinary under generational submission; the
+number is what puts that answer onto the shots that earned it once it comes.
+
 lyse runs a multishot routine once per drained batch of singleshot analyses
 rather than once per shot. Where analysis keeps up that is one shot an
 invocation, and where it does not -- a shot arriving while the one before it
@@ -26,6 +32,7 @@ import atexit
 import os
 import subprocess
 import sys
+import time
 
 import numpy as np
 
@@ -50,6 +57,17 @@ REPLY_TIMEOUT = 2.0
 #: Seconds allowed for the worker to load its configuration and establish its
 #: first runmanager connection. This is startup, not part of a shot cycle.
 CONFIGURE_TIMEOUT = 30.0
+
+#: Seconds between one look at the worker's process and the next while waiting
+#: for a reply. A worker that has died is reported as dead within about this
+#: long, so a deadline is only ever reached by a live worker doing slow work.
+LIVENESS_POLL = 0.5
+
+#: The number carried by the ``configure`` request, and so where the routine's
+#: request counter starts. Every later message the routine sends is numbered
+#: from here upwards, and every message the worker sends carries the number of
+#: the request it belongs to.
+CONFIGURE_REQUEST = 0
 
 #: Rows asked of lyse first: the row this routine handled last, and the shot
 #: analysed since. That is the steady state, where analysis keeps up, in one
@@ -185,8 +203,8 @@ def save_status(filepath, status) -> None:
 def start_worker(config_path, process_tree=None):
     """Spawn the optimisation worker and configure it.
 
-    Waits for configuration to finish, then returns
-    ``(to_worker, from_worker, popen)``.
+    Configuring is :data:`CONFIGURE_REQUEST`, the session's first request.
+    Waits for its reply, then returns ``(to_worker, from_worker, popen)``.
     """
     # zprocess sends the class itself to the child, so the parent needs it.
     # Imported here rather than above so that a routine which never starts a
@@ -205,8 +223,12 @@ def start_worker(config_path, process_tree=None):
     to_worker, from_worker = worker.start()
     handles = to_worker, from_worker, worker.child
     try:
-        to_worker.put(("configure", os.path.abspath(config_path)))
-        _, status = _drain(from_worker, CONFIGURE_TIMEOUT)
+        to_worker.put(
+            ("configure", CONFIGURE_REQUEST, os.path.abspath(config_path))
+        )
+        status = _drain(
+            from_worker, worker.child, CONFIGURE_REQUEST, {}, CONFIGURE_TIMEOUT
+        )
         if status is None:
             raise TimeoutError(
                 f"the optimisation worker did not configure within "
@@ -220,39 +242,72 @@ def start_worker(config_path, process_tree=None):
     return handles
 
 
-def _drain(from_worker, timeout=None):
-    """Wait for the worker's answer to the message just sent, and return it.
+def _drain(from_worker, popen, request, pending, timeout=None):
+    """Wait for the worker's reply to ``request``, and return the status in it.
 
-    Returns ``(recorded, status)``: one verdict per observation the message
-    carried, in the order it carried them, saying whether the session took
-    that observation, and where the session has got to. All of it travels in
-    one message, so a status can never be read against another shot's answer.
+    The reply to a request is the first message carrying its number. Every
+    other message is handled by what it means rather than by when it arrived,
+    which is what keeps a reply the routine stopped waiting for from being
+    read as the answer to the shots it is holding now.
 
-    The answer is this invocation's own: the worker's reply is still crossing
-    a socket while this runs. ``timeout`` bounds the wait for its first
-    message and defaults to :data:`REPLY_TIMEOUT`; reaching it returns ``((),
-    None)`` and the shots just sent go unreported.
+    ``pending`` maps a request number to the shot files that request handed
+    over. A status is written onto the files held against its own number, for
+    each shot the session took, whichever drain it arrives in, and its number
+    is dropped from ``pending`` once it has been. A status whose number
+    ``pending`` no longer holds -- a request that handed nothing over, or one
+    written to already -- has nothing to write.
 
-    Anything behind the answer is swept up too, but only if it is already
-    waiting, which is how an error from the slow work behind an earlier reply
-    arrives without being waited for. Raises if the worker reported an error.
+    An error raises, naming the request it carries. That is the reply to a
+    request whose handling failed, and trailing work that failed behind a
+    request already answered; the session has stopped either way.
+
+    ``timeout`` bounds the wait and defaults to :data:`REPLY_TIMEOUT`;
+    reaching it returns ``None`` and the shots this request handed over are
+    written to when its status arrives in a later drain. The worker's process
+    is looked at every :data:`LIVENESS_POLL` seconds while waiting, so a
+    worker that has died is reported as one rather than waited out.
+
+    Anything behind the reply is swept up too, but only if it is already
+    waiting: waiting for more would hand lyse back the delay the worker exists
+    to absorb, once per shot.
     """
-    recorded, status, error = (), None, None
-    timeout = REPLY_TIMEOUT if timeout is None else timeout
+    deadline = time.monotonic() + (REPLY_TIMEOUT if timeout is None else timeout)
+    answer = None
     while True:
-        try:
-            kind, payload = from_worker.get(timeout=timeout)
-        except TimeoutError:
-            break
-        # Answered; from here on take only what is already waiting.
-        timeout = 0
-        if kind == "error":
-            error = payload
+        if answer is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            waiting = min(LIVENESS_POLL, remaining)
         else:
-            recorded, status = payload
-    if error is not None:
-        raise RuntimeError(f"the optimisation worker failed:\n{error}")
-    return recorded, status
+            waiting = 0
+        try:
+            kind, number, payload = from_worker.get(timeout=waiting)
+        except TimeoutError:
+            if answer is not None:
+                return answer
+            if popen.poll() is not None:
+                raise RuntimeError(
+                    f"the optimisation worker died without answering request "
+                    f"{request}"
+                )
+            continue
+        if kind == "error":
+            raise RuntimeError(
+                f"the optimisation worker failed handling request {number}:"
+                f"\n{payload}"
+            )
+        recorded, status = payload
+        for filepath, taken in zip(pending.pop(number, ()), recorded):
+            # The session taking a cost is what says the shot is one it
+            # proposed: the id alone does not, because runmanager mints one
+            # for every queue row it compiles, and writing the status onto a
+            # shot the session never proposed would put a column of somebody
+            # else's numbers against a user's own shot.
+            if taken:
+                save_status(filepath, status)
+        if number == request:
+            answer = status
 
 
 def optimise(config_path, storage=None, dataframe=None):
@@ -269,7 +324,10 @@ def optimise(config_path, storage=None, dataframe=None):
         The whole status the worker sends in answer to this invocation, or
         ``None`` if the worker does not answer within :data:`REPLY_TIMEOUT`.
         For each shot the session took, :func:`save_status` has written
-        :data:`SHOT_RESULTS` of that status onto it. Worker configuration is
+        :data:`SHOT_RESULTS` of that status onto it. An answer that misses the
+        deadline is not lost: the shots this invocation handed over are
+        remembered against its request number, and a later invocation writes
+        that status onto them when it arrives. Worker configuration is
         acknowledged before the worker is stored, so the first invocation
         receives its own answer like every later one.
     """
@@ -290,13 +348,20 @@ def optimise(config_path, storage=None, dataframe=None):
         # A session opens having handled nothing: the rows already in lyse's
         # box were analysed before it existed.
         storage.optimisation_last_row = None
+        # Configuring was the first request, so the first shot is the second.
+        storage.optimisation_request = CONFIGURE_REQUEST
+        # The shots handed over by each request still awaiting its status, so
+        # that a status arriving after the routine gave up waiting for it is
+        # written onto the shots that produced it. A handful of entries at
+        # most: the worker owes one status per request.
+        storage.optimisation_pending = {}
         # The ordinary shutdown, where lyse asks the analysis subprocess to
         # quit. A killed subprocess does not run this and the worker is left
         # to zprocess's heartbeat.
         atexit.register(stop_worker, storage)
 
     config = storage.optimisation_config
-    to_worker, from_worker, _ = storage.optimisation_worker
+    to_worker, from_worker, popen = storage.optimisation_worker
     if dataframe is None:
         dataframe = catch_up(storage.optimisation_last_row)
 
@@ -317,30 +382,27 @@ def optimise(config_path, storage=None, dataframe=None):
         handed.append(value(shot, "filepath"))
         observations.append(observation)
 
+    storage.optimisation_request += 1
+    request = storage.optimisation_request
+    # Remembered before the message goes out, because the reply is what clears
+    # it: whether it arrives inside this invocation's wait or three
+    # invocations later, it is written onto these shots and no others.
+    storage.optimisation_pending[request] = handed
     if observations:
-        # One message however many shots it carries. The worker answers each
-        # message once, so a second message would be answered against the
-        # status the routine has already read and every verdict after it would
-        # belong to another invocation's shots.
-        to_worker.put(("observe", tuple(observations)))
+        # One message however many shots it carries. The routine waits for one
+        # reply, so the verdicts a second message earned would go unread until
+        # a later invocation, leaving shots of this batch unwritten for as long
+        # as that took.
+        to_worker.put(("observe", request, tuple(observations)))
     else:
         # An invocation with nothing to report still sends one. Reconciling
         # and refilling happen in the worker's trailing work, after it has
         # replied, so a routine that returned here would stop the session
         # giving up on shots that are not coming and stop it reviving a
         # generation an operator has unblocked.
-        to_worker.put(("shot", None))
+        to_worker.put(("shot", request, None))
 
-    recorded, status = _drain(from_worker)
-    # One verdict per shot handed over, in the order they were handed over.
-    # The session taking a cost is what says the shot is one it proposed: the
-    # id alone does not, because runmanager mints one for every queue row it
-    # compiles, and writing the status onto a shot the session never proposed
-    # would put a column of somebody else's numbers against a user's own shot.
-    for filepath, taken in zip(handed, recorded):
-        if taken:
-            save_status(filepath, status)
-    return status
+    return _drain(from_worker, popen, request, storage.optimisation_pending)
 
 
 def exited_within(popen, timeout=5) -> bool:
@@ -360,7 +422,8 @@ def _stop_worker(handles) -> None:
     """Stop and reap one spawned worker, including a partly started one."""
     to_worker, _, popen = handles
     try:
-        to_worker.put(("quit", None))
+        # Numberless: nothing is owed in reply, and nothing is waiting for one.
+        to_worker.put(("quit", None, None))
     except Exception:
         # A pipe that will not carry the request changes nothing about what
         # follows: the worker is signalled and reaped either way.

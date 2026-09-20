@@ -198,8 +198,8 @@ class Answering(Pipe):
     Answering from a thread, a moment later, is what tells a routine that waits
     for the reply apart from one that glances and takes whatever it finds: the
     second sees nothing on the first shot and the shot before's status after
-    that. Each answer names the message it answers, so a status belonging to an
-    earlier shot is recognisable as one.
+    that. Each answer carries the number of the request it answers, so a status
+    belonging to an earlier request is recognisable as one.
 
     The default answer takes no observation: a test about what is written onto
     a shot says so itself, with one verdict per observation the way the worker
@@ -210,16 +210,32 @@ class Answering(Pipe):
         super().__init__()
         self.from_worker = from_worker
         self.delay = delay
-        #: Answers to send in place of the default, one per message, in order.
+        #: Answers to send in place of the default, one ``(kind, payload)`` per
+        #: request, in order, each under the number of the request it answers.
         self.replies = []
 
     def put(self, item):
         super().put(item)
+        _, number, _ = item
         if self.replies:
-            reply = self.replies.pop(0)
+            kind, payload = self.replies.pop(0)
         else:
-            reply = ('status', ((), {'answered': len(self.sent)}))
-        timer = threading.Timer(self.delay, self.from_worker.incoming.put, [reply])
+            kind, payload = 'status', ((), {'answered': len(self.sent)})
+        self.send(kind, number, payload)
+
+    def send(self, kind, number, payload, delay=None):
+        """Put one message under ``number`` into the pipe the routine reads.
+
+        A delay of zero is a message already waiting when the routine next
+        looks, which is what a worker coming out of an earlier request's
+        trailing work leaves behind it.
+        """
+        message = (kind, number, payload)
+        delay = self.delay if delay is None else delay
+        if not delay:
+            self.from_worker.incoming.put(message)
+            return
+        timer = threading.Timer(delay, self.from_worker.incoming.put, [message])
         # Nothing need wait at the end of a test for an answer nobody is
         # listening for any more.
         timer.daemon = True
@@ -230,7 +246,9 @@ class Worker:
     """A worker process that exits only when signalled in a particular way.
 
     Records what it was sent, and whether anything waited for it once it had
-    exited: a child nobody waits for is left a zombie.
+    exited: a child nobody waits for is left a zombie. ``exited`` is what
+    ``poll`` reports, and a worker nothing has waited for is running: a test
+    about a worker that has died sets it.
     """
 
     def __init__(self, exits_on='quit'):
@@ -238,11 +256,16 @@ class Worker:
         self.state = 'quit'
         self.signals = []
         self.reaped = False
+        self.exited = False
+
+    def poll(self):
+        return 0 if self.exited else None
 
     def wait(self, timeout=None):
         if self.state != self.exits_on:
             raise subprocess.TimeoutExpired('worker', timeout)
         self.reaped = True
+        self.exited = True
         return 0
 
     def terminate(self):
@@ -285,7 +308,7 @@ def test_start_worker_waits_for_and_consumes_the_configuration_reply(
 
             def answer():
                 from_worker.incoming.put(
-                    ('status', ((), {'configured': True}))
+                    ('status', routine_module.CONFIGURE_REQUEST, ((), {'configured': True}))
                 )
                 self.answered.set()
 
@@ -302,7 +325,11 @@ def test_start_worker_waits_for_and_consumes_the_configuration_reply(
 
     assert handles == (to_worker, from_worker, child)
     assert to_worker.sent == [
-        ('configure', os.path.abspath(tmp_path / 'config.toml'))
+        (
+            'configure',
+            routine_module.CONFIGURE_REQUEST,
+            os.path.abspath(tmp_path / 'config.toml'),
+        )
     ]
     assert to_worker.answered.is_set()
     assert from_worker.incoming.empty()
@@ -317,7 +344,9 @@ def test_start_worker_reaps_a_worker_that_rejects_its_configuration(
         def put(self, item):
             self.sent.append(item)
             if item[0] == 'configure':
-                from_worker.incoming.put(('error', 'invalid configuration'))
+                from_worker.incoming.put(
+                    ('error', item[1], 'invalid configuration')
+                )
 
     to_worker = Rejecting()
     child = Worker()
@@ -326,7 +355,10 @@ def test_start_worker_reaps_a_worker_that_rejects_its_configuration(
     with pytest.raises(RuntimeError, match='invalid configuration'):
         routine_module.start_worker(tmp_path / 'config.toml', object())
 
-    assert [command for command, _ in to_worker.sent] == ['configure', 'quit']
+    assert [command for command, _, _ in to_worker.sent] == [
+        'configure',
+        'quit',
+    ]
     assert child.reaped
 
 
@@ -340,7 +372,10 @@ def test_start_worker_reaps_a_worker_that_does_not_configure(
     with pytest.raises(TimeoutError, match='did not configure within'):
         routine_module.start_worker(tmp_path / 'config.toml', object())
 
-    assert [command for command, _ in to_worker.sent] == ['configure', 'quit']
+    assert [command for command, _, _ in to_worker.sent] == [
+        'configure',
+        'quit',
+    ]
     assert child.reaped
 
 
@@ -364,10 +399,13 @@ def session(monkeypatch, tmp_path):
     path.write_text(CONFIG)
     from_worker = Pipe()
     to_worker = Answering(from_worker)
-    handles = (to_worker, from_worker, Worker())
+    child = Worker()
+    handles = (to_worker, from_worker, child)
     monkeypatch.setattr(routine_module, 'start_worker', lambda config_path: handles)
     storage = types.SimpleNamespace()
-    yield types.SimpleNamespace(storage=storage, path=path, worker=to_worker)
+    yield types.SimpleNamespace(
+        storage=storage, path=path, worker=to_worker, child=child
+    )
     # Leaves the atexit hook that optimise() registered with nothing to stop.
     storage.optimisation_worker = None
 
@@ -424,7 +462,7 @@ def ids_sent(worker):
     """The shot ids of each message the routine sent, one list per message."""
     return [
         [observation[0] for observation in payload] if command == 'observe' else []
-        for command, payload in worker.sent
+        for command, _, payload in worker.sent
     ]
 
 
@@ -497,7 +535,7 @@ def test_the_first_invocation_hands_over_nothing_and_reads_one_row(session, box)
     """
     box.add(*(f'row-{n}' for n in range(5)))
     routine_module.optimise(session.path)
-    assert session.worker.sent == [('shot', None)]
+    assert session.worker.sent == [('shot', 1, None)]
     assert box.asked == [1]
 
 
@@ -511,7 +549,10 @@ def test_an_invocation_with_nothing_new_still_sends_one_message(
     """
     analysed(shot(shot_id='row-1', cost=1.0))
     analysed()
-    assert [command for command, _ in session.worker.sent] == ['observe', 'shot']
+    assert [command for command, _, _ in session.worker.sent] == [
+        'observe',
+        'shot',
+    ]
 
 
 def test_a_shot_with_no_usable_cost_is_reported_as_a_bad_observation(
@@ -523,7 +564,7 @@ def test_a_shot_with_no_usable_cost_is_reported_as_a_bad_observation(
     as dropped, and the run it spent would go uncounted.
     """
     analysed(shot(cost=float('nan')))
-    (command, ((shot_id, _, _, bad),)), = session.worker.sent
+    (command, _, ((shot_id, _, _, bad),)), = session.worker.sent
     assert command == 'observe' and shot_id == 'row-3' and bad
 
 
@@ -551,7 +592,9 @@ def test_the_configuration_is_read_once_for_the_whole_session(
     session.path.write_text(CONFIG.replace('maximize = true', 'maximize = false'))
     analysed(shot(cost=7.0))
     assert [
-        observation[1] for _, payload in session.worker.sent for observation in payload
+        observation[1]
+        for _, _, payload in session.worker.sent
+        for observation in payload
     ] == [-7.0, -7.0]
 
 

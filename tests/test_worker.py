@@ -95,10 +95,18 @@ def clear_instances():
 def driven(messages, interface=FakeInterface):
     """A worker holding fake pipes, its inbox already filled.
 
+    ``messages`` are ``(command, payload)`` pairs, numbered from one in the
+    order given the way the routine numbers its requests. Quitting is answered
+    with nothing, so it carries no number.
+
     Nothing here starts a child, so the process tree is immaterial.
     """
+    requests = [
+        (command, number, payload)
+        for number, (command, payload) in enumerate(messages, start=1)
+    ]
     worker = Worker(None, interface_factory=interface)
-    worker.from_parent = Pipe(list(messages) + [('quit', None)])
+    worker.from_parent = Pipe(requests + [('quit', None, None)])
     worker.to_parent = Pipe()
     return worker
 
@@ -110,18 +118,23 @@ def run(messages, interface=FakeInterface):
 
 
 def status_of(message):
-    """The status in one reply, which is ``('status', (recorded, status))``.
+    """The status in one reply, ``('status', number, (recorded, status))``.
 
-    ``recorded`` is one verdict per observation the message answered; the
-    tests that are about that unpack it themselves.
+    ``recorded`` is one verdict per observation the request carried; the tests
+    that are about that, and about the number, unpack it themselves.
     """
-    _, (_, status) = message
+    _, _, (_, status) = message
     return status
+
+
+def answers(sent):
+    """What each message sent back is, and which request it belongs to."""
+    return [(kind, number) for kind, number, _ in sent]
 
 
 def test_configuring_fills_the_queue(config_file):
     sent = run([('configure', config_file)])
-    assert [kind for kind, _ in sent] == ['status']
+    assert [kind for kind, _, _ in sent] == ['status']
     assert FakeInterface.instances[0].submitted == ['shot-0', 'shot-1']
 
 
@@ -130,7 +143,7 @@ def test_an_observation_is_answered_before_the_next_shots_are_proposed(config_fi
     sent = run(
         [('configure', config_file), ('observe', [('shot-0', 1.0, None, False)])]
     )
-    assert [kind for kind, _ in sent] == ['status', 'status']
+    assert [kind for kind, _, _ in sent] == ['status', 'status']
     assert status_of(sent[1])['completed'] == 1
     assert FakeInterface.instances[0].submitted == ['shot-0', 'shot-1', 'shot-2']
 
@@ -146,7 +159,7 @@ def test_an_observation_the_session_proposed_is_answered_as_taken(config_file):
     sent = run(
         [('configure', config_file), ('observe', [('shot-0', 1.0, None, False)])]
     )
-    _, (recorded, _) = sent[-1]
+    _, _, (recorded, _) = sent[-1]
     assert recorded == (True,)
 
 
@@ -163,7 +176,7 @@ def test_an_observation_the_session_never_proposed_is_answered_as_not_taken(
             ('observe', [('someone-elses-shot', 1.0, None, False)]),
         ]
     )
-    _, (recorded, _) = sent[-1]
+    _, _, (recorded, _) = sent[-1]
     assert recorded == (False,)
 
 
@@ -203,14 +216,18 @@ def test_one_verdict_comes_back_per_observation_in_the_order_sent(config_file):
             ),
         ]
     )
-    _, (recorded, _) = sent[-1]
+    _, _, (recorded, _) = sent[-1]
     assert recorded == (False, True, False)
 
 
 def test_one_message_carrying_several_observations_is_answered_once(config_file):
-    """The routine waits for one reply per message it sends. A second reply
-    would be read by the next invocation as the answer to its own message, and
-    every status after it would belong to the shots before it.
+    """One status per request, however many observations the request carried.
+
+    The routine reads the first message carrying a request's number as the
+    answer to it, and writes that one status onto every shot of the batch the
+    session took. A verdict per observation in separate messages would leave
+    the routine to collect a batch's answer a piece at a time, with a status
+    apiece to choose between.
     """
     sent = run(
         [
@@ -221,7 +238,7 @@ def test_one_message_carrying_several_observations_is_answered_once(config_file)
             ),
         ]
     )
-    assert [kind for kind, _ in sent] == ['status', 'status']
+    assert [kind for kind, _, _ in sent] == ['status', 'status']
 
 
 def test_a_status_message_frees_the_places_of_lost_shots(config_file):
@@ -259,7 +276,9 @@ def test_the_reply_is_sent_before_runmanager_is_asked_which_shots_remain(config_
 
     class NotesTheOutbox(FakeInterface):
         def shot_status(self, shot_ids):
-            outbox_when_asked.append([kind for kind, _ in worker.to_parent.sent])
+            outbox_when_asked.append(
+                [kind for kind, _, _ in worker.to_parent.sent]
+            )
             return super().shot_status(shot_ids)
 
     worker = driven([('configure', config_file), ('shot', None)], NotesTheOutbox)
@@ -271,9 +290,53 @@ def test_the_reply_is_sent_before_runmanager_is_asked_which_shots_remain(config_
     assert outbox_when_asked == [['status', 'status']]
 
 
+def test_every_reply_names_the_request_it_answers(config_file):
+    """Order alone does not say which request an answer belongs to. The worker
+    replies before the reconciling and submitting behind that reply, so by the
+    time a reply crosses the pipe the routine may have sent two more requests
+    and given up waiting for the answer to both.
+    """
+    sent = run(
+        [
+            ('configure', config_file),
+            ('observe', [('shot-0', 1.0, None, False)]),
+            ('shot', None),
+        ]
+    )
+    assert answers(sent) == [('status', 1), ('status', 2), ('status', 3)]
+
+
+def test_a_request_whose_handling_raises_is_answered_by_its_error_alone(
+    config_file,
+):
+    """The routine reads the first message carrying a request's number as the
+    answer to that request. One that failed before it could be replied to owes
+    that number an error and nothing else: a request answered with neither
+    would leave the routine waiting out its deadline on a worker that is alive
+    and well, once per invocation for as long as the session lasted.
+    """
+    sent = run([('observe', [('shot-0', 1.0, None, False)])])
+    assert answers(sent) == [('error', 1)]
+
+
+def test_a_failure_behind_a_reply_carries_the_number_it_followed(config_file):
+    """Reconciling and submitting run after the request they follow has been
+    answered, so a failure in them is a second message for a request already
+    replied to. Numbered as its own the routine would condemn the healthy
+    request it is waiting on and leave that request's reply in the pipe.
+    """
+
+    class FailsOnSubmit(FakeInterface):
+        def submit(self, proposals):
+            raise RuntimeError('runmanager went away')
+
+    sent = run([('configure', config_file), ('shot', None)], FailsOnSubmit)
+    assert answers(sent) == [('status', 1), ('error', 1), ('status', 2)]
+
+
 def test_a_runmanager_that_cannot_sustain_the_session_is_refused(config_file):
     sent = run([('configure', config_file)], RefusingInterface)
-    kind, payload = sent[-1]
+    kind, _, payload = sent[-1]
     assert kind == 'error'
     assert 'error in its globals' in payload
 
@@ -282,13 +345,13 @@ def test_a_shot_arriving_before_configuring_is_answered_with_nothing(config_file
     """There is no session to report on yet, and the routine is waiting: an
     empty status is the answer, not an error and not silence.
     """
-    assert run([('shot', None)]) == [('status', ((), {}))]
+    assert run([('shot', None)]) == [('status', 1, ((), {}))]
 
 
 def test_an_observation_before_configuring_is_an_error(config_file):
     sent = run([('observe', [('shot-0', 1.0, None, False)])])
     assert sent[-1][0] == 'error'
-    assert 'before being configured' in sent[-1][1]
+    assert 'before being configured' in sent[-1][2]
 
 
 def test_an_unknown_command_is_an_error(config_file):
@@ -307,8 +370,8 @@ def test_a_failure_stops_the_session_proposing(config_file):
             raise RuntimeError('runmanager went away')
 
     sent = run([('configure', config_file), ('shot', None)], FailsOnSubmit)
-    assert [kind for kind, _ in sent] == ['status', 'error', 'status']
-    assert 'runmanager went away' in sent[1][1]
+    assert [kind for kind, _, _ in sent] == ['status', 'error', 'status']
+    assert 'runmanager went away' in sent[1][2]
     assert status_of(sent[-1])['stopped'] == 'stopped by an error'
 
 
@@ -333,8 +396,8 @@ def test_the_worker_starts_in_a_process_of_its_own(monkeypatch, tmp_path):
     worker = Worker(zprocess.ProcessTree(allow_insecure=True), startup_timeout=60)
     to_worker, from_worker = worker.start()
     try:
-        to_worker.put(('shot', None))
-        assert from_worker.get(timeout=60) == ('status', ((), {}))
+        to_worker.put(('shot', 7, None))
+        assert from_worker.get(timeout=60) == ('status', 7, ((), {}))
     finally:
-        to_worker.put(('quit', None))
+        to_worker.put(('quit', None, None))
         assert worker.child.wait(timeout=60) == 0
