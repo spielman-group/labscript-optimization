@@ -1,7 +1,10 @@
 # The seven codex issues: assessment and design
 
 Read against the working tree at `88790ab` + the two agents' uncommitted work.
-This document is a plan; no code in it has been written. The numbers in it were
+Every decision in this document is implemented on `Development`; the work
+items are in `issues/codex_issues.md` and the benchmark evidence in
+`benchmarks/`. What follows is the reasoning, kept because a decision record's
+value is that a later reader can tell a settled question from an open one. The numbers in it were
 measured against a `git archive` copy of the repository, in a scratch directory
 that no longer exists — except Issue 2's benchmarks, whose harness and raw rows
 are in `benchmarks/`, and which are reproducible from there.
@@ -218,10 +221,13 @@ one it was generated under:
 | position | on | 0 | 10% | 0 | 0% | 0 |
 | position | on | 0 / 10% | 10% | 50% | 0.73% / 0.89% | 0 |
 
-**Correction to an earlier claim in this document:** NaN costs do not shift the
-walk *for trials* — a bad trial advances its slot without displacing the
-incumbent, which is correct. The NaN problem is confined to founders, and
-position founding is what fixes it.
+**What a NaN costs, under each walk.** Counting the usable records loses a
+position to every unusable one, which is why the defect above says a NaN shifts
+the walk. Walking every position does not: a bad trial reaches its own slot,
+fails to beat the incumbent and leaves it alone, which is what selection should
+do with a measurement that failed. So under the position walk the NaN problem is
+confined to *founders* — a slot whose founder produced nothing has no incumbent
+to keep — and founding by position is what answers it.
 
 ### Remove `restart_tolerance`
 
