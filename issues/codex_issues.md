@@ -813,7 +813,20 @@ Three specific items carried forward from earlier slices:
   class resolved. Verified. Either make the property true for named tables or
   rename the test to the narrower thing it actually guards; a name that
   overclaims is the failure mode this project keeps finding.
-- **The timeout relation test**, asserting one constant is smaller than another.
+- **The timeout relation test is now a tautology and should go.**
+  `test_runmanager_is_given_up_on_before_the_worker_is` asserts the greeting's
+  deadline is smaller than the configure deadline. That was a real invariant
+  while the configure deadline was a hand-set constant that somebody could set
+  too low. It is not one now: the configure deadline is *derived as a sum with
+  the greeting as one of its terms*, so the inequality holds for any
+  non-negative client deadline and positive margin. Verified. The only way to
+  fail it is to delete the greeting term *and* shrink the others below it,
+  which the test's own fixture has to arrange. Its real content is "the
+  greeting is one of the terms", which is worth saying plainly or not at all.
+  Delete it, or rewrite it as what it actually checks — do not leave it
+  claiming an invariant the derivation makes unfalsifiable.
+- The older note, superseded by the above: a test asserting one constant is
+  smaller than another.
   It guards a real invariant that no behavioural test covers, which is why it
   survives, but see whether the design change to the greeting removes both
   constants and the test with them.
