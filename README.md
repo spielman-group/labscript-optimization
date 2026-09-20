@@ -193,6 +193,17 @@ trainer is the fallback for anything its main learner cannot make, and refuses
 to wrap a learner declaring a `generation`, since a barrier cannot be held
 across two phases only one of which promises it.
 
+Those declarations are facts about an instance. Nothing outside a learner reads
+one from a class, a signature, a registry entry or a count — it builds a
+learner and asks that. Each of those stands in for the learner and agrees with
+it only in the cases that exist on the day it is written: a class attribute
+misses the learner that assigns in `__init__`, a signature default misses the
+one that derives or clamps what it was given, and a count of proposals is not
+the position one was made at. So declare however suits your learner, including
+from a value its constructor was handed. Loading a configuration builds the
+learner it names for this reason, and nothing is fitted at construction: the
+queue depth and the budget are settled against what the object says.
+
 Being named in a configuration asks for more. Inherit `ParameterSpaceLearner`
 and add the class to the `LEARNERS` table, both from
 `labscript_optimization.learners`: every entry there is built as

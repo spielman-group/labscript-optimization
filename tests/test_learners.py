@@ -958,10 +958,16 @@ def test_a_shared_knob_is_matched_against_arguments_not_constructor_locals(
     table for a collision the user cannot see.
     """
 
-    class Scratch:
+    class Scratch(ParameterSpaceLearner):
+        last_phase = 'main'
+
         def __init__(self, space, rng, population_size=3):
+            super().__init__(space, rng)
             cost_has_noise = population_size  # a local, not an argument
             self.population_size = cost_has_noise
+
+        def propose(self, history, k):
+            return self.space.uniform(self.rng, k)
 
     monkeypatch.setitem(learners.LEARNERS, 'scratch', Scratch)
     config = a_config(space, 'scratch', {'cost_has_noise': True, 'population_size': 4})

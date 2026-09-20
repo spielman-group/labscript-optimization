@@ -44,6 +44,17 @@ class Learner(ABC):
     becomes the answer, and the wrapped learner's declaration is dropped with
     nothing said. That is how a barrier gets lost behind a wrapper while
     everything still runs.
+
+    These declarations are facts about an instance. Nothing outside a learner
+    reads one from a class, a signature, a registry entry or a count: it
+    builds a learner and asks that. Every one of those stands in for the
+    learner and agrees with it only in the cases that exist on the day it is
+    written -- a class attribute misses the learner that assigns in
+    ``__init__``, which is the ordinary way; a signature default misses the
+    learner that derives or clamps what it was given; a count of proposals is
+    not the position one was made at. A learner is therefore free to declare
+    however it likes, including from a value its constructor was handed, and
+    the declaration is read where it is true.
     """
 
     #: Which of the learner's ways of proposing produced the last batch, which

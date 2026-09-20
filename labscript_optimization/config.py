@@ -229,7 +229,7 @@ class Config:
     learner_options: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: How many of this session's shots to keep in runmanager's queue. Read
     #: for a learner asked for any number of proposals at a time; a learner
-    #: declaring a generation sets its own depth from its population, and a
+    #: declaring a generation sets its own depth from that declaration, and a
     #: file writing this beside one is refused rather than left with two
     #: settings for the same number.
     num_buffered_runs: int = 3
@@ -519,18 +519,22 @@ def from_dict(raw: dict) -> Config:
     )
     # Learner constructors are the authoritative schema for their named
     # tables. Import lazily so importing this module alone stays lightweight.
-    from .learners import LEARNERS, validate_options
+    from .learners import build
 
-    validate_options(config)
-    # Read off the class, which says how many proposals it is asked for at a
-    # time, as a number or -- where that is the population the file sizes --
-    # as a property over its own settings.
-    if "num_buffered_runs" in mloop and LEARNERS[config.learner].generation is not None:
+    # Build the selected learner and ask it, rather than predicting from its
+    # class or its constructor what an instance would say. How many proposals
+    # a learner makes at a time is a fact about the object, and nothing here
+    # knows how it arrives at one. Construction is all this costs: no learner
+    # fits anything until it is asked to propose, and the built learner is
+    # discarded -- a session builds its own, from this same configuration.
+    learner = build(config)
+    if "num_buffered_runs" in mloop and learner.generation is not None:
         raise ValueError(
             f"num_buffered_runs is not accepted with learner "
-            f"{config.learner!r}, which proposes one whole generation at a "
-            f"time and waits for all of it. Its queue depth is therefore "
-            f"population_size, and a second setting for the same number is "
-            f"one that can disagree with it: delete num_buffered_runs."
+            f"{config.learner!r}, which proposes one whole generation of "
+            f"{learner.generation} at a time and waits for all of it. Its "
+            f"queue depth is therefore that generation, and a second setting "
+            f"for the same number is one that can disagree with it: delete "
+            f"num_buffered_runs."
         )
     return config

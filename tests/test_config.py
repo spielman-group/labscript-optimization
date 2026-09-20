@@ -196,13 +196,14 @@ def test_a_file_that_sets_no_options_gets_exactly_the_dataclass_defaults():
     ids=['a minimal file', 'a table naming the gaussian process', 'the example'],
 )
 def test_loading_configuration_does_not_import_scientific_learners(load):
-    """A lyse routine that never starts a session pays no learner imports.
+    """A lyse routine that never asks for a proposal pays no learner imports.
 
     Every file here resolves a learner class -- the selected one always, and a
     named table's own as well -- because a constructor is the schema for its
-    table and because a learner proposing whole generations has to say so
-    before the queue depth is settled. So the property is about what a learner
-    module imports when it is imported, not about which of them are reached.
+    table; and every file builds the selected learner, because how many
+    proposals it makes at a time is a fact about an instance. So the property
+    holds of what a learner module imports when it is imported and of what its
+    constructor reaches, and not merely of the learners a file leaves alone.
     """
     script = (
         "import sys\n"
@@ -527,11 +528,59 @@ def test_a_generational_learner_will_not_take_a_queue_depth_as_well():
     """
     with pytest.raises(ValueError, match='num_buffered_runs') as raised:
         config_module.loads(DE + 'num_buffered_runs = 3\n')
-    assert 'population_size' in str(raised.value)
+    # The depth it would have set instead, so the reader can see the two
+    # numbers that would have disagreed.
+    assert 'generation of 8' in str(raised.value)
 
     # A learner asked for any number of proposals at a time still takes one.
     other = config_module.loads(MINIMAL + '[MLOOP]\nnum_buffered_runs = 3\n')
     assert other.num_buffered_runs == 3
+
+
+def test_a_generation_a_constructor_assigns_is_refused_a_queue_depth_too(monkeypatch):
+    """Assigning in ``__init__`` is the ordinary way to declare one.
+
+    Off the class it is the base class's ``None``, and the depth goes
+    through: the session then runs at a depth the learner never asked for,
+    ``refill`` tops the queue up mid-generation, and the default shots
+    runmanager hands BLACS at each of those drains are missing from the
+    starvation count, which is deliberately not kept for a generational
+    learner.
+    """
+
+    class Ordinary(learners.ParameterSpaceLearner):
+        last_phase = 'main'
+
+        def __init__(self, space, rng, population_size=8):
+            super().__init__(space, rng)
+            self.generation = int(population_size)
+
+        def propose(self, history, k):
+            return self.space.uniform(self.rng, k)
+
+    assert Ordinary.generation is None
+    monkeypatch.setitem(learners.LEARNERS, 'ordinary', Ordinary)
+
+    written = MINIMAL + '[MLOOP]\nlearner = "ordinary"\n'
+    with pytest.raises(ValueError, match='num_buffered_runs') as raised:
+        config_module.loads(written + 'num_buffered_runs = 3\n')
+    assert 'generation of 8' in str(raised.value)
+    # The same learner without the setting is the file that loads.
+    assert config_module.loads(written).learner == 'ordinary'
+
+
+def test_a_generational_learner_behind_a_trainer_is_refused_at_load(monkeypatch):
+    """Rather than at worker configure, with the apparatus already running.
+
+    A two-phase learner can neither answer for a generation nor pass one on,
+    so it refuses to wrap one. Building the learner at load is what brings
+    that refusal forward to the file that asks for the combination.
+    """
+    monkeypatch.setitem(
+        learners.NEEDS_TRAINING, 'differential_evolution', 'directed_random'
+    )
+    with pytest.raises(ValueError, match='whole generations of 8'):
+        config_module.loads(DE)
 
 
 @pytest.mark.parametrize(
@@ -571,6 +620,37 @@ def test_a_budget_below_two_whole_generations_is_refused(written, refused, accep
     assert config_module.loads(
         DE + written + f'max_num_runs = {accepted}\n'
     ).max_num_runs == accepted
+
+
+def test_the_budget_is_measured_against_the_generation_a_learner_declares(monkeypatch):
+    """A learner is free to derive what it proposes at a time.
+
+    What it derived is what the session will queue and what two generations
+    of it will cost. Predicted from the constructor's default and the file's
+    option, the budget would be measured against a number nobody runs, and
+    the file that cannot reach its second generation would load.
+    """
+
+    class Doubling(learners.ParameterSpaceLearner):
+        last_phase = 'main'
+
+        def __init__(self, space, rng, population_size=4):
+            super().__init__(space, rng)
+            # Whatever it is handed, it evolves two members per slot.
+            self.generation = 2 * int(population_size)
+
+        def propose(self, history, k):
+            return self.space.uniform(self.rng, k)
+
+    monkeypatch.setitem(learners.LEARNERS, 'doubling', Doubling)
+
+    written = MINIMAL + '[MLOOP]\nlearner = "doubling"\npopulation_size = 4\n'
+    with pytest.raises(ValueError, match='max_num_runs') as raised:
+        config_module.loads(written + 'max_num_runs = 15\n')
+    assert 'cut short' in str(raised.value)
+    assert config_module.loads(
+        written + 'max_num_runs = 16\n'
+    ).max_num_runs == 16
 
 
 # --- what a setting may be -------------------------------------------------

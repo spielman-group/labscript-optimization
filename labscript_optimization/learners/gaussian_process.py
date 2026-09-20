@@ -20,11 +20,12 @@ per ``batch_size`` new observations rather than on every call; the
 posterior is refit to all the data every time.
 
 scikit-learn and scipy are imported where they are used rather than at the top
-of this module. Loading a configuration resolves the class of the learner it
-names, to hold the file's knobs to the constructor and to ask whether the
-learner proposes whole generations -- and that happens in the lyse routine's
-own process, which never builds a learner and should not pay several seconds
-to import the scientific stack.
+of this module, and nothing here reaches a point of use until a proposal is
+asked for. Loading a configuration resolves the class of the learner it names,
+to hold the file's knobs to the constructor, and builds it, to ask how many
+proposals it makes at a time -- and that happens in the lyse routine's own
+process, which never asks the learner for a proposal and should not pay
+several seconds to import the scientific stack.
 """
 
 from typing import Sequence

@@ -26,11 +26,11 @@ __all__ = [
 
 
 #: Learners that can be named in a configuration. Every class here is
-#: resolved whenever a configuration is loaded -- its constructor is the
-#: schema for its own table, and it says whether it proposes whole
-#: generations -- so none of them may import the scientific stack to be
-#: imported itself; see
-#: :mod:`labscript_optimization.learners.gaussian_process`.
+#: resolved whenever a configuration is loaded, because its constructor is the
+#: schema for its own table, and the selected one is built there as well,
+#: because what it proposes at a time is a fact about an instance. So none of
+#: them may import the scientific stack either to be imported or to be built;
+#: see :mod:`labscript_optimization.learners.gaussian_process`.
 LEARNERS = {
     "random": RandomLearner,
     "directed_random": DirectedRandomLearner,
@@ -72,8 +72,10 @@ def validate_options(config) -> None:
     The learner has to be one of :data:`LEARNERS`, or the misspelling is found
     at ``build()`` -- which is worker configure, with the session already
     starting. A ``[LEARNER.<name>]`` table has one constructor that defines its
-    keys, so anything else in it is a knob that learner ignores. And a budget
-    is measured against the population the selected learner will evolve.
+    keys, so anything else in it is a knob that learner ignores.
+
+    Everything here is answered by a name and a table, before any learner
+    exists. What only a learner can answer is checked in :func:`build`.
     """
     if config.learner not in LEARNERS:
         raise ValueError(
@@ -89,21 +91,6 @@ def validate_options(config) -> None:
                 f"{', '.join(sorted(accepted))}."
             )
 
-    accepted = _constructor_parameters(config.learner)
-    if config.max_num_runs is None or "population_size" not in accepted:
-        return
-    default = accepted["population_size"].default
-    size = int(config.options_for(config.learner).get("population_size", default))
-    if config.max_num_runs < 2 * size:
-        raise ValueError(
-            f"max_num_runs {config.max_num_runs} leaves less than two "
-            f"generations of the {size} members {config.learner!r} evolves, so "
-            f"set it to at least {2 * size} or lower population_size. The "
-            f"first generation is the population itself and the second is the "
-            f"first to evolve it; a second generation cut short evolves some "
-            f"of its slots rather than a generation."
-        )
-
 
 def make_learner(name: str, space, rng, options):
     accepted = _option_names(name)
@@ -117,12 +104,16 @@ def make_learner(name: str, space, rng, options):
 
 
 def build(config, rng: np.random.Generator | None = None):
-    """Build the learner a configuration asks for.
+    """Build the learner a configuration asks for, and hold it to the budget.
 
     A learner that needs a training phase is wrapped in a
     :class:`~labscript_optimization.learners.two_phase.TwoPhaseLearner` with
     the trainer named in :data:`NEEDS_TRAINING`, which is also the fallback for
     proposals the main learner cannot make.
+
+    The budget is then measured against the learner that came back, because
+    how many proposals it makes at a time is its own to say and no signature
+    or class attribute answers for it.
     """
     # Config objects may be constructed directly instead of parsed from TOML.
     validate_options(config)
@@ -131,11 +122,28 @@ def build(config, rng: np.random.Generator | None = None):
 
     name = config.learner
     main = make_learner(name, config.space, rng, config.options_for(name))
-    if name not in NEEDS_TRAINING:
-        return main
+    if name in NEEDS_TRAINING:
+        trainer_name = NEEDS_TRAINING[name]
+        trainer = make_learner(
+            trainer_name, config.space, rng, config.options_for(trainer_name)
+        )
+        learner = TwoPhaseLearner(trainer, main, config.num_training_runs)
+    else:
+        learner = main
 
-    trainer_name = NEEDS_TRAINING[name]
-    trainer = make_learner(
-        trainer_name, config.space, rng, config.options_for(trainer_name)
-    )
-    return TwoPhaseLearner(trainer, main, config.num_training_runs)
+    generation = learner.generation
+    if (
+        config.max_num_runs is not None
+        and generation is not None
+        and config.max_num_runs < 2 * generation
+    ):
+        raise ValueError(
+            f"max_num_runs {config.max_num_runs} leaves less than two whole "
+            f"generations of the {generation} proposals {name!r} makes at a "
+            f"time, so set it to at least {2 * generation}, or configure "
+            f"{name!r} to propose fewer at a time. The first generation is "
+            f"the population itself and the second is the first to evolve it; "
+            f"a second generation cut short evolves some of its slots rather "
+            f"than a generation."
+        )
+    return learner
