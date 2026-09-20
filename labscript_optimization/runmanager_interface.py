@@ -19,20 +19,21 @@ UNKNOWN_SHOT_STATE = "unknown"
 #: moves what is in front of it.
 BLOCKED_SHOT_STATE = "blocked"
 
-#: Seconds runmanager is given to answer the greeting that opens a session,
-#: when labconfig says nothing. Short against the routine's allowance for the
-#: whole of configuration, so that a runmanager which is not running is named
-#: as the cause rather than the worker being killed mid-wait and the lab told
-#: that it was slow -- a lab that sets the key below longer than that
-#: allowance gets the latter back.
+#: Seconds runmanager is given to answer the greeting that opens a session.
+#: Short against the routine's allowance for the whole of configuration, so
+#: that a runmanager which is not running is named as the cause rather than
+#: the worker being killed mid-wait and the lab told that it was slow. The
+#: session's later requests keep the client's own timeout, labconfig's
+#: ``communication_timeout``, which a submission that compiles shots needs.
 #:
-#: The key is ``timeouts/liveness_timeout``, which BLACS reads for its own
-#: liveness probe, so a lab on a slow link sets one number and both
-#: applications honour it. Deliberately not ``communication_timeout``: that
-#: one allows runmanager to do work -- evaluating globals, compiling shots --
-#: while this one measures a network round trip. The session's later requests
-#: keep the client's own timeout, which is ``communication_timeout``, because
-#: a submission that compiles shots needs it.
+#: A constant, and not labconfig's ``timeouts/liveness_timeout``, which BLACS
+#: reads before every exchange. BLACS probes runmanager once per shot, so that
+#: number is a trade it has to make: too long and an unreachable runmanager
+#: adds dead time to every cycle, too short and a slow link is judged absent.
+#: A session greets once, over a round trip that is sub-second on any lab
+#: link, so there is no trade here to make -- while a number raised for the
+#: sake of BLACS's cycle time would carry this deadline past the routine's
+#: allowance, which is the failure the greeting exists to prevent.
 GREETING_TIMEOUT = 5.0
 
 
@@ -43,36 +44,24 @@ class RunmanagerInterface:
         config: The session configuration.
         client: A ``runmanager.remote`` client, or ``None`` to make the default
             one. Injected so the session can be tested without runmanager. Its
-            ``timeout`` is how long each request waits.
-        greeting_timeout: Seconds the greeting is allowed, or ``None`` to take
-            labconfig's ``timeouts/liveness_timeout``, falling back to
-            :data:`GREETING_TIMEOUT`. Injected for the same reason the client
-            is: read here rather than at import, so that the module has no
-            side effect on being imported and the deadline is a value a caller
-            can supply rather than a file a test has to arrange.
+            ``timeout`` is how long each request waits, and is held down to
+            :data:`GREETING_TIMEOUT` for the greeting.
     """
 
-    def __init__(self, config, client=None, greeting_timeout=None):
+    def __init__(self, config, client=None):
         if client is None:
             from runmanager import remote
 
             client = remote.Client()
-        if greeting_timeout is None:
-            from labscript_utils.labconfig import LabConfig
-
-            greeting_timeout = LabConfig().getfloat(
-                "timeouts", "liveness_timeout", fallback=GREETING_TIMEOUT
-            )
         self.config = config
         self.client = client
-        self.greeting_timeout = greeting_timeout
         self.labscript_file = None
 
     def check_ready(self) -> None:
         """Raise if runmanager cannot start a session, and pin its labscript file.
 
         The greeting comes first, and is the only request held to
-        ``greeting_timeout``, so that a runmanager which is not there is
+        :data:`GREETING_TIMEOUT`, so that a runmanager which is not there is
         reported as a runmanager which is not there. Asking it a question
         instead leaves the answer to the client's own timeout, which outlasts
         the routine's allowance for the whole of configuration: the worker is
@@ -91,14 +80,14 @@ class RunmanagerInterface:
         # interim waiting on one specific change: ``Client.with_timeout`` in
         # runmanager, returning a sibling client for the same host and port
         # with a different deadline. The greeting then becomes
-        # ``self.client.with_timeout(self.greeting_timeout).say_hello()`` and
+        # ``self.client.with_timeout(GREETING_TIMEOUT).say_hello()`` and
         # nothing here touches an object it does not own.
-        patient, self.client.timeout = self.client.timeout, self.greeting_timeout
+        patient, self.client.timeout = self.client.timeout, GREETING_TIMEOUT
         try:
             self.client.say_hello()
         except Exception as exc:
             raise RuntimeError(
-                f"runmanager did not answer within {self.greeting_timeout:g} "
+                f"runmanager did not answer within {GREETING_TIMEOUT:g} "
                 f"seconds ({exc!r}); an optimisation session cannot start "
                 f"without it"
             ) from exc

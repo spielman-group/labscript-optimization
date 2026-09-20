@@ -33,7 +33,7 @@ backlog, which would also let BLACS stop mutating a client's deadline per call.
 - [x] Slice 2: Configuration is validated at load
 - [x] Slice 3: What the lab reads — `best_cost` units and cost ordering
 - [x] Slice 4: Textbook generational differential evolution
-- [ ] Slice 5: The greeting's deadline is a constant again
+- [x] Slice 5: The greeting's deadline is a constant again
 - [x] Slice 6: A wrapper cannot silently drop a generation barrier
 - [ ] Slice 7: A reply says which request it answers
 - [ ] Slice 8: The configure deadline covers the waits inside it
@@ -426,11 +426,11 @@ is not blocking anything.
 
 ### Acceptance criteria
 
-- [ ] The greeting's deadline is a constant; nothing reads labconfig for it
-- [ ] A comment says the key exists, that BLACS reads it, and why this does not
-- [ ] The tests and fixtures added for the configurable value are removed, not
+- [x] The greeting's deadline is a constant; nothing reads labconfig for it
+- [x] A comment says the key exists, that BLACS reads it, and why this does not
+- [x] The tests and fixtures added for the configurable value are removed, not
       left asserting a path that no longer exists
-- [ ] `tests/` no longer imports `labscript_utils` unless something else needs it
+- [x] `tests/` no longer imports `labscript_utils` unless something else needs it
 
 ### Blocked by
 

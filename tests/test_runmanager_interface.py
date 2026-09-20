@@ -8,10 +8,7 @@ import numpy as np
 import pytest
 
 from labscript_optimization import config as config_module
-from labscript_optimization.runmanager_interface import (
-    GREETING_TIMEOUT,
-    RunmanagerInterface,
-)
+from labscript_optimization.runmanager_interface import RunmanagerInterface
 
 CONFIG = """
 [ANALYSIS]
@@ -97,41 +94,9 @@ def client():
     return FakeClient()
 
 
-#: The greeting deadline the interface fixture is built with. Not
-#: :data:`GREETING_TIMEOUT`, so that a call recorded at this length is known to
-#: have taken the session's own value rather than the fallback.
-SESSION_GREETING_TIMEOUT = 2.5
-
-
 @pytest.fixture
 def interface(config, client):
-    return RunmanagerInterface(
-        config, client, greeting_timeout=SESSION_GREETING_TIMEOUT
-    )
-
-
-@pytest.fixture
-def labconfig(monkeypatch):
-    """labconfig, as far as this module reads it, without the workstation's.
-
-    The real one reads whatever file this machine happens to have, so a test
-    left with it would assert on the workstation rather than on the code.
-    """
-    from labscript_utils import labconfig as labconfig_module
-
-    class FakeLabConfig:
-        #: What the lab has set, by key, and what was read from it.
-        timeouts: dict[str, float] = {}
-        asked: list[tuple[str, str]] = []
-
-        def getfloat(self, section, option, fallback=None):
-            FakeLabConfig.asked.append((section, option))
-            return FakeLabConfig.timeouts.get(option, fallback)
-
-    FakeLabConfig.timeouts = {}
-    FakeLabConfig.asked = []
-    monkeypatch.setattr(labconfig_module, 'LabConfig', FakeLabConfig)
-    return FakeLabConfig
+    return RunmanagerInterface(config, client)
 
 
 def test_a_session_starts_when_runmanager_can_sustain_it(interface):
@@ -163,37 +128,10 @@ def test_the_greeting_is_asked_first_and_is_the_only_short_wait(interface, clien
     """
     interface.check_ready()
     assert client.asked == [
-        ('say_hello', SESSION_GREETING_TIMEOUT),
+        ('say_hello', 5.0),
         ('error_in_globals', 60.0),
         ('get_labscript_file', 60.0),
     ]
-
-
-def test_the_greeting_takes_the_deadline_the_lab_set(config, client, labconfig):
-    """One number for one round trip, set once for the whole suite.
-
-    BLACS holds its own liveness probe to labconfig's
-    ``timeouts/liveness_timeout``, so reading that same key is what lets a lab
-    on a slow link set the round trip once and have both applications honour
-    it. ``communication_timeout`` is the other key and the wrong one: it
-    allows runmanager to evaluate globals and compile shots, so raising it for
-    a slow compile would silently slow down noticing that runmanager has gone,
-    which is the whole defect the greeting exists to avoid.
-    """
-    labconfig.timeouts['liveness_timeout'] = 0.25
-    RunmanagerInterface(config, client).check_ready()
-    assert labconfig.asked == [('timeouts', 'liveness_timeout')]
-    assert client.asked[0] == ('say_hello', 0.25)
-
-
-def test_a_lab_that_sets_no_liveness_timeout_gets_the_constant(
-    config, client, labconfig
-):
-    """Most labs set nothing, and the deadline still has to be short enough
-    that a runmanager which is not running is named as the cause.
-    """
-    RunmanagerInterface(config, client).check_ready()
-    assert client.asked[0] == ('say_hello', GREETING_TIMEOUT)
 
 
 def test_a_runmanager_whose_globals_do_not_evaluate_is_refused(interface, client):
