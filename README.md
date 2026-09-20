@@ -37,6 +37,13 @@ The routine returns immediately. Fitting and submitting happen in the worker,
 because lyse runs multishot routines inline and a slow one delays every shot
 behind it.
 
+The worker replies before it fits and submits, so an answer can take longer
+than the routine is willing to wait for it: a whole generation written through
+runmanager is many seconds. Each message the routine sends carries a request
+number and each message the worker sends carries the number of the request it
+belongs to, so an answer that arrives late is still written onto the shots that
+earned it and never onto whichever shots the routine is holding when it comes.
+
 lyse runs a multishot routine once per drained batch of singleshot analyses
 rather than once per shot. Where analysis keeps up that is one shot an
 invocation; where it does not — a shot arriving while the one before it is
@@ -197,10 +204,19 @@ learner's own knobs is a keyword argument with a default.
 
 Failures stop the session and are reported through lyse's normal error path:
 runmanager unreachable, a broken global, a labscript file changed underneath a
-running session, or a learner raising. There are no retries, timeouts or
-watchdogs. The exception is a status that cannot be written to its shot, which
-is printed and passed over: a progress report is worth less than the
-optimisation that stopping for it would end.
+running session, or a learner raising. Nothing is retried, and no shot, fit or
+submission is put on a clock. The exception is a status that cannot be written
+to its shot, which is printed and passed over: a progress report is worth less
+than the optimisation that stopping for it would end.
+
+Two waits are bounded, and neither of them is the experiment's. The routine
+waits a couple of seconds for the worker's answer, so lyse is held up for that
+long and no longer whatever the worker is doing; a worker slower than that is
+left to catch up, and its answer lands on the shots that earned it when it
+comes. Starting the worker is allowed longer, because a cold runmanager
+connection is slower than a shot cycle. A worker whose process has gone is
+neither of those, and the routine says so within about a second rather than
+reporting it as slow.
 
 One failure stops the optimisation and cannot be reported from here: a shot
 that fails to compile stays at the head of runmanager's queue until someone
