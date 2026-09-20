@@ -39,7 +39,8 @@ backlog, which would also let BLACS stop mutating a client's deadline per call.
 - [x] Slice 8: The configure deadline covers the waits inside it
 - [x] Slice 9: A learner's declarations are facts about an instance
 - [x] Slice 10: Benchmark the shipped DE
-- [ ] Slice 11: Test cleanup
+- [ ] Slice 11: The benchmark evidence is in the repository, and the document is true
+- [ ] Slice 12: Test cleanup
 
 ---
 
@@ -818,7 +819,99 @@ them along with every number they produced.
 
 ---
 
-## Slice 11: Test cleanup
+## Slice 11: The benchmark evidence is in the repository, and the document is true
+
+### Type
+
+`AFK`
+
+### What to build
+
+Slice 10 re-ran the benchmarks against the shipped learner and found that every
+earlier one had a harness bug: the loop counted proposals **submitted**, landed
+one shot per turn, and never scored what was still in flight when it exited. The
+cost scaled with queue depth, so it fell on the generational arm — at 120 shots
+with a population of 60 it was scored on 61 of its 120 shots against the
+asynchronous arm's 118 — and it biased the dimension sweep against large
+populations the same way.
+
+The conclusions survive. The barrier's measured cost does not: the ratio of
+generational to asynchronous is 1.01 / 1.05 / 1.64 at 120 / 240 / 600 shots,
+not 1.36 / 1.53 / 1.67. The gap does not close with budget, it *opens*, from
+nothing to 1.64×. Deliberately reapplying the truncation to the shipped learner
+reproduces the old shape, which is what pins the harness rather than the learner
+as the cause. Nothing reopens — the decision is cheaper than it was recorded as.
+
+**Two pieces of work.**
+
+**Make the document true.** Slice 10 recorded the corrected numbers *beside* the
+originals with the originals marked. Replace them instead: corrected numbers in
+the tables and in the readings, and one short "Corrections" subsection at the
+end of Issue 2 holding the audit trail — the harness truncation, which arm it
+hit, the old and new ratios, and that reapplying it reproduces the old shape;
+and that the N=4 stall is "under 1% improvement for 2.5× the budget" rather than
+"identical to three significant figures", which was never literally true of the
+document's own quoted numbers. A decision record's body is what the next reader
+takes as the basis of the decision, so it has to be true; how it came to be
+corrected is history, and belongs in one place rather than smeared across the
+tables. This repository has already had to append "Do not implement a
+multiplier" to a superseded paragraph so nobody skimmed the wrong number — that
+is the shape to avoid.
+
+**Put the evidence in the repository.** Nothing in the repo can reproduce or
+check any of these numbers; the slice only found the bug because an earlier
+session's scratchpad happened to survive in a temporary directory. This batch
+has now twice found that a *measurement* was wrong rather than a conclusion.
+
+- `benchmarks/de_pipeline.py` — one harness, parameterised by variant, function,
+  dimension, population, budget and seeds, running every arm to the same number
+  of **completed** shots and submitting nothing once the budget is claimed. The
+  variants are the current learner's: generational, and the asynchronous
+  reference. Its standing value is regression checking of what ships, not
+  re-litigating a settled decision.
+- `benchmarks/README.md` — the recipe, and for each table the PRD cites, the
+  command that produced it and the commit the learner was at.
+- `benchmarks/results/` — the raw rows, each file headed by date, commit and
+  command. The document's numbers must point at something.
+- **No copy of the deleted learner.** The pre-slice-4 walk is reachable with
+  `git show <hash>:labscript_optimization/learners/differential_evolution.py`,
+  and the README says so beside the rows it produced. A verbatim copy of deleted
+  code, imported by nothing, is the shape this repository already declines for
+  the M-LOOP checkout.
+- **One smoke test** in `tests/`: a mode running one seed at a tiny budget over
+  every variant and function, proving the harness still runs against the current
+  learner. A harness nobody runs rots, and the rule that a check which does not
+  run looks clean applies to the check's own machinery. The full sweeps stay out
+  of the suite.
+
+Two things it must not become: a place to record every exploratory number — the
+results directory holds what the document cites — and a second test suite for
+the learners. A benchmark measures quality; tests prove behaviour.
+
+### Acceptance criteria
+
+- [ ] No superseded number is left standing in the document's tables or readings
+- [ ] A "Corrections" subsection records both corrections and what caused them
+- [ ] The harness runs every arm to the same number of completed shots —
+      mutation: count submitted instead; the shipped numbers move back towards
+      the withdrawn ones
+- [ ] Every table the document cites names its command and its commit
+- [ ] The smoke test runs the harness against the current learner in about a
+      second — mutation: break the harness's entry point; the test fails
+- [ ] No deleted code is carried in the repository
+
+### Blocked by
+
+None - can start immediately. Slice 10 produced the numbers and the scripts.
+
+### User stories covered
+
+- PRD "Issue 2", the benchmark subsections; and repository practice, since the
+  finding is that the evidence was unreproducible.
+
+---
+
+## Slice 12: Test cleanup
 
 ### Type
 
@@ -889,7 +982,7 @@ Three specific items carried forward from earlier slices:
 
 ### Blocked by
 
-- Slices 1 through 10
+- Slices 1 through 11
 
 ### User stories covered
 
