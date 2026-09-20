@@ -38,7 +38,7 @@ backlog, which would also let BLACS stop mutating a client's deadline per call.
 - [x] Slice 7: A reply says which request it answers
 - [x] Slice 8: The configure deadline covers the waits inside it
 - [x] Slice 9: A learner's declarations are facts about an instance
-- [ ] Slice 10: Benchmark the shipped DE
+- [x] Slice 10: Benchmark the shipped DE
 - [ ] Slice 11: Test cleanup
 
 ---
@@ -760,15 +760,53 @@ Carry the caveats into whatever documentation cites the numbers: analytic test
 functions only, a bounded range of parameter counts and budgets, and one
 mutation strategy.
 
+### What was measured
+
+Recorded in `codex_issues_proposal.md` under "Re-run against the shipped
+learner", beside the readings it replaces. Every run is a real `Session`, built
+by `config.loads` from a real configuration file, proposing from the merged
+`DifferentialEvolutionLearner` against a fake runmanager: the barrier in
+`refill`, the position walk in `replay` and the history's pending entries are
+all exercised. The asynchronous arm is the same shipped learner subclassed so
+that `generation` is `None` and nothing else, so what separates the two is the
+barrier alone; the arm it is compared against for the third claim is the
+pre-slice-4 learner taken verbatim out of git at `842c0f6`.
+
+- **The population default holds.** Eight members holds the best median in 19
+  of the 28 (parameters, budget, function) cells and sixteen in the other 9,
+  with sixteen taking over only at the largest budget. Neither four members nor
+  thirty-two is best in a single cell. The floor is still at four: it improves
+  by under 1% when given two and a half times the budget.
+- **Rastrigin holds.** The correct algorithm beats the walk it replaced in one
+  of nine Rastrigin cells, and in none at all above 120 shots, against six of
+  nine on Rosenbrock. Over all four functions the split is 5 / 5 / 6 of twelve
+  at the three budgets, against the PRD's 3 / 7 / 6.
+- **The barrier's cost is real, grows with budget, and is a third of what the
+  PRD records at short budgets.** The median ratio against the asynchronous
+  variant is 1.01 / 1.05 / 1.64 at 120 / 240 / 600 shots, not 1.36 / 1.53 /
+  1.67. The earlier pipeline stopped once `budget` proposals had been
+  *submitted* and scored only what had come back, so it charged the
+  generational arm for up to `N - 1` shots it never saw against the
+  asynchronous arm's two — at 120 shots and N=60, 61 shots scored against 118.
+  Reproducing that rule against the shipped learner moves the ratios to
+  1.23 / 1.23 / 1.71. **This makes the decision cheaper than it was recorded as
+  being and is not a reason to revisit it.**
+
+The scripts and the raw rows are not in this repository: they live in the
+session scratchpad, and the proposal document carries the recipe for rebuilding
+them along with every number they produced.
+
 ### Acceptance criteria
 
-- [ ] The comparison runs against the shipped learner, not a reimplementation
-- [ ] Population sizes either side of the default are measured at more than one
-      parameter count
-- [ ] Results are recorded with their caveats, and any documented guidance on
-      sizing the population cites them
-- [ ] A disagreement with the PRD's expectations is reported rather than
-      quietly absorbed
+- [x] The comparison runs against the shipped learner, not a reimplementation
+- [x] Population sizes either side of the default are measured at more than one
+      parameter count — N of 4, 8, 16 and 32 at two, four and eight parameters
+- [x] Results are recorded with their caveats, and any documented guidance on
+      sizing the population cites them — `README.md`, `UPGRADING.md` and the
+      learner's own docstring
+- [x] A disagreement with the PRD's expectations is reported rather than
+      quietly absorbed — the barrier's price above, with the PRD's reading left
+      standing beside the correction
 
 ### Blocked by
 

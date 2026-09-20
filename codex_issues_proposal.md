@@ -320,6 +320,9 @@ generational DE looked uniformly worse; over four functions it is not.
 
 ### Extended sweep: four functions, and what it actually says
 
+**Re-run against the shipped learner below; read that before quoting a number
+from here.** Reading 3 does not survive the re-run at the two shorter budgets.
+
 Rastrigin, sphere, Ackley and Rosenbrock; N = 8, 16, 60; 120/240/600 shots; 16
 seeds; 4-D. Full table in the Fable session's `bench_sweep.txt`. I recomputed
 the aggregates from it rather than taking the readings on trust, and three of
@@ -355,7 +358,12 @@ convergence at N=4 rather than N=8, which removed that ground. **Do not
 implement a multiplier.**
 
 **3. The generation barrier costs more than first reported, and the cost does
-not wash out.** Asynchronous DE leads generational by a median ratio of
+not wash out.** **Half withdrawn: see the re-run against the shipped learner
+below.** The ratios here are 1.01, 1.05 and 1.64 when every variant is run to
+the same number of *completed* shots; the figures below are inflated at the two
+shorter budgets by a pipeline that stopped counting with a generation still in
+the queue. "The cost does not wash out" stands, and stands more strongly.
+Asynchronous DE leads generational by a median ratio of
 **1.36× at 120 shots, 1.53× at 240 and 1.67× at 600**. The earlier reading that
 "the two meet at 600" is an artefact of the two sphere cells where both
 variants converge to exactly 0.000; across the cells that have not converged
@@ -365,6 +373,9 @@ for the documentation, not an argument against the decision — Ian's reason for
 textbook DE is that the name must be true.
 
 ### The dimension sweep: `population_size` is the wrong shape
+
+**Confirmed against the shipped learner below**, which ranks the population
+sizes the same way and puts the floor in the same place.
 
 The 4-D sweep could not distinguish "multiplier 4 is right" from "N≈16 is right
 at four parameters", because `population_size` is a multiplier *per parameter*
@@ -442,6 +453,263 @@ defensible statement is the simple one — default 8, raise it at large budgets.
 **Caveats to carry into the documentation:** four analytic functions, D ≤ 8,
 budgets ≤ 1200, `best1` only. The asynchronous variant ranks N the same way, so
 this is a property of the budget, not of the generation barrier.
+
+### Re-run against the shipped learner
+
+Every reading above of the design that became this package was taken from a
+scratch reimplementation of it, driven by a hand-rolled pipeline; only the arm
+standing for the *old* code ran the learner itself. Slice 10 re-ran the
+comparison the other way round, against the code that ships. Each run is a
+`Session` built by `config.loads` from a real configuration file, with a fake
+runmanager standing in for the queue, so the generation barrier in `refill`,
+the position walk in `replay` and the history's pending entries are exercised
+as they are in a lab; costs come back out of order, one shot per step, drawn
+from those in flight.
+
+Three variants, each differing from the shipped one in a single thing:
+
+- **generational** -- the shipped learner, built by the shipped loader and
+  driven by the shipped session, barrier in force.
+- **asynchronous d3** -- the same shipped learner subclassed so that
+  `generation` is `None`, and nothing else, at `num_buffered_runs = 3`. What
+  separates it from the first is the barrier and only the barrier: same
+  replay, same mutation, same crossover, same bounds handling. It is a
+  reference point for feedback latency rather than an alternative on offer,
+  since it also runs the apparatus at a shallower queue.
+- **former d3** -- the learner as it shipped before slice 4, taken verbatim
+  out of git (`842c0f6`), at the same depth, with its `restart_tolerance` on
+  and off. Its walk counts usable records, which is the accidental mixing the
+  third claim is about.
+
+Four analytic functions on `[-5.12, 5.12]^D` as above, `best1` throughout, no
+drops and no NaN costs. Every variant runs to the same number of **completed**
+shots.
+
+**Claim 1 -- the barrier costs sample efficiency, and the gap does not close
+with budget. The direction holds, and at the largest budget the magnitude
+reproduces almost exactly; at the two shorter budgets it does not.** 4-D, N
+over 8 / 16 / 60, 16 seeds. The ratio is the median over the twelve
+(function, N) cells of median generational over median asynchronous.
+
+| shots | generational / asynchronous, median over the 12 cells | cells where generational is worse | earlier reading |
+|---|---|---|---|
+| 120 | 1.01 | 6 of 12 | 1.36 |
+| 240 | 1.05 | 9 of 12 | 1.53 |
+| 600 | 1.64 | 10 of 12 | 1.67 |
+
+Read as the earlier sweep read it, the barrier's price now grows from nothing
+at 120 shots to 1.64x at 600, rather than standing at 1.36x and rising to
+1.67x. "The gap does not close" survives -- it opens -- but "the barrier costs
+about a third of the search at short budgets" does not.
+
+**Why the two disagree, and it is not the learner.** The earlier pipeline's
+loop was `while ordinal < shots`, where `ordinal` counts proposals *submitted*;
+it landed one shot per turn of the loop and stopped with whatever was still in
+flight unscored. The asynchronous variant left two shots behind that way and
+the generational variant left up to `N - 1`: at 120 shots and N=60 it was
+scored on 61 of its 120 shots against the asynchronous variant's 118.
+
+| shots | N | shots the generational variant was scored on | ratio under that rule | ratio at equal completed shots |
+|---|---|---|---|---|
+| 120 | 8 | 113 of 120 | 1.19 | 1.07 |
+| 120 | 16 | 113 of 120 | 1.11 | 0.94 |
+| 120 | 60 | 61 of 120 | 1.52 | 0.99 |
+| 240 | 8 | 233 of 240 | 1.04 | 0.89 |
+| 240 | 16 | 225 of 240 | 1.56 | 1.17 |
+| 240 | 60 | 181 of 240 | 1.26 | 1.07 |
+| 600 | 8 | 593 of 600 | 1.57 | 1.52 |
+| 600 | 16 | 593 of 600 | 1.64 | 1.78 |
+| 600 | 60 | 541 of 600 | 2.10 | 1.84 |
+
+Applying that same rule to the shipped learner moves the aggregate from
+1.01 / 1.05 / 1.64 to **1.23 / 1.23 / 1.71**, against the earlier
+1.36 / 1.53 / 1.67: most of the difference at 120 shots, part of it at 240,
+and nothing that needed explaining at 600. What is left over is the remaining
+distance between the two harnesses -- the earlier asynchronous runs completed
+their shots in submission order where these complete them in a random one, and
+the earlier generational and asynchronous arms were two separate scratch
+functions where these are one shipped class and a two-line subclass of it.
+
+So the earlier figure measured the barrier plus a scoring rule that charged it
+for a generation it was never allowed to finish, and the charge fell hardest
+where the generation was largest. The correction makes the decision cheaper
+than it was recorded as being, which is no reason to revisit it: the reason
+for textbook DE is that the name has to be true.
+
+**Claim 2 -- eight members is the right default across parameter counts.
+Holds.** D of 2 / 4 / 8, N over the multiples of D between 4 and 32, budgets
+240 and 600 with 1200 added at 8-D, 12 seeds, both variants. A block goes to
+the N holding the lowest median on the most of the four functions.
+
+| D | shots | generational | asynchronous d3 |
+|---|---|---|---|
+| 2 | 240 | N=8 (N=8: 3, N=16: 1) | N=8 and N=16 (N=8: 2, N=16: 2) |
+| 2 | 600 | N=8 and N=16 (N=8: 2, N=16: 2) | N=8 (N=8: 3, N=16: 1) |
+| 4 | 240 | N=8 (N=8: 4) | N=8 (N=8: 4) |
+| 4 | 600 | N=8 (N=8: 3, N=16: 1) | N=8 (N=8: 4) |
+| 8 | 240 | N=8 (N=8: 4) | N=8 (N=8: 4) |
+| 8 | 600 | N=8 (N=8: 3, N=16: 1) | N=8 and N=16 (N=8: 2, N=16: 2) |
+| 8 | 1200 | N=16 (N=16: 4) | N=8 and N=16 (N=8: 2, N=16: 2) |
+
+N=8 takes five of the seven blocks outright, ties one with N=16, and loses one
+-- 8-D at 1200 shots, the largest budget in the sweep. That is the earlier
+reading again: N=8 wins five of seven, and N=16 takes over only at the largest
+budgets. The asynchronous variant ranks N the same way, so this is a property
+of the budget rather than of the barrier. Counted by single cells rather than
+by blocks, N=8 holds the lowest median in 19 of the 28 (dimension, budget,
+function) cells and N=16 in the other 9; **neither N=4 nor N=32 is best in a
+single cell**, in either variant, and at 8-D and 240 shots N=32 is the worst
+of the three on every function.
+
+**And the floor is still at four, not at eight.** N=4 does not stall
+absolutely under the shipped learner, but it comes close enough for the
+reading to stand: with two and a half times the budget it improves by under 1%
+on all eight (dimension, function) cells, while N=8 improves by 10% to 100% on
+the same cells. Lifting the barrier partly unsticks it, which says the stall is
+a collapsed population that a generation of feedback latency cannot re-spread.
+
+| variant | D | function | 240 shots | 600 shots | change |
+|---|---|---|---|---|---|
+| generational, N=4 | 2 | rastrigin | 2.029 | 2.029 | 0.0% |
+| generational, N=4 | 2 | sphere | 0.009 | 0.009 | 0.1% |
+| generational, N=4 | 2 | ackley | 0.356 | 0.356 | 0.0% |
+| generational, N=4 | 2 | rosenbrock | 1.023 | 1.023 | 0.0% |
+| generational, N=4 | 4 | rastrigin | 8.193 | 8.128 | 0.8% |
+| generational, N=4 | 4 | sphere | 0.422 | 0.420 | 0.4% |
+| generational, N=4 | 4 | ackley | 2.885 | 2.881 | 0.1% |
+| generational, N=4 | 4 | rosenbrock | 18.015 | 17.959 | 0.3% |
+| asynchronous d3, N=4 | 2 | rastrigin | 1.544 | 1.530 | 0.9% |
+| asynchronous d3, N=4 | 2 | sphere | 0.000 | 0.000 | 36.9% |
+| asynchronous d3, N=4 | 2 | ackley | 0.244 | 0.096 | 60.8% |
+| asynchronous d3, N=4 | 2 | rosenbrock | 0.462 | 0.457 | 1.1% |
+| asynchronous d3, N=4 | 4 | rastrigin | 7.624 | 7.050 | 7.5% |
+| asynchronous d3, N=4 | 4 | sphere | 0.940 | 0.689 | 26.7% |
+| asynchronous d3, N=4 | 4 | ackley | 2.711 | 2.685 | 1.0% |
+| asynchronous d3, N=4 | 4 | rosenbrock | 12.268 | 6.319 | 48.5% |
+| generational, N=8 | 2 | rastrigin | 0.556 | 0.497 | 10.5% |
+| generational, N=8 | 2 | sphere | 0.000 | 0.000 | 100.0% |
+| generational, N=8 | 2 | ackley | 0.001 | 0.000 | 100.0% |
+| generational, N=8 | 2 | rosenbrock | 0.245 | 0.000 | 100.0% |
+| generational, N=8 | 4 | rastrigin | 6.105 | 3.270 | 46.4% |
+| generational, N=8 | 4 | sphere | 0.002 | 0.000 | 100.0% |
+| generational, N=8 | 4 | ackley | 0.095 | 0.000 | 99.8% |
+| generational, N=8 | 4 | rosenbrock | 3.370 | 1.582 | 53.0% |
+
+**Claim 3 -- the strongly multimodal function is where the correct algorithm
+loses to the former walk. Holds, and sharply.** Same cells as claim 1; a win
+is the shipped generational learner's median beating the former walk's at
+depth 3.
+
+| function | 120 shots | 240 shots | 600 shots | all |
+|---|---|---|---|---|
+| rastrigin | 1 of 3 | 0 of 3 | 0 of 3 | 1 of 9 |
+| sphere | 1 of 3 | 1 of 3 | 2 of 3 | 4 of 9 |
+| ackley | 1 of 3 | 2 of 3 | 2 of 3 | 5 of 9 |
+| rosenbrock | 2 of 3 | 2 of 3 | 2 of 3 | 6 of 9 |
+| **all four** | **5 of 12** | **5 of 12** | **6 of 12** | **16 of 36** |
+
+Rastrigin is the correct algorithm's worst function by a distance -- one cell
+of nine, and none at all once the budget passes 120 shots -- and Rosenbrock
+its best, at six of nine. Over all four functions the split is roughly even,
+5 / 5 / 6 of twelve against the earlier 3 / 7 / 6, which is the same reading.
+
+The restart is still what the former walk is paying for where it loses. Turning
+`restart_tolerance` off makes it beat the generational learner in 8, 9 and 9 of
+the twelve cells at the three budgets, against 7, 7 and 6 with the restart on:
+the re-seeding costs the old code more than its slot mixing wins it, which is
+independent support for having removed the key.
+
+**The whole 4-D table**, median / mean of the best cost found, 16 seeds:
+
+| function | N | shots | generational | asynchronous d3 | former d3 | former d3, no restart |
+|---|---|---|---|---|---|---|
+| rastrigin | 8 | 120 | 12.217 / 13.420 | 11.663 / 12.635 | 10.617 / 11.295 | 10.617 / 11.295 |
+| rastrigin | 8 | 240 | 6.135 / 6.643 | 5.234 / 6.036 | 6.005 / 5.665 | 5.982 / 6.144 |
+| rastrigin | 8 | 600 | 3.980 / 3.720 | 2.489 / 3.306 | 2.041 / 2.111 | 3.074 / 4.527 |
+| rastrigin | 16 | 120 | 15.738 / 15.467 | 17.737 / 17.781 | 16.447 / 16.306 | 16.447 / 16.306 |
+| rastrigin | 16 | 240 | 12.165 / 11.768 | 9.388 / 10.192 | 7.742 / 8.731 | 7.742 / 8.731 |
+| rastrigin | 16 | 600 | 3.296 / 3.860 | 3.399 / 3.577 | 2.085 / 2.420 | 2.075 / 2.462 |
+| rastrigin | 60 | 120 | 25.147 / 23.730 | 24.743 / 24.369 | 24.785 / 23.872 | 24.785 / 23.872 |
+| rastrigin | 60 | 240 | 20.815 / 19.193 | 21.107 / 20.818 | 15.785 / 15.974 | 15.785 / 15.974 |
+| rastrigin | 60 | 600 | 11.454 / 10.222 | 10.242 / 10.563 | 9.034 / 9.211 | 9.034 / 9.211 |
+| sphere | 8 | 120 | 0.175 / 0.195 | 0.160 / 0.181 | 0.150 / 0.201 | 0.141 / 0.170 |
+| sphere | 8 | 240 | 0.002 / 0.003 | 0.002 / 0.027 | 0.042 / 0.058 | 0.001 / 0.016 |
+| sphere | 8 | 600 | 0.000 / 0.000 | 0.000 / 0.000 | 0.018 / 0.018 | 0.000 / 0.012 |
+| sphere | 16 | 120 | 0.955 / 1.202 | 0.494 / 0.593 | 0.828 / 0.909 | 0.828 / 0.909 |
+| sphere | 16 | 240 | 0.061 / 0.075 | 0.028 / 0.036 | 0.051 / 0.067 | 0.022 / 0.041 |
+| sphere | 16 | 600 | 0.000 / 0.000 | 0.000 / 0.000 | 0.020 / 0.026 | 0.000 / 0.000 |
+| sphere | 60 | 120 | 1.832 / 2.421 | 2.213 / 2.680 | 2.646 / 2.986 | 2.646 / 2.986 |
+| sphere | 60 | 240 | 1.146 / 1.155 | 1.019 / 1.080 | 0.685 / 0.941 | 0.685 / 0.941 |
+| sphere | 60 | 600 | 0.179 / 0.160 | 0.072 / 0.081 | 0.057 / 0.068 | 0.057 / 0.068 |
+| ackley | 8 | 120 | 1.615 / 1.807 | 2.553 / 2.054 | 1.553 / 1.722 | 1.553 / 1.722 |
+| ackley | 8 | 240 | 0.103 / 0.611 | 0.474 / 0.991 | 0.170 / 1.054 | 0.176 / 1.038 |
+| ackley | 8 | 600 | 0.001 / 0.507 | 0.000 / 0.772 | 0.039 / 0.161 | 0.001 / 0.966 |
+| ackley | 16 | 120 | 3.201 / 3.125 | 3.206 / 2.891 | 3.065 / 3.093 | 3.065 / 3.093 |
+| ackley | 16 | 240 | 0.999 / 1.173 | 0.949 / 1.138 | 0.750 / 0.943 | 0.750 / 0.943 |
+| ackley | 16 | 600 | 0.010 / 0.128 | 0.004 / 0.007 | 0.016 / 0.030 | 0.003 / 0.118 |
+| ackley | 60 | 120 | 4.181 / 4.270 | 4.300 / 4.323 | 4.632 / 4.598 | 4.632 / 4.598 |
+| ackley | 60 | 240 | 3.520 / 3.428 | 3.442 / 3.330 | 3.694 / 3.552 | 3.694 / 3.552 |
+| ackley | 60 | 600 | 2.119 / 1.991 | 1.257 / 1.313 | 0.763 / 0.990 | 0.763 / 0.990 |
+| rosenbrock | 8 | 120 | 21.885 / 35.458 | 9.036 / 16.637 | 62.358 / 70.231 | 21.556 / 34.956 |
+| rosenbrock | 8 | 240 | 2.964 / 3.903 | 2.884 / 3.404 | 16.523 / 21.907 | 3.560 / 13.774 |
+| rosenbrock | 8 | 600 | 1.582 / 1.953 | 0.754 / 1.799 | 7.200 / 9.245 | 1.697 / 3.574 |
+| rosenbrock | 16 | 120 | 48.814 / 75.423 | 54.792 / 65.042 | 38.533 / 58.934 | 36.030 / 57.534 |
+| rosenbrock | 16 | 240 | 5.946 / 10.765 | 5.688 / 12.022 | 20.321 / 23.888 | 3.922 / 3.993 |
+| rosenbrock | 16 | 600 | 1.189 / 1.785 | 1.109 / 1.860 | 13.653 / 12.243 | 0.573 / 0.669 |
+| rosenbrock | 60 | 120 | 218.300 / 387.929 | 188.883 / 318.572 | 244.177 / 260.017 | 244.177 / 260.017 |
+| rosenbrock | 60 | 240 | 103.334 / 129.949 | 89.948 / 95.427 | 78.451 / 85.950 | 78.451 / 85.950 |
+| rosenbrock | 60 | 600 | 15.509 / 17.832 | 7.773 / 9.746 | 10.280 / 12.980 | 5.888 / 6.900 |
+
+**And the dimension sweep**, generational, median / mean, 12 seeds:
+
+| D | N | N/D | shots | rastrigin | sphere | ackley | rosenbrock |
+|---|---|---|---|---|---|---|---|
+| 2 | 4 | 2 | 240 | 2.029 / 2.636 | 0.009 / 0.209 | 0.356 / 1.531 | 1.023 / 1.945 |
+| 2 | 8 | 4 | 240 | 0.556 / 0.508 | 0.000 / 0.000 | 0.001 / 0.216 | 0.245 / 0.477 |
+| 2 | 16 | 8 | 240 | 0.609 / 0.841 | 0.000 / 0.000 | 0.044 / 0.090 | 0.031 / 0.147 |
+| 2 | 32 | 16 | 240 | 1.574 / 1.792 | 0.011 / 0.013 | 0.417 / 0.514 | 0.099 / 0.211 |
+| 2 | 4 | 2 | 600 | 2.029 / 2.635 | 0.009 / 0.209 | 0.356 / 1.531 | 1.023 / 1.942 |
+| 2 | 8 | 4 | 600 | 0.497 / 0.497 | 0.000 / 0.000 | 0.000 / 0.215 | 0.000 / 0.200 |
+| 2 | 16 | 8 | 600 | 0.000 / 0.332 | 0.000 / 0.000 | 0.000 / 0.000 | 0.000 / 0.000 |
+| 2 | 32 | 16 | 600 | 0.054 / 0.281 | 0.000 / 0.000 | 0.009 / 0.010 | 0.001 / 0.003 |
+| 4 | 4 | 1 | 240 | 8.193 / 9.310 | 0.422 / 0.824 | 2.885 / 2.777 | 18.015 / 79.704 |
+| 4 | 8 | 2 | 240 | 6.105 / 6.527 | 0.002 / 0.003 | 0.095 / 0.400 | 3.370 / 4.264 |
+| 4 | 16 | 4 | 240 | 12.165 / 12.561 | 0.066 / 0.083 | 1.064 / 1.252 | 5.922 / 11.507 |
+| 4 | 32 | 8 | 240 | 18.450 / 15.916 | 0.436 / 0.715 | 3.092 / 2.917 | 39.716 / 51.342 |
+| 4 | 4 | 1 | 600 | 8.128 / 9.160 | 0.420 / 0.780 | 2.881 / 2.767 | 17.959 / 79.297 |
+| 4 | 8 | 2 | 600 | 3.270 / 3.377 | 0.000 / 0.000 | 0.000 / 0.307 | 1.582 / 1.967 |
+| 4 | 16 | 4 | 600 | 3.970 / 4.365 | 0.000 / 0.000 | 0.013 / 0.167 | 1.189 / 1.665 |
+| 4 | 32 | 8 | 600 | 7.100 / 6.890 | 0.009 / 0.011 | 0.548 / 0.483 | 3.782 / 3.866 |
+| 8 | 8 | 1 | 240 | 36.070 / 37.234 | 0.457 / 1.273 | 2.085 / 2.318 | 67.422 / 130.667 |
+| 8 | 16 | 2 | 240 | 45.996 / 47.873 | 1.932 / 1.929 | 3.536 / 3.584 | 249.013 / 440.579 |
+| 8 | 32 | 4 | 240 | 52.540 / 54.398 | 6.119 / 6.683 | 4.717 / 4.706 | 1009.468 / 1092.445 |
+| 8 | 8 | 1 | 600 | 14.437 / 15.505 | 0.026 / 0.377 | 1.343 / 1.418 | 7.784 / 18.508 |
+| 8 | 16 | 2 | 600 | 29.704 / 28.839 | 0.033 / 0.038 | 0.575 / 0.636 | 17.090 / 32.281 |
+| 8 | 32 | 4 | 600 | 37.689 / 38.768 | 0.573 / 0.612 | 2.747 / 2.778 | 87.084 / 119.783 |
+| 8 | 8 | 1 | 1200 | 12.032 / 12.561 | 0.000 / 0.232 | 1.297 / 1.394 | 6.283 / 6.712 |
+| 8 | 16 | 2 | 1200 | 11.137 / 12.353 | 0.000 / 0.000 | 0.010 / 0.117 | 4.895 / 9.688 |
+| 8 | 32 | 4 | 1200 | 30.054 / 29.593 | 0.021 / 0.028 | 0.543 / 0.536 | 8.942 / 14.806 |
+
+**Caveats, to be carried by anything citing these numbers.** Four analytic
+test functions, all on the same box; two to eight parameters; budgets of 120
+to 1200 shots; one mutation strategy, `best1`; no noise on the cost, no
+dropped shots and no unusable ones. A lab's landscape is none of those things,
+and the sizing guidance is guidance rather than a refusal for that reason.
+What the fake runmanager does not exercise is everything above the session --
+the worker, the routine, lyse and a real queue -- and what these runs do not
+exercise at all is the loss paths: a dropped founder, a NaN trial and a cost
+arriving after its generation's boundary are covered by the test suite rather
+than measured here.
+
+**Rebuilding it.** Each run is one `Session` over a configuration naming
+`differential_evolution`, `max_num_runs` as the budget and `seed` as the run's
+seed (0 upwards), against `[MLOOP_PARAMS]` of `D` parameters on
+`[-5.12, 5.12]`; the loop is `reconcile`, `refill`, then record the cost of one
+shot drawn uniformly from those in flight, until the session stops. The
+asynchronous and former arms take the same configuration with `learner` set to
+`random` and `num_buffered_runs = 3`, and are handed their learner directly.
+The completion order is drawn from `default_rng(seed + 991)`, as the earlier
+sweeps drew it.
 
 ### Tests, each proven by a mutation
 

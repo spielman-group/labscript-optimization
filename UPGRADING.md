@@ -116,6 +116,18 @@ over about a thousand shots is worth sixteen; the strategy's own minimum, three
 members for `best1`, is refused below and is nowhere near enough to search
 with.
 
+Those two numbers are measured, and measured narrowly: four analytic test
+functions, two to eight parameters, budgets of 120 to 1200 shots, and the
+`best1` strategy only. Over that sweep eight members holds the best median in
+nineteen of the twenty-eight (parameters, budget, function) cells and sixteen
+members in the other nine; counted by blocks of four functions, eight wins
+five of the seven and sixteen takes a block only at the largest budget. Four
+members, at two and at four parameters, improves by under a per cent when
+given two and a half times the budget, which is what converging prematurely
+looks like. `codex_issues_proposal.md`, under "Re-run against the shipped
+learner", has the tables. Your landscape is not an analytic test function, so
+treat the two numbers as a place to start.
+
 A budget has to cover two whole generations of that population, so
 `max_num_runs` below `2 × population_size` is refused: the first generation is
 the population itself and the second is the first to evolve it.
@@ -174,9 +186,11 @@ goes out whole.
   proposal's position in the history is its role -- founders fill the first
   population, and every block after them is a generation of trials, one to a
   slot -- so a shot that never reports leaves its slot empty rather than
-  shifting every role after it. The barrier costs some sample efficiency
-  against an asynchronous variant, and does not stop costing it at longer
-  budgets; the name has to be true.
+  shifting every role after it. The barrier costs sample efficiency against an
+  asynchronous variant, and the cost grows with the budget rather than washing
+  out: over four analytic test functions at four parameters it is nothing
+  measurable at 120 shots and a factor of 1.6 in the best cost found at 600.
+  The name has to be true.
 - **`seed`** in `[MLOOP]` makes a run reproducible.
 
 ## What the routine reports
