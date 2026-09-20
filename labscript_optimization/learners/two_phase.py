@@ -72,7 +72,10 @@ class TwoPhaseLearner(Learner):
 
     def __init__(self, trainer, main, num_training: int):
         for role, wrapped in (("trainer", trainer), ("main", main)):
-            generation = getattr(wrapped, "generation", None)
+            # Read straight off the object, with no default standing in for it:
+            # a learner declares its own generation, and one that declares
+            # nothing is not something this can hold a barrier for.
+            generation = wrapped.generation
             if generation is not None:
                 raise ValueError(
                     f"the {role} {type(wrapped).__name__} proposes whole "

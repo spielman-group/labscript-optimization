@@ -85,19 +85,6 @@ def test_a_learner_without_phases_of_its_own_still_reports_one(space, rng):
 # --- the interface ---------------------------------------------------------
 
 
-def test_every_learner_is_a_learner_including_the_wrapper(space, rng):
-    """The wrapper is what ``build`` returns for the default configuration.
-
-    A session holds it and proposes from it exactly as it does from the
-    learners it wraps, so it has to be substitutable for one. An interface the
-    most-used learner in the package cannot satisfy describes the wrong thing.
-    """
-    for cls in [*learners.LEARNERS.values(), TwoPhaseLearner]:
-        assert issubclass(cls, Learner), cls.__name__
-    for learner in every_learner(space, rng):
-        assert isinstance(learner, Learner), type(learner).__name__
-
-
 @pytest.mark.parametrize('name, cls', sorted(learners.LEARNERS.items()))
 def test_a_learner_named_in_a_configuration_takes_the_space_first(name, cls):
     """Building one is ``cls(space, rng, **options)``, the options matched by
@@ -337,7 +324,10 @@ def test_directed_random_falls_back_to_the_best_point_when_the_band_is_empty(
 ):
     """With no observation in the band there is still somewhere to search."""
     seen = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
-    costs = [0.0, 10.0, 20.0, 30.0]  # nothing lands in [22.5, 27]
+    # Nothing lands in [22.5, 27], and the best point is not the first one, so
+    # falling back to the best is distinguishable from falling back to
+    # whichever observation happens to head the history.
+    costs = [30.0, 10.0, 20.0, 0.0]
     history = [observe(i, p, c) for i, (p, c) in enumerate(zip(seen, costs))]
 
     learner = DirectedRandomLearner(
@@ -345,7 +335,7 @@ def test_directed_random_falls_back_to_the_best_point_when_the_band_is_empty(
     )
     proposals = learner.propose(history, 200)
     nearest = np.abs(proposals[:, None, :] - seen[None, :, :]).max(axis=2).argmin(axis=1)
-    assert set(np.unique(nearest)) == {0}
+    assert set(np.unique(nearest)) == {3}
 
 
 @pytest.mark.parametrize(
@@ -516,6 +506,19 @@ def test_a_trial_is_bred_from_the_member_holding_its_own_block_position(rng):
     for slot, proposal in enumerate(learner.propose(history, 4)):
         shared = int(np.isclose(proposal, members[slot]).sum())
         assert shared == space.num_params - 1, slot
+
+    # And from part-way through a block, which is where the position the
+    # proposal is made at stops agreeing with its place in the batch asked
+    # for. A session reaches it when the run budget cuts a generation short
+    # and a shot of that short generation is then dropped, freeing room for
+    # fewer proposals than a whole one; a learner driven directly reaches it
+    # by asking at any history length it likes.
+    part_way = history[:6]
+    members = learner.replay(part_way)[0]
+    for offset, proposal in enumerate(learner.propose(part_way, 4)):
+        slot = (len(part_way) + offset) % 4
+        shared = int(np.isclose(proposal, members[slot]).sum())
+        assert shared == space.num_params - 1, offset
 
 
 def test_every_proposal_keeps_the_role_its_position_gave_it(rng):
@@ -732,7 +735,7 @@ def test_gaussian_process_finds_the_minimum(space, rng):
     np.testing.assert_allclose(best.params, [1.3, -2.1], atol=0.3)
 
 
-@pytest.mark.parametrize('batch_size, carried, count', [(4, 12, 15), (8, 6, 7)])
+@pytest.mark.parametrize('batch_size, carried, count', [(4, 8, 15), (8, 6, 7)])
 def test_gaussian_process_state_depends_only_on_the_history(
     space, batch_size, carried, count
 ):
@@ -741,9 +744,14 @@ def test_gaussian_process_state_depends_only_on_the_history(
     The kernel hyperparameters are cached between calls, so they have to be a
     function of the history alone: an instance that has been fitting all
     session must arrive at what a fresh one computes, not at a kernel fitted to
-    however much it happened to hold when the cache was last filled. The second
-    case is a history short of one full batch, where there is no whole batch
-    to fit to and the cache has to give way on every arrival.
+    however much it happened to hold when the cache was last filled.
+
+    Both cases are ones where the cache has to give way between the two fits,
+    because a case where it does not cannot tell the two learners apart
+    whatever the caching does. The first crosses a batch boundary -- the kernel
+    is owed to eight observations and then to twelve -- and the second is a
+    history short of one full batch, where there is no whole batch to fit to
+    and the cache gives way on every arrival.
     """
     history = gaussian_process_history(space, 9, count=count)
     all_session = GaussianProcessLearner(
@@ -1028,12 +1036,25 @@ def test_a_learner_that_hides_its_knobs_in_kwargs_is_refused(space, monkeypatch)
 # --- two phase -------------------------------------------------------------
 
 
-class Ready:
+class Ready(Learner):
+    """A main learner that always proposes.
+
+    A :class:`Learner`, and so carrying the declarations a wrapper reads off
+    what it wraps: a double that answered for fewer of them than the learners
+    that ship would let the wrapper read one with a default and still pass.
+    """
+
+    last_phase = 'main'
+
     def propose(self, history, k):
         return np.zeros((k, 2))
 
 
-class NeverReady:
+class NeverReady(Learner):
+    """A main learner that can never propose from the history it is given."""
+
+    last_phase = 'main'
+
     def propose(self, history, k):
         raise InsufficientData('not yet')
 
@@ -1098,6 +1119,27 @@ def test_a_two_phase_learner_answers_for_the_observations_it_needs(space, rng):
     main = GaussianProcessLearner(space, rng, minimum_observations=6)
     learner = TwoPhaseLearner(RandomLearner(space, rng), main, num_training=6)
     assert learner.minimum_observations == 0
+
+
+def test_a_learner_that_declares_nothing_is_not_one_that_declares_no_barrier(
+    space, rng
+):
+    """A wrapper reads the declaration off what it wraps and supplies none.
+
+    Filled in with a default here, a learner that had stopped declaring its
+    generation would be wrapped without a word and its barrier lost behind the
+    wrapper, with a session topping the queue up mid-generation and everything
+    still running.
+    """
+
+    class Undeclared:
+        last_phase = 'main'
+
+        def propose(self, history, k):
+            return np.zeros((k, 2))
+
+    with pytest.raises(AttributeError, match='generation'):
+        TwoPhaseLearner(RandomLearner(space, rng), Undeclared(), num_training=3)
 
 
 def test_a_generational_learner_cannot_be_put_behind_a_trainer(space, rng):

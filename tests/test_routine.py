@@ -407,12 +407,22 @@ def lab(monkeypatch):
 
 
 @pytest.mark.parametrize('set_by_the_lab', [None, 300.0])
-def test_the_configure_deadline_covers_the_waits_inside_it(lab, set_by_the_lab):
+def test_the_configure_deadline_covers_the_waits_inside_it(
+    lab, monkeypatch, set_by_the_lab
+):
     """The worker greets runmanager and then asks it questions, each of which
     the client waits ``communication_timeout`` for -- a minute where the lab
     has set nothing, and whatever the lab says where it has. A deadline below
     their sum fires first and reports a worker that was slow, when what
     happened is that runmanager stopped answering.
+
+    The greeting is one of those waits. Left out of the sum, the worker is
+    killed while the greeting it is inside still has time to run, and a
+    runmanager that is not running is never named as the cause.
+
+    The margin is held below the greeting's deadline so that no term of the
+    sum is carried by another: at the margin the package ships, an allowance
+    that had dropped the greeting's term would still cover the questions.
     """
     # BLACS's key, a different number for a different job: a lab that has set
     # it must not have it taken for the one the client waits.
@@ -422,27 +432,12 @@ def test_the_configure_deadline_covers_the_waits_inside_it(lab, set_by_the_lab):
     # What runmanager.remote.Client will wait, which is labconfig's number or
     # the fallback the client itself falls back to.
     client_waits = 60.0 if set_by_the_lab is None else set_by_the_lab
+    monkeypatch.setattr(routine_module, 'CONFIGURE_MARGIN', 0.01)
 
     assert routine_module.configure_timeout() > (
         interface_module.GREETING_TIMEOUT
         + interface_module.CHECK_READY_REQUESTS * client_waits
     )
-
-
-def test_runmanager_is_given_up_on_before_the_worker_is(lab, monkeypatch):
-    """Everything the worker does with runmanager happens inside the routine's
-    allowance for configuring it, and the worker is killed when that runs out.
-    A greeting allowed to outlast it means a runmanager that is not running is
-    never reported as one: the lab is told only that the worker was slow.
-
-    The lab here has tightened the client's deadline and the margin to below
-    the greeting's, so what holds the greeting inside the allowance is its own
-    term in the sum rather than the other terms happening to be larger.
-    """
-    lab[('timeouts', 'communication_timeout')] = 0.1
-    monkeypatch.setattr(routine_module, 'CONFIGURE_MARGIN', 0.1)
-
-    assert interface_module.GREETING_TIMEOUT < routine_module.configure_timeout()
 
 
 def test_a_runmanager_that_stops_answering_after_the_greeting_is_named(
@@ -642,6 +637,24 @@ def test_the_first_invocation_hands_over_nothing_and_reads_one_row(session, box)
     routine_module.optimise(session.path)
     assert session.worker.sent == [('shot', 1, None)]
     assert box.asked == [1]
+
+
+def test_a_frame_that_no_longer_reaches_the_handled_row_is_handed_over_whole(
+    session, shot, analysed
+):
+    """A sequence that has run on further than the frame reaches, or a new one
+    entirely, leaves lyse holding rows none of which is the one this routine
+    handled last. Every one of them may be a run the session spent. Handing a
+    row over twice is harmless -- the session takes a cost for a shot id once
+    -- and skipping one is a run it never hears about at all.
+    """
+    analysed(shot(shot_id='row-1', cost=1.0))
+    routine_module.optimise(
+        session.path,
+        session.storage,
+        frame([shot(shot_id='row-2', cost=2.0), shot(shot_id='row-3', cost=3.0)]),
+    )
+    assert ids_sent(session.worker)[-1] == ['row-2', 'row-3']
 
 
 def test_an_invocation_with_nothing_new_still_sends_one_message(

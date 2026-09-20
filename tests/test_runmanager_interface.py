@@ -4,7 +4,6 @@ These use a fake client returning the shapes the real one documents, so a
 change to those shapes shows up here rather than in the lab.
 """
 
-import numpy as np
 import pytest
 
 from labscript_optimization import config as config_module

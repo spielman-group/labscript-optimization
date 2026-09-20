@@ -1,13 +1,10 @@
 """Session behaviour: matching costs to shots, and never waiting on a lost one."""
 
-import numpy as np
 import pytest
 
 from labscript_optimization import config as config_module
 from labscript_optimization.observations import COMPLETE, DROPPED, PENDING, usable
 from labscript_optimization.session import Session
-
-from conftest import FakeRunmanager
 
 BASE = """
 [ANALYSIS]
@@ -535,27 +532,3 @@ def test_a_cost_arriving_for_a_blocked_shot_clears_it(session, runmanager):
     session.reconcile()
     session.record('shot-0', 1.0, None, False)
     assert session.status()['blocked'] == 0
-
-
-@pytest.mark.parametrize(
-    'refused, setting',
-    [({'buffered': 0}, 'num_buffered_runs'), ({'max_num_runs': 0}, 'max_num_runs')],
-    ids=['num_buffered_runs', 'max_num_runs'],
-)
-def test_a_setting_that_makes_a_silent_session_is_refused(refused, setting):
-    """And this is the session it is refused on behalf of.
-
-    Nothing is ever submitted, so nothing is ever recorded; check_stop is
-    reached only from record, so there is no stop reason either, and starved
-    counts nothing because the queue was never the optimiser's to lose. The
-    run looks like a session that is thinking about it.
-    """
-    with pytest.raises(ValueError, match=f'{setting} must be at least 1'):
-        make_config(**refused)
-
-    config = make_config()
-    setattr(config, setting, 0)
-    session = Session(config, FakeRunmanager())
-    assert [session.refill() for _ in range(3)] == [[], [], []]
-    assert session.starved == 0
-    assert session.stopped is None

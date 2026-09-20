@@ -360,6 +360,21 @@ def test_a_run_count_that_is_not_a_number_is_rejected():
     'text, spelling, named',
     [
         (
+            MINIMAL.replace('groups', 'ignore_bad = true\ngroups'),
+            'ignore_bad',
+            '[ANALYSIS]',
+        ),
+        (
+            MINIMAL.replace('groups', 'analysislib_console_log_level = "DEBUG"\ngroups'),
+            'analysislib_console_log_level',
+            '[ANALYSIS]',
+        ),
+        (
+            MINIMAL.replace('groups', 'analysislib_file_log_level = "DEBUG"\ngroups'),
+            'analysislib_file_log_level',
+            '[ANALYSIS]',
+        ),
+        (
             MINIMAL + '[MLOOP]\ncontroller_type = "differential_evolution"\n',
             'controller_type',
             '[MLOOP]',
@@ -367,9 +382,31 @@ def test_a_run_count_that_is_not_a_number_is_rejected():
         (MINIMAL + '[MLOOP]\nno_delay = true\n', 'no_delay', '[MLOOP]'),
         (MINIMAL + '[MLOOP]\nvisualisations = false\n', 'visualisations', '[MLOOP]'),
         (
-            MINIMAL.replace('groups', 'ignore_bad = true\ngroups'),
-            'ignore_bad',
-            '[ANALYSIS]',
+            MINIMAL + '[MLOOP]\nconsole_log_level = "DEBUG"\n',
+            'console_log_level',
+            '[MLOOP]',
+        ),
+        (
+            MINIMAL + '[MLOOP]\nconsole_log_string = "%(message)s"\n',
+            'console_log_string',
+            '[MLOOP]',
+        ),
+        (MINIMAL + '[MLOOP]\narchive_type = "txt"\n', 'archive_type', '[MLOOP]'),
+        (
+            MINIMAL + '[MLOOP]\nrestart_tolerance = 0.01\n',
+            'restart_tolerance',
+            '[MLOOP]',
+        ),
+        (
+            MINIMAL + '[LEARNER.differential_evolution]\nrestart_tolerance = 0.01\n',
+            'restart_tolerance',
+            '[LEARNER.differential_evolution]',
+        ),
+        (MINIMAL + '[MLOOP]\ngeneration_size = 4\n', 'generation_size', '[MLOOP]'),
+        (
+            MINIMAL + '[LEARNER.gaussian_process]\ngeneration_size = 4\n',
+            'generation_size',
+            '[LEARNER.gaussian_process]',
         ),
         (
             MINIMAL + '[MLOOP_PARAMS.G.y]\nminimum = 2.0\n',
@@ -384,19 +421,35 @@ def test_a_run_count_that_is_not_a_number_is_rejected():
         (MINIMAL + '[COMPILATION]\nmock = false\n', 'COMPILATION', 'the top level'),
     ],
     ids=[
-        'controller_type',
-        'no_delay',
-        'visualisations',
-        'ignore_bad',
-        'minimum',
-        'maximum',
+        'ANALYSIS.ignore_bad',
+        'ANALYSIS.analysislib_console_log_level',
+        'ANALYSIS.analysislib_file_log_level',
+        'MLOOP.controller_type',
+        'MLOOP.no_delay',
+        'MLOOP.visualisations',
+        'MLOOP.console_log_level',
+        'MLOOP.console_log_string',
+        'MLOOP.archive_type',
+        'MLOOP.restart_tolerance',
+        'LEARNER.differential_evolution.restart_tolerance',
+        'MLOOP.generation_size',
+        'LEARNER.gaussian_process.generation_size',
+        'MLOOP_PARAMS.minimum',
+        'MLOOP_PARAMS.maximum',
         'COMPILATION',
     ],
 )
-def test_a_spelling_this_package_retired_is_rejected(text, spelling, named):
-    """M-LOOP's and analysislib-mloop's names for things this package renamed,
-    dropped, or never had. Kept as aliases they would be spellings to carry for
-    ever, in a schema whose argument is that a file says what is in force.
+def test_every_setting_the_upgrade_document_retires_is_refused(text, spelling, named):
+    """``UPGRADING.md`` §2 is the list a lab upgrades against: cut these keys,
+    and the file loads. One of them still accepted is a setting the document
+    says is gone and the loader takes, which is the belief the whole schema
+    exists to prevent -- and the lab reads the document, not this file, so a
+    row of it that nothing checks is a promise nobody has tested.
+
+    Each is written into the table the document names it in: the same spelling
+    can be a setting in one table and meaningless in another, and
+    ``[LEARNER.<name>]`` is held to its learner's constructor rather than to
+    this module's lists.
     """
     with pytest.raises(ValueError) as raised:
         config_module.loads(text)
@@ -469,11 +522,6 @@ def test_an_unknown_per_learner_table_is_rejected():
         config_module.loads(MINIMAL + '[LEARNER.typo]\ntrust_region = 0.2\n')
 
 
-def test_a_learner_named_shared_is_not_confused_with_shared_defaults():
-    with pytest.raises(ValueError, match="unknown learner 'shared'"):
-        config_module.loads(MINIMAL + '[LEARNER.shared]\ntrust_region = 0.2\n')
-
-
 def test_a_per_learner_table_accepts_that_learners_knob():
     config = config_module.loads(
         MINIMAL + '[LEARNER.directed_random]\ntrust_region = 0.2\n'
@@ -495,25 +543,6 @@ def test_the_example_configuration_loads_and_builds_its_learner():
 def test_batch_size_is_the_gaussian_process_knob():
     config = config_module.loads(MINIMAL + '[MLOOP]\nbatch_size = 6\n')
     assert learners.build(config).main.batch_size == 6
-
-
-@pytest.mark.parametrize(
-    'text',
-    [
-        MINIMAL + '[MLOOP]\ngeneration_size = 4\n',
-        MINIMAL + '[LEARNER.gaussian_process]\ngeneration_size = 4\n',
-    ],
-    ids=['[MLOOP]', '[LEARNER.gaussian_process]'],
-)
-def test_the_gaussian_process_knob_is_not_spelt_generation_size(text):
-    """A generation is what differential evolution's population takes.
-
-    Accepted in either table it would be a setting the file states and
-    nothing reads, which is how a lab comes to believe a schedule is in force
-    when it is not.
-    """
-    with pytest.raises(ValueError, match='generation_size'):
-        config_module.loads(text)
 
 
 # --- the budget and the population -----------------------------------------
@@ -581,26 +610,6 @@ def test_a_generational_learner_behind_a_trainer_is_refused_at_load(monkeypatch)
     )
     with pytest.raises(ValueError, match='whole generations of 8'):
         config_module.loads(DE)
-
-
-@pytest.mark.parametrize(
-    'text',
-    [
-        MINIMAL + '[MLOOP]\nrestart_tolerance = 0.01\n',
-        MINIMAL + '[LEARNER.differential_evolution]\nrestart_tolerance = 0.01\n',
-    ],
-    ids=['[MLOOP]', '[LEARNER.differential_evolution]'],
-)
-def test_a_population_is_never_re_seeded_on_its_own_spread(text):
-    """The restart is gone, so the key that sized it is refused.
-
-    Taken at a generation boundary from the costs resolved by then, the
-    decision could be changed by a cost arriving afterwards, which would turn
-    a block generated as trials into founders of a new epoch;
-    ``max_num_runs_without_better_params`` is the stop it was standing in for.
-    """
-    with pytest.raises(ValueError, match='restart_tolerance'):
-        config_module.loads(text)
 
 
 @pytest.mark.parametrize(

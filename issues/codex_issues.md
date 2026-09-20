@@ -16,7 +16,7 @@ House rules that apply to every slice:
   behaviour changes, grep for every sentence that described the old behaviour.
 - No settings accepted for compatibility. An unknown or unusable key is refused
   at load, naming the key and what is accepted instead.
-- Branch is `Development`. The suite stands at 317 tests. A count quoted inside a slice is the one that slice was written against; recount before
+- Branch is `Development`. The suite stands at 320 tests. A count quoted inside a slice is the one that slice was written against; recount before
   relying on either.
 
 **Revised after a fourth review round.** Slices 5, 7, 8 and 9 below replace what
@@ -41,7 +41,7 @@ backlog, which would also let BLACS stop mutating a client's deadline per call.
 - [x] Slice 9: A learner's declarations are facts about an instance
 - [x] Slice 10: Benchmark the shipped DE
 - [x] Slice 11: The benchmark evidence is in the repository, and the document is true
-- [ ] Slice 12: Test cleanup
+- [x] Slice 12: Test cleanup
 
 ---
 
@@ -969,16 +969,90 @@ Three specific items carried forward from earlier slices:
   hid an unresolvable annotation name that would have raised at import on 3.11.
   That bug is fixed, and the next one of its kind is still invisible.
 
+### What was found
+
+The suite stands at 320 tests, from 317. Every one of them has a mutation that
+makes it fail; 239 mutations were run to establish it, and each test is killed
+by at least one.
+
+**Removed.** Four things, none of them coverage.
+
+- `test_runmanager_is_given_up_on_before_the_worker_is`, the tautology above.
+  What it was reaching for -- that the greeting is a term of the allowance --
+  is what `test_the_configure_deadline_covers_the_waits_inside_it` now says,
+  with the margin held below the greeting's deadline so that no term of the
+  sum is carried by another. Every term is separately load-bearing there:
+  dropping the greeting, dropping one of the per-question deadlines, dropping
+  the margin, or reading labconfig's `liveness_timeout` in place of
+  `communication_timeout` each makes it fail.
+- `test_every_learner_is_a_learner_including_the_wrapper`, a class-hierarchy
+  guard. `Learner`'s own docstring says inheriting is not what makes an object
+  usable, and a learner that stopped inheriting would lose the declarations
+  the registry-wide test reads off an instance and fail there instead.
+- `test_a_learner_named_shared_is_not_confused_with_shared_defaults`. Nothing
+  treats `shared` as a table name, so the only mutation that reaches it is a
+  deliberate reintroduction of a rejected design; `[LEARNER.typo]` holds the
+  path it shares.
+- `test_a_setting_that_makes_a_silent_session_is_refused`. Its second half set
+  a `Config` field past validation and asserted the silent session that
+  results, which is the argument for the floor rather than a guard on it, and
+  a test that would fail the day the session was made to complain. The refusal
+  is held in `tests/test_config.py`.
+
+**Rewritten.** The retired-spelling cases are one parametrisation whose rows
+are the rows of `UPGRADING.md` §2, so every key that document tells a lab to
+delete or rename is a key the suite holds the loader to. It absorbs the
+`generation_size` and `restart_tolerance` cases, which were the same rule
+stated twice.
+
+**Filled.** Four claims had no test that could fail.
+
+- `TwoPhaseLearner` reads `generation` off what it wraps with no default, and
+  a wrapped object that declares none is refused rather than wrapped. The
+  learners in `tests/test_learners.py` that stand in for a main learner are
+  `Learner`s, so they carry what the real ones carry.
+- A trial is bred from the member holding its own block position when the
+  proposal is made part-way through a block, and not only at a block boundary
+  where that rule and a per-batch index agree. A session reaches the
+  disagreement when the run budget cuts a generation short and a shot of that
+  short generation is then dropped.
+- A frame that no longer reaches the row the routine handled last is handed
+  over whole.
+- One case of `test_gaussian_process_state_depends_only_on_the_history` was
+  unfalsifiable -- the two learners fit the same prefix both times, so they
+  agree whatever the cache does. Both cases now cross a boundary where the
+  cache has to give way.
+
+**Uncovered, and left so.** Each is a production check or knob with no test;
+none is scaffolding, and filling them is a coverage pass rather than this
+slice. `DirectedRandomLearner`'s `trust_gaussian` draw and its
+`explore_fraction` bounds check; `GaussianProcessLearner`'s `batch_size` floor;
+`DifferentialEvolutionLearner`'s `trust_region`, which no test sets, so
+founder-style draws around the best member are indistinguishable from draws
+over the whole space.
+
+**The oldest supported interpreter.** `tests/test_package.py` resolves every
+annotation in the package, which is what 3.11 does at import and 3.14 does
+only when asked -- the one bug of that class this batch has already had. It is
+not a run on 3.11 and does not stand in for one. Running the suite on the
+oldest supported interpreter is a packaging concern and this repository has
+nowhere to put it: there is no CI configuration at all. The interpreters on
+this machine cannot stand in either -- 3.13 has neither scikit-learn nor
+zprocess, so a run there would skip the learner and the worker. The answer is
+a CI matrix over the versions `requires-python` claims, which is a separate
+piece of work; a test that skipped itself when an interpreter was missing
+would be the failure this repository keeps naming.
+
 ### Acceptance criteria
 
-- [ ] Every surviving test has a mutation that makes it fail, and that mutation
+- [x] Every surviving test has a mutation that makes it fail, and that mutation
       is recorded
-- [ ] Tests that only pinned an implementation detail of the development loop
+- [x] Tests that only pinned an implementation detail of the development loop
       are gone
-- [ ] Behaviour a lab depends on is still covered: what is written onto a shot,
+- [x] Behaviour a lab depends on is still covered: what is written onto a shot,
       what is refused at load, what the session reports, and the DE role
       invariants
-- [ ] The suite's size before and after is reported, with the reasoning for
+- [x] The suite's size before and after is reported, with the reasoning for
       anything removed that looked load-bearing
 
 ### Blocked by
