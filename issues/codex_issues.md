@@ -37,7 +37,7 @@ backlog, which would also let BLACS stop mutating a client's deadline per call.
 - [x] Slice 6: A wrapper cannot silently drop a generation barrier
 - [x] Slice 7: A reply says which request it answers
 - [x] Slice 8: The configure deadline covers the waits inside it
-- [ ] Slice 9: A learner's declarations are facts about an instance
+- [x] Slice 9: A learner's declarations are facts about an instance
 - [ ] Slice 10: Benchmark the shipped DE
 - [ ] Slice 11: Test cleanup
 
@@ -712,16 +712,16 @@ learner to the declaration however it chooses to make it.
 
 ### Acceptance criteria
 
-- [ ] A learner that declares its generation in `__init__` is refused a queue
+- [x] A learner that declares its generation in `__init__` is refused a queue
       depth exactly as one declaring it on the class — mutation: restore the
       class-level read; the reproduction above is accepted again
-- [ ] The budget refusal reads the built learner, not a signature default —
+- [x] The budget refusal reads the built learner, not a signature default —
       mutation: restore the signature read; a learner that derives its own
       population is checked against the wrong number
-- [ ] The registry contract test covers every registered learner — mutations:
+- [x] The registry contract test covers every registered learner — mutations:
       register a learner whose generation is zero, and one with no phase; each
       must fail this test and no other
-- [ ] The learner contract states the rule
+- [x] The learner contract states the rule
 
 ### Blocked by
 
