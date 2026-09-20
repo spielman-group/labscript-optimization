@@ -5,6 +5,7 @@ these tests survive any rewrite that keeps the interface.
 """
 
 import inspect
+import numbers
 import warnings
 
 import numpy as np
@@ -109,6 +110,33 @@ def test_a_learner_named_in_a_configuration_takes_the_space_first(name, cls):
     assert [p.name for p in params[:2]] == ['space', 'rng']
     for knob in params[2:]:
         assert knob.default is not knob.empty, knob.name
+
+
+@pytest.mark.parametrize('name, cls', sorted(learners.LEARNERS.items()))
+def test_a_learner_named_in_a_configuration_declares_what_it_is_read_for(name, cls):
+    """The phase a session reports and the generation it queues to.
+
+    Both are read off an instance, so an instance is where both have to be
+    true, and a learner may declare either however it likes: a class
+    attribute, an assignment in ``__init__``, a property over its own
+    settings. This holds a learner added later to the declaration whichever
+    way it makes it. Built from its defaults over the smallest space there
+    is, because a learner that only declares once it has been configured a
+    particular way has not declared.
+    """
+    one_parameter = ParameterSpace([Parameter('x', 0.0, 1.0)])
+    learner = cls(one_parameter, np.random.default_rng(4))
+
+    assert isinstance(learner.last_phase, str), name
+
+    generation = learner.generation
+    # Zero is not "any number at a time", it is a session that proposes
+    # nothing; a bool is an int that says true or false, not how many.
+    assert generation is None or (
+        isinstance(generation, numbers.Integral)
+        and not isinstance(generation, bool)
+        and generation > 0
+    ), f'{name} declares generation {generation!r}'
 
 
 def test_a_learner_handed_its_two_arguments_backwards_is_refused(space, rng):
