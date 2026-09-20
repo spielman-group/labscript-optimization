@@ -124,8 +124,8 @@ members in the other nine; counted by blocks of four functions, eight wins
 five of the seven and sixteen takes a block only at the largest budget. Four
 members, at two and at four parameters, improves by under a per cent when
 given two and a half times the budget, which is what converging prematurely
-looks like. `codex_issues_proposal.md`, under "Re-run against the shipped
-learner", has the tables. Your landscape is not an analytic test function, so
+looks like. `codex_issues_proposal.md`, under "The dimension sweep", has the
+tables, and `benchmarks/` has the harness and the rows behind them. Your landscape is not an analytic test function, so
 treat the two numbers as a place to start.
 
 A budget has to cover two whole generations of that population, so
