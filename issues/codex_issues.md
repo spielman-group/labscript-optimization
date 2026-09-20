@@ -39,7 +39,7 @@ backlog, which would also let BLACS stop mutating a client's deadline per call.
 - [x] Slice 8: The configure deadline covers the waits inside it
 - [x] Slice 9: A learner's declarations are facts about an instance
 - [x] Slice 10: Benchmark the shipped DE
-- [ ] Slice 11: The benchmark evidence is in the repository, and the document is true
+- [x] Slice 11: The benchmark evidence is in the repository, and the document is true
 - [ ] Slice 12: Test cleanup
 
 ---
@@ -890,15 +890,15 @@ the learners. A benchmark measures quality; tests prove behaviour.
 
 ### Acceptance criteria
 
-- [ ] No superseded number is left standing in the document's tables or readings
-- [ ] A "Corrections" subsection records both corrections and what caused them
-- [ ] The harness runs every arm to the same number of completed shots —
+- [x] No superseded number is left standing in the document's tables or readings
+- [x] A "Corrections" subsection records both corrections and what caused them
+- [x] The harness runs every arm to the same number of completed shots —
       mutation: count submitted instead; the shipped numbers move back towards
       the withdrawn ones
-- [ ] Every table the document cites names its command and its commit
-- [ ] The smoke test runs the harness against the current learner in about a
+- [x] Every table the document cites names its command and its commit
+- [x] The smoke test runs the harness against the current learner in about a
       second — mutation: break the harness's entry point; the test fails
-- [ ] No deleted code is carried in the repository
+- [x] No deleted code is carried in the repository
 
 ### Blocked by
 
