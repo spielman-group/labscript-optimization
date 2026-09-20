@@ -16,7 +16,8 @@ House rules that apply to every slice:
   behaviour changes, grep for every sentence that described the old behaviour.
 - No settings accepted for compatibility. An unknown or unusable key is refused
   at load, naming the key and what is accepted instead.
-- Branch is `Development`. Baseline is 224 tests; recount before relying on it.
+- Branch is `Development`. The suite stands at 317 tests. A count quoted inside a slice is the one that slice was written against; recount before
+  relying on either.
 
 **Revised after a fourth review round.** Slices 5, 7, 8 and 9 below replace what
 was filed earlier. The cause was a defect found while checking Ian's assertion
