@@ -326,7 +326,7 @@ def test_start_worker_waits_for_and_consumes_the_configuration_reply(
     child = Worker()
     patch_spawned_worker(monkeypatch, to_worker, from_worker, child)
     monkeypatch.setattr(routine_module, 'REPLY_TIMEOUT', 0.001)
-    monkeypatch.setattr(routine_module, 'CONFIGURE_TIMEOUT', 0.2)
+    monkeypatch.setattr(routine_module, 'configure_timeout', lambda: 0.2)
     handles = routine_module.start_worker(tmp_path / 'config.toml', object())
 
     assert handles == (to_worker, from_worker, child)
@@ -357,6 +357,7 @@ def test_start_worker_reaps_a_worker_that_rejects_its_configuration(
     to_worker = Rejecting()
     child = Worker()
     patch_spawned_worker(monkeypatch, to_worker, from_worker, child)
+    monkeypatch.setattr(routine_module, 'configure_timeout', lambda: 0.2)
 
     with pytest.raises(RuntimeError, match='invalid configuration'):
         routine_module.start_worker(tmp_path / 'config.toml', object())
@@ -373,7 +374,7 @@ def test_start_worker_reaps_a_worker_that_does_not_configure(
 ):
     to_worker, from_worker, child = Pipe(), Pipe(), Worker()
     patch_spawned_worker(monkeypatch, to_worker, from_worker, child)
-    monkeypatch.setattr(routine_module, 'CONFIGURE_TIMEOUT', 0.01)
+    monkeypatch.setattr(routine_module, 'configure_timeout', lambda: 0.01)
 
     with pytest.raises(TimeoutError, match='did not configure within'):
         routine_module.start_worker(tmp_path / 'config.toml', object())
@@ -385,13 +386,110 @@ def test_start_worker_reaps_a_worker_that_does_not_configure(
     assert child.reaped
 
 
-def test_runmanager_is_given_up_on_before_the_worker_is():
+@pytest.fixture
+def lab(monkeypatch):
+    """labconfig as the routine reads it, in place of the workstation's.
+
+    The real one reads whatever file this machine happens to have, so a test
+    left with it would assert on the workstation rather than on the code. The
+    dictionary is ``{(section, option): value}``, and a key not in it is one
+    the lab has not set.
+    """
+    labconfig_module = pytest.importorskip('labscript_utils.labconfig')
+    settings = {}
+
+    class FakeLabConfig:
+        def getfloat(self, section, option, fallback=None):
+            return settings.get((section, option), fallback)
+
+    monkeypatch.setattr(labconfig_module, 'LabConfig', FakeLabConfig)
+    return settings
+
+
+@pytest.mark.parametrize('set_by_the_lab', [None, 300.0])
+def test_the_configure_deadline_covers_the_waits_inside_it(lab, set_by_the_lab):
+    """The worker greets runmanager and then asks it questions, each of which
+    the client waits ``communication_timeout`` for -- a minute where the lab
+    has set nothing, and whatever the lab says where it has. A deadline below
+    their sum fires first and reports a worker that was slow, when what
+    happened is that runmanager stopped answering.
+    """
+    # BLACS's key, a different number for a different job: a lab that has set
+    # it must not have it taken for the one the client waits.
+    lab[('timeouts', 'liveness_timeout')] = 1.0
+    if set_by_the_lab is not None:
+        lab[('timeouts', 'communication_timeout')] = set_by_the_lab
+    # What runmanager.remote.Client will wait, which is labconfig's number or
+    # the fallback the client itself falls back to.
+    client_waits = 60.0 if set_by_the_lab is None else set_by_the_lab
+
+    assert routine_module.configure_timeout() > (
+        interface_module.GREETING_TIMEOUT
+        + interface_module.CHECK_READY_REQUESTS * client_waits
+    )
+
+
+def test_runmanager_is_given_up_on_before_the_worker_is(lab, monkeypatch):
     """Everything the worker does with runmanager happens inside the routine's
     allowance for configuring it, and the worker is killed when that runs out.
     A greeting allowed to outlast it means a runmanager that is not running is
     never reported as one: the lab is told only that the worker was slow.
+
+    The lab here has tightened the client's deadline and the margin to below
+    the greeting's, so what holds the greeting inside the allowance is its own
+    term in the sum rather than the other terms happening to be larger.
     """
-    assert interface_module.GREETING_TIMEOUT < routine_module.CONFIGURE_TIMEOUT
+    lab[('timeouts', 'communication_timeout')] = 0.1
+    monkeypatch.setattr(routine_module, 'CONFIGURE_MARGIN', 0.1)
+
+    assert interface_module.GREETING_TIMEOUT < routine_module.configure_timeout()
+
+
+def test_a_runmanager_that_stops_answering_after_the_greeting_is_named(
+    lab, monkeypatch, tmp_path
+):
+    """The greeting covers the first request and nothing after it. A
+    runmanager whose GUI thread is inside a compile, or behind a modal dialog
+    somebody left open, greets and then answers nothing, and the question that
+    goes unanswered takes the client's full deadline to fail. The worker sends
+    what that question raised, and the routine has to still be listening for
+    the lab to read it.
+    """
+    client_waits = 0.2
+    from_worker = Pipe()
+
+    class Stalling(Pipe):
+        """A worker whose runmanager greets and then goes quiet."""
+
+        def put(self, item):
+            self.sent.append(item)
+            if item[0] != 'configure':
+                return
+            # The client gives up on its question at its own deadline, and the
+            # worker sends on what it raised.
+            timer = threading.Timer(
+                client_waits,
+                from_worker.incoming.put,
+                [
+                    (
+                        'error',
+                        item[1],
+                        'Traceback (most recent call last):\n'
+                        'TimeoutError: no response from runmanager',
+                    )
+                ],
+            )
+            timer.daemon = True
+            timer.start()
+
+    lab[('timeouts', 'communication_timeout')] = client_waits
+    monkeypatch.setattr(interface_module, 'GREETING_TIMEOUT', 0.01)
+    monkeypatch.setattr(routine_module, 'CONFIGURE_MARGIN', 0.01)
+    to_worker, child = Stalling(), Worker()
+    patch_spawned_worker(monkeypatch, to_worker, from_worker, child)
+
+    with pytest.raises(RuntimeError, match='no response from runmanager'):
+        routine_module.start_worker(tmp_path / 'config.toml', object())
 
 
 @pytest.fixture
@@ -979,6 +1077,9 @@ def running(monkeypatch, tmp_path):
 
         monkeypatch.setattr(worker_module, 'Worker', Spawned)
         monkeypatch.setattr(routine_module, 'REPLY_TIMEOUT', reply_timeout)
+        # A deadline for configuring that a test can outrun if it has to, and
+        # one these tests do not read the workstation's labconfig for.
+        monkeypatch.setattr(routine_module, 'configure_timeout', lambda: 5.0)
         path = tmp_path / 'mloop_config.toml'
         path.write_text(WORKER_CONFIG)
         storage = types.SimpleNamespace()
@@ -994,13 +1095,12 @@ def running(monkeypatch, tmp_path):
         thread.join(timeout=5)
 
 
-def test_a_request_the_worker_could_not_handle_ends_the_wait(
-    running, shot, monkeypatch
-):
+def test_a_request_the_worker_could_not_handle_ends_the_wait(running, shot):
     """The error is that request's reply: the worker sends it in place of a
     status, and nothing else for that request is coming. A routine that held
     out for a status would wait out its deadline on a worker that is alive and
-    well, and report it as slow.
+    well, and report it as slow. The fixture's deadline for configuring is the
+    five seconds this beats.
     """
 
     class Refusing:
@@ -1010,7 +1110,6 @@ def test_a_request_the_worker_could_not_handle_ends_the_wait(
         def check_ready(self):
             raise RuntimeError('runmanager reports an error in its globals')
 
-    monkeypatch.setattr(routine_module, 'CONFIGURE_TIMEOUT', 5.0)
     session = running(Refusing)
     started = time.monotonic()
 

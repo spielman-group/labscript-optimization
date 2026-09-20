@@ -36,6 +36,8 @@ import time
 
 import numpy as np
 
+from . import runmanager_interface
+
 #: The lyse results group the session's status is written to, and so the first
 #: level of every column it produces: ``df[('labscript_optimization',
 #: 'best_cost')]``. lyse names a routine's group after the routine's file, so a
@@ -54,9 +56,11 @@ SHOT_RESULTS = ("phase", "best_cost", "best_params", "best_shot_id", "stopped")
 #: short against a shot cycle.
 REPLY_TIMEOUT = 2.0
 
-#: Seconds allowed for the worker to load its configuration and establish its
-#: first runmanager connection. This is startup, not part of a shot cycle.
-CONFIGURE_TIMEOUT = 30.0
+#: Seconds :func:`configure_timeout` allows the worker on top of the runmanager
+#: traffic it is derived from: reading the configuration file and building the
+#: learner. That is work rather than a bounded wait, so it brings no deadline
+#: of its own to the sum.
+CONFIGURE_MARGIN = 10.0
 
 #: Seconds between one look at the worker's process and the next while waiting
 #: for a reply. A worker that has died is reported as dead within about this
@@ -200,11 +204,51 @@ def save_status(filepath, status) -> None:
         )
 
 
+def configure_timeout():
+    """Seconds the worker is allowed to configure itself in.
+
+    The sum of the waits it contains, because a deadline shorter than that sum
+    fires first and names the wrong cause: the worker killed mid-wait, and the
+    lab told that the worker was slow when runmanager was the one that stopped
+    answering. The terms are
+
+    * :data:`~labscript_optimization.runmanager_interface.GREETING_TIMEOUT`,
+      the one request runmanager is held to a short deadline for;
+    * the client's own deadline once for each request ``check_ready`` makes
+      after the greeting, of which there are
+      :data:`~labscript_optimization.runmanager_interface.CHECK_READY_REQUESTS`,
+      so that a third question asked there is visibly a reason to change this;
+    * :data:`CONFIGURE_MARGIN`, for the worker's own startup work.
+
+    The client's deadline is labconfig's ``timeouts/communication_timeout``,
+    read here as ``runmanager.remote.Client.__init__`` reads it, fallback and
+    all, because that is the number the worker's client will wait. With the
+    fallback the sum is a little over two minutes, which is a long time for a
+    stalled lyse routine -- and affordable because :func:`_drain` looks at the
+    worker's process while it waits, so a worker that has died is reported
+    within :data:`LIVENESS_POLL` and only a live worker ever reaches the
+    deadline.
+    """
+    # Deferred, so that importing this module reads no files: the routine is
+    # imported by lyse whether or not a session is ever started.
+    from labscript_utils.labconfig import LabConfig
+
+    client_timeout = LabConfig().getfloat(
+        "timeouts", "communication_timeout", fallback=60
+    )
+    return (
+        runmanager_interface.GREETING_TIMEOUT
+        + runmanager_interface.CHECK_READY_REQUESTS * client_timeout
+        + CONFIGURE_MARGIN
+    )
+
+
 def start_worker(config_path, process_tree=None):
     """Spawn the optimisation worker and configure it.
 
-    Configuring is :data:`CONFIGURE_REQUEST`, the session's first request.
-    Waits for its reply, then returns ``(to_worker, from_worker, popen)``.
+    Configuring is :data:`CONFIGURE_REQUEST`, the session's first request, and
+    it is given :func:`configure_timeout`. Waits for its reply, then returns
+    ``(to_worker, from_worker, popen)``.
     """
     # zprocess sends the class itself to the child, so the parent needs it.
     # Imported here rather than above so that a routine which never starts a
@@ -219,20 +263,26 @@ def start_worker(config_path, process_tree=None):
         # goes away with it.
         process_tree = ProcessTree.instance()
 
+    # zprocess's own deadline, and a different wait: how long the child has to
+    # start and connect back, which is over before the configure request goes
+    # out and the deadline below starts.
     worker = Worker(process_tree, startup_timeout=30)
     to_worker, from_worker = worker.start()
     handles = to_worker, from_worker, worker.child
     try:
+        # Inside the try: a worker already spawned is reaped even if its
+        # deadline is what could not be worked out.
+        allowed = configure_timeout()
         to_worker.put(
             ("configure", CONFIGURE_REQUEST, os.path.abspath(config_path))
         )
         status = _drain(
-            from_worker, worker.child, CONFIGURE_REQUEST, {}, CONFIGURE_TIMEOUT
+            from_worker, worker.child, CONFIGURE_REQUEST, {}, allowed
         )
         if status is None:
             raise TimeoutError(
                 f"the optimisation worker did not configure within "
-                f"{CONFIGURE_TIMEOUT:g} seconds"
+                f"{allowed:g} seconds"
             )
     except BaseException:
         _stop_worker(handles)

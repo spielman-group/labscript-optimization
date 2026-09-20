@@ -20,11 +20,12 @@ UNKNOWN_SHOT_STATE = "unknown"
 BLOCKED_SHOT_STATE = "blocked"
 
 #: Seconds runmanager is given to answer the greeting that opens a session.
-#: Short against the routine's allowance for the whole of configuration, so
-#: that a runmanager which is not running is named as the cause rather than
-#: the worker being killed mid-wait and the lab told that it was slow. The
-#: session's later requests keep the client's own timeout, labconfig's
-#: ``communication_timeout``, which a submission that compiles shots needs.
+#: Short, so that a runmanager which is not running is named as the cause in a
+#: few seconds rather than a minute later by whichever question happened to be
+#: asked first. The session's later requests keep the client's own timeout,
+#: labconfig's ``communication_timeout``, which a submission that compiles
+#: shots needs; this number is a term of the routine's allowance for the whole
+#: of configuration, so the greeting is inside that allowance by construction.
 #:
 #: A constant, and not labconfig's ``timeouts/liveness_timeout``, which BLACS
 #: reads before every exchange. BLACS probes runmanager once per shot, so that
@@ -32,9 +33,17 @@ BLOCKED_SHOT_STATE = "blocked"
 #: adds dead time to every cycle, too short and a slow link is judged absent.
 #: A session greets once, over a round trip that is sub-second on any lab
 #: link, so there is no trade here to make -- while a number raised for the
-#: sake of BLACS's cycle time would carry this deadline past the routine's
-#: allowance, which is the failure the greeting exists to prevent.
+#: sake of BLACS's cycle time would buy the lab nothing here but a longer wait
+#: before an absent runmanager is named, and a longer allowance with it.
 GREETING_TIMEOUT = 5.0
+
+#: Requests :meth:`RunmanagerInterface.check_ready` makes after the greeting,
+#: each of which waits the client's own ``communication_timeout``:
+#: ``error_in_globals`` and ``get_labscript_file``. The routine's allowance for
+#: configuring the worker is a sum with one of those deadlines per request, so
+#: a question added here is visibly a reason to raise this number, and raising
+#: it widens that allowance to cover the question.
+CHECK_READY_REQUESTS = 2
 
 
 class RunmanagerInterface:
@@ -62,10 +71,17 @@ class RunmanagerInterface:
 
         The greeting comes first, and is the only request held to
         :data:`GREETING_TIMEOUT`, so that a runmanager which is not there is
-        reported as a runmanager which is not there. Asking it a question
-        instead leaves the answer to the client's own timeout, which outlasts
-        the routine's allowance for the whole of configuration: the worker is
-        killed mid-wait and the lab reads that the worker was slow.
+        reported as a runmanager which is not there, within seconds. Asking it
+        a question instead leaves the answer to the client's own timeout -- a
+        minute where labconfig says nothing -- and names the question that
+        failed rather than the runmanager behind it.
+
+        The :data:`CHECK_READY_REQUESTS` questions after it wait that full
+        timeout, and the routine's allowance for configuring is summed to
+        cover them: a runmanager that greets and then stops answering, its GUI
+        thread inside a compile or behind a dialog somebody left open, is
+        reported as the question it left unanswered rather than as a worker
+        killed mid-wait.
 
         A global that does not evaluate is a shot that will not compile, and
         every shot this session submits would be one. The file pinned here is
