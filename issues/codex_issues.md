@@ -35,7 +35,7 @@ backlog, which would also let BLACS stop mutating a client's deadline per call.
 - [x] Slice 4: Textbook generational differential evolution
 - [x] Slice 5: The greeting's deadline is a constant again
 - [x] Slice 6: A wrapper cannot silently drop a generation barrier
-- [ ] Slice 7: A reply says which request it answers
+- [x] Slice 7: A reply says which request it answers
 - [ ] Slice 8: The configure deadline covers the waits inside it
 - [ ] Slice 9: A learner's declarations are facts about an instance
 - [ ] Slice 10: Benchmark the shipped DE
@@ -573,17 +573,17 @@ not come into it.
 
 ### Acceptance criteria
 
-- [ ] With trailing work longer than the bound, every status is written onto the
+- [x] With trailing work longer than the bound, every status is written onto the
       shot that produced it, and a shot the session never proposed is never
       written to — mutation: attribute by arrival order; the table above
       reproduces
-- [ ] A request whose handling raises still yields exactly one message carrying
+- [x] A request whose handling raises still yields exactly one message carrying
       its number — mutation: drop the guarantee; the wait for that request never
       ends
-- [ ] An error from trailing work is raised when seen, names the request it came
+- [x] An error from trailing work is raised when seen, names the request it came
       from, and is not mistaken for the next request's reply — mutation: treat
       any first message as the answer; a healthy shot raises
-- [ ] A worker whose child has exited is reported as dead within about a second,
+- [x] A worker whose child has exited is reported as dead within about a second,
       and the message says the worker died rather than that it was slow —
       mutation: remove the poll; the test waits out the bound
 

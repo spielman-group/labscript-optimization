@@ -493,10 +493,11 @@ def test_a_shot_already_handed_over_is_not_sent_again(session, shot, analysed):
 
 
 def test_several_observations_travel_in_one_message(session, shot, analysed):
-    """The worker answers each message once. Handing over three shots as three
-    messages would leave two replies behind, and the next invocation would read
-    the first of them as the answer to its own message -- the offset that
-    writing every column one shot stale is made of.
+    """The routine waits for one reply, and the worker answers one request at
+    a time. Three messages would earn three replies, of which this invocation
+    would read the first; the verdicts for the other two shots would arrive
+    only on later invocations, leaving them unwritten until then and holding
+    the worker to three rounds of reconciling where one would do.
     """
     analysed(*(shot(shot_id=f'row-{n}', cost=float(n)) for n in range(3)))
     assert len(session.worker.sent) == 1
