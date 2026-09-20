@@ -42,7 +42,7 @@ class Worker(Process):
         A request is ``(command, number, payload)`` and every message sent
         back is ``(kind, number, payload)`` carrying the number of the request
         it belongs to. The routine numbers its requests and reads the first
-        message carrying a number as the answer to that request, which is what
+        message carrying a request's number as the answer to it, which is what
         lets it tell a reply to the shots it is holding from a reply to the
         ones it handed over two invocations ago.
 
@@ -109,8 +109,8 @@ class Worker(Process):
                 # learner or a runmanager that is not doing what it should.
                 # Sent under this request's number whether it is the reply --
                 # the request itself failed -- or the trailing work behind a
-                # reply already sent; the routine tells the two apart and the
-                # request is answered either way.
+                # reply already sent. Either way the request is answered, and
+                # the error says which request it came out of.
                 if session is not None:
                     session.stopped = "stopped by an error"
                 self.to_parent.put(("error", number, traceback.format_exc()))

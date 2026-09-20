@@ -15,10 +15,10 @@ has analysed since it last ran, hands them to the worker, and waits for the
 worker to say where the session has got to.
 
 Each message it sends carries a request number, and each message the worker
-sends carries the number of the request it belongs to. A worker inside the
-work behind an earlier reply takes longer to answer than the routine is
-willing to wait for it, which is ordinary under generational submission; the
-number is what puts that answer onto the shots that earned it once it comes.
+sends carries the number of the request it belongs to. A worker still inside
+the work behind an earlier reply takes longer to answer than the routine is
+willing to wait, which is ordinary under generational submission; the number
+is what puts that answer onto the shots that earned it when it comes.
 
 lyse runs a multishot routine once per drained batch of singleshot analyses
 rather than once per shot. Where analysis keeps up that is one shot an
@@ -348,7 +348,8 @@ def optimise(config_path, storage=None, dataframe=None):
         # A session opens having handled nothing: the rows already in lyse's
         # box were analysed before it existed.
         storage.optimisation_last_row = None
-        # Configuring was the first request, so the first shot is the second.
+        # Configuring was this session's first request; the counter carries
+        # on from it.
         storage.optimisation_request = CONFIGURE_REQUEST
         # The shots handed over by each request still awaiting its status, so
         # that a status arriving after the routine gave up waiting for it is

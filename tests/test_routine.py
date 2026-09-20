@@ -310,7 +310,11 @@ def test_start_worker_waits_for_and_consumes_the_configuration_reply(
 
             def answer():
                 from_worker.incoming.put(
-                    ('status', routine_module.CONFIGURE_REQUEST, ((), {'configured': True}))
+                    (
+                        'status',
+                        routine_module.CONFIGURE_REQUEST,
+                        ((), {'configured': True}),
+                    )
                 )
                 self.answered.set()
 
