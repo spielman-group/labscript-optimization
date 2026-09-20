@@ -806,13 +806,15 @@ published name against the constant that defines it proves nothing.
 
 Three specific items carried forward from earlier slices:
 
-- **A test whose name claims more than it covers.** The test asserting that
-  loading a configuration imports neither scipy nor scikit-learn passes on a
-  minimal file, but the shipped example configuration *does* import both,
-  because it carries a table for a named learner and every named table has its
-  class resolved. Verified. Either make the property true for named tables or
-  rename the test to the narrower thing it actually guards; a name that
-  overclaims is the failure mode this project keeps finding.
+- ~~A test whose name claims more than it covers.~~ **Resolved; nothing to do.**
+  This said the import test overclaimed, because the shipped example
+  configuration imported both scipy and scikit-learn while the test only
+  exercised a minimal file. That was true when it was written and stopped being
+  true when Slice 4 moved those imports to point of use. Re-verified: loading
+  the shipped example imports neither, the example is now one of the test's own
+  cases, and the name is accurate. Left here rather than deleted because it is
+  an instance of the failure it describes — a claim in a document that was true
+  when written, in the very file that tracks that failure.
 - **The timeout relation test is now a tautology and should go.**
   `test_runmanager_is_given_up_on_before_the_worker_is` asserts the greeting's
   deadline is smaller than the configure deadline. That was a real invariant
