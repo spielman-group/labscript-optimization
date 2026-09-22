@@ -954,11 +954,16 @@ def test_a_learner_takes_the_knobs_in_its_own_table_and_no_others(space):
         space,
         'differential_evolution',
         {'population_size': 15},
-        gaussian_process={'cost_has_noise': False, 'length_scale_bounds': (1e-3, 1e3)},
+        gaussian_process={'trust_region': 0.5, 'cost_has_noise': False},
     )
-    # And population_size is the number of members, not a multiplier on the
+    built = build(config)
+    # population_size is the number of members, not a multiplier on the
     # parameter count: fifteen here, over however many parameters.
-    assert build(config).population_size == 15
+    assert built.population_size == 15
+    # trust_region is a knob this learner takes as well, written in a table
+    # that is not its own. It reaches the Gaussian process and nothing else,
+    # so this learner is left with its own default of the whole space.
+    assert built.trust_region is None
 
 
 def test_the_default_learner_comes_back_wrapped_in_its_training_phase(space):
