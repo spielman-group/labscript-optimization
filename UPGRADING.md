@@ -5,7 +5,7 @@ runmanager globals the old plugin needed are no longer used. Everything else
 carries over: the same parameter and globals tables, the same cost column, the
 same algorithms.
 
-Work through the five steps below. Each says what to change and why, so you can
+Work through the six steps below. Each says what to change and why, so you can
 tell whether it applies to your lab.
 
 ## 1. Install it, and point lyse at the new routine
@@ -74,7 +74,46 @@ history dies with it and a new session starts from nothing.
 `min` and `max` in a parameter table keep those spellings; `minimum` and
 `maximum` are not accepted.
 
-## 3. Remove the tag globals
+## 3. Move every learner knob into its learner's table
+
+`[MLOOP]` carries the session's own settings and nothing else. A learner's
+knobs are written in `[LEARNER.<name>]`, the table of the learner that takes
+them, and a knob found in `[MLOOP]` is **refused**, with the table it belongs
+in named. Nothing is preserved: there is no shared table of learner knobs any
+more.
+
+| Move out of `[MLOOP]` | Into |
+| --- | --- |
+| `trust_range`, `trust_gaussian`, `explore_fraction` | `[LEARNER.directed_random]` |
+| `population_size`, `evolution_strategy`, `mutation_scale`, `cross_over_probability` | `[LEARNER.differential_evolution]` |
+| `cost_has_noise`, `cost_bias`, `uncer_bias`, `batch_size`, `length_scale_bounds`, `noise_level_bounds`, `minimum_observations` | `[LEARNER.gaussian_process]` |
+| `trust_region` | all three of those tables take it — write it in each one you want it in, with the value you want there |
+
+That split is the reason for the change. Of the fifteen keys `[MLOOP]` used to
+accept as shared learner knobs, fourteen are taken by exactly one learner. The
+sharing served a single knob, `trust_region`, and for the other fourteen it put
+a setting where it read as though it might apply to any learner and then
+dropped it in silence for the ones that do not take it.
+
+The selectable trainer, under *What changed in the algorithms* below, is
+what forces it. A session that trains runs two
+learners at once, and a knob in `[MLOOP]` reaches both with no way to say which
+was meant — so a wide trust region to train with and a tight one to refine with
+could not both be asked for. In each learner's own table they can:
+
+```toml
+[LEARNER.directed_random]
+trust_region = 0.2
+
+[LEARNER.gaussian_process]
+trust_region = 0.05
+```
+
+A table written for a learner this file does not build goes unread, so the
+settings for several learners can sit side by side and be switched between by
+changing `[MLOOP] learner`.
+
+## 4. Remove the tag globals
 
 **Delete `mloop_session` and `mloop_iteration` from runmanager.** The old
 plugin stamped them on every shot so it could recognise its own results. A
@@ -82,7 +121,7 @@ shot is now identified by the id runmanager mints for its queue row and writes
 into the shot file, which lyse reads as the `shot_id` column, so there is
 nothing for you to create and nothing to keep in step.
 
-## 4. Check `num_buffered_runs`
+## 5. Check `num_buffered_runs`
 
 It now defaults to 3 rather than 1, and more than one is usually what you
 want. BLACS asks for its next shot as soon as it finishes the last, which is
@@ -103,7 +142,7 @@ one that can disagree with it. Delete `num_buffered_runs` from a file that
 names that learner. The queue empties once per generation there, by design,
 and nothing counts a `starved` for it.
 
-## 5. Read `population_size` again
+## 6. Read `population_size` again
 
 **`population_size` is the number of members in the differential evolution
 population.** It is NP as the literature gives it: a file saying
@@ -158,9 +197,31 @@ goes out whole.
 
 - **The learners are named** `random`, `directed_random`,
   `differential_evolution` and `gaussian_process`, in `[MLOOP] learner`.
-  `gaussian_process` runs `directed_random` for its training shots and falls
-  back to it for any proposal it cannot make, which is what
-  `controller_type = "gaussian_process"` did before.
+- **The trainer is chosen**, in `[MLOOP] trainer`, and defaults to
+  `directed_random`. `gaussian_process` is the only learner that needs one: it
+  runs the trainer for its training shots and falls back to it for any proposal
+  it cannot make. A name that is not a learner is refused, and so is a trainer
+  named beside a learner that needs none, which would be a setting nothing acts
+  on.
+
+  **The default is not what M-LOOP did.** Its machine-learning controllers took
+  `training_type`, defaulting to `differential_evolution`
+  (`mloop/controllers.py`), and used that learner for the training shots and
+  for any point the machine-learning learner was too slow to supply — so both
+  came from a population clustered around the best points seen. This package's
+  `directed_random` centres its draws on a band of *middling* costs instead,
+  which is what makes it explore rather than refine, so training and fallback
+  range much wider and produce stretches of poor shots that M-LOOP never
+  showed. That is what a run against the dummy apparatus looks like.
+
+  `differential_evolution` cannot be the trainer here: it proposes a whole
+  population at a time and only when none of its proposals is outstanding, and
+  a two-phase learner cannot hold that barrier across a handover, so a file
+  naming it is refused rather than run in pieces. To train nearer the best
+  points, narrow the trainer's own band — `trust_range = [0.9, 1.0]` in
+  `[LEARNER.directed_random]` centres on the best point rather than on
+  middling ones, and `[1, 1]` is the best point alone. `trainer = "random"` is
+  the plain uniform spread over the whole space.
 - **Nelder-Mead and the neural network are gone.** Nelder-Mead may return;
   the neural network will not.
 - **The directed random learner's trust region now works.** Its guard sent
@@ -174,11 +235,9 @@ goes out whole.
   middling results rather than the best one: that is deliberate, and is what
   makes it explore rather than refine. A pair written the wrong way round is
   now refused at construction, where M-LOOP quietly sorted it.
-- **Per-learner settings** may go under `[LEARNER.<name>]`, overriding the
-  same keys in `[MLOOP]`. Knobs in `[MLOOP]` still apply to whichever learner
-  takes them, so nothing has to move. A named learner table is strict: an
-  unknown learner or a key its constructor does not accept stops the file from
-  loading.
+- **Every learner knob goes under `[LEARNER.<name>]`**, which step 3 above is
+  the move for. A named learner table is strict: an unknown learner, or a key
+  that learner's constructor does not accept, stops the file from loading.
 - **Differential evolution is generational**, which is what the textbook
   algorithm and scipy's deferred updating are. A whole population is proposed
   at once and none of its trials is judged until the generation is complete,

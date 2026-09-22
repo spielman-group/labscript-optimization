@@ -117,13 +117,16 @@ not stops the load with a message naming it, rather than being accepted and
 ignored — a setting nothing reads is one a lab believes is in force when it is
 not.
 
-Knowing a key is not the same as acting on it. The learner knobs in `[MLOOP]`
-cover every learner between them, and the learner you name is built with the
-ones its own constructor takes, so a file can carry the others and go on
-working when you switch learners. A `[LEARNER.<name>]` table names its learner,
-so every key in it is held to that learner's own constructor; a table written
-for a learner you did not name goes unread, exactly as the shared knobs that
-learner does not take do.
+`[MLOOP]` carries the session's own settings — which learner runs, which
+learner trains it, how deep the queue is, what stops the run. A learner's knobs
+go in `[LEARNER.<name>]`, the table of the learner that takes them, and a knob
+found in `[MLOOP]` is refused with the table it belongs in named. Two learners
+run whenever the one you name has a trainer, so a knob both take is written
+twice, once in each table, and each gets its own value.
+
+Knowing a key is not the same as acting on it: a table written for a learner
+this file does not build goes unread, so the settings for several learners can
+sit side by side and be switched between by changing `[MLOOP] learner`.
 
 An `mloop_config` file carried over therefore needs editing before it will
 load. Between them, analysislib-mloop's own two example files need the whole
@@ -141,7 +144,7 @@ not read either.
 | `random` | Uniform draws. The reference the others are measured against. |
 | `directed_random` | Draws near a previously seen point, chosen from a band of middling costs rather than from the best one, so it explores rather than refines. |
 | `differential_evolution` | Evolves a population, one whole generation at a time: it proposes `population_size` shots together and is not asked again until all of them have been answered for. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds — around eight searches well and a budget over a thousand shots is worth sixteen, measured over four analytic test functions at two to eight parameters (`codex_issues_proposal.md`, "The dimension sweep", has the tables and the caveats; `benchmarks/` has the harness that produced them) — and it is the queue depth too, so `num_buffered_runs` is not accepted beside it. |
-| `gaussian_process` | Fits a Gaussian process and searches its posterior. Runs `directed_random` for its training shots first, and falls back to it for any proposal it cannot make. |
+| `gaussian_process` | Fits a Gaussian process and searches its posterior. The only learner that needs training: it runs the learner `[MLOOP] trainer` names for its training shots, and falls back to it for any proposal it cannot make. `trainer` defaults to `directed_random`, and cannot be `differential_evolution`, which proposes whole generations that a two-phase learner cannot hold a barrier for. |
 
 A learner is a function from the proposal history to `k` proposals:
 
