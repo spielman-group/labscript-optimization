@@ -171,6 +171,13 @@ class Session:
         is the space's configured start, where the parameters carry one, and
         the learner is asked for the rest of that same batch.
 
+        ``max_num_runs`` is a ceiling on the whole run rather than on a batch,
+        so the last generation is whatever the budget has left for it. A
+        generation cut short is a generation nothing follows: the walk that
+        rebuilds the population reads a proposal's slot off its position, so
+        a short one displaces nothing, and each of its trials competes for its
+        own slot as it would have in a whole one.
+
         Returns the shot ids submitted, which is empty once the session has
         stopped. Raises unless the interface answers with one shot id per
         proposal.

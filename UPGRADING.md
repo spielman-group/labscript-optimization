@@ -205,13 +205,17 @@ members in the other nine; counted by blocks of four functions, eight wins
 five of the seven and sixteen takes a block only at the largest budget. Four
 members, at two and at four parameters, improves by under a per cent when
 given two and a half times the budget, which is what converging prematurely
-looks like. `codex_issues_proposal.md`, under "The dimension sweep", has the
-tables, and `benchmarks/` has the harness and the rows behind them. Your landscape is not an analytic test function, so
+looks like. `benchmarks/README.md`, under "What the sweep found", has the
+tables, the caveats, and the harness and rows behind them. Your landscape is not an analytic test function, so
 treat the two numbers as a place to start.
 
 A budget has to cover two whole generations of that population, so
 `max_num_runs` below `2 × population_size` is refused: the first generation is
-the population itself and the second is the first to evolve it.
+the population itself and the second is the first to evolve it, so a budget
+under two of them never evolves anything. It need not be a whole number of
+generations above that. The last one is cut short where the budget runs out,
+and its trials compete for their own slots like any other; nothing reads the
+population after it.
 
 The same number is how many shots are in the queue at once, since a generation
 goes out whole.

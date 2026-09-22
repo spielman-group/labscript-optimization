@@ -1,5 +1,6 @@
 """Session behaviour: matching costs to shots, and never waiting on a lost one."""
 
+import numpy as np
 import pytest
 
 from labscript_optimization import config as config_module
@@ -578,3 +579,85 @@ def test_a_cost_arriving_for_a_blocked_shot_clears_it(session, runmanager):
     session.reconcile()
     session.record('shot-0', 1.0, None, False)
     assert session.status()['blocked'] == 0
+
+
+def de_config(population_size, max_num_runs):
+    """A differential-evolution configuration with a chosen budget."""
+    return config_module.loads(
+        f"""
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = ["G"]
+[GENERAL]
+learner = "differential_evolution"
+max_num_runs = {max_num_runs}
+[LEARNER.differential_evolution]
+population_size = {population_size}
+[PARAMETERS.G.x]
+global_name = "gx"
+min = 0.0
+max = 1.0
+"""
+    )
+
+
+def test_the_budget_may_cut_the_last_generation_short(runmanager):
+    """``max_num_runs`` is a ceiling on the run, not on a batch. Nothing reads
+    the population after the last generation, so the shots the budget has left
+    are spent rather than withheld to keep the generation whole.
+    """
+    config = de_config(population_size=5, max_num_runs=13)
+    session = Session(config, runmanager)
+
+    sizes = []
+    while not session.stopped:
+        submitted = session.refill()
+        if not submitted:
+            break
+        sizes.append(len(submitted))
+        for position, shot_id in enumerate(submitted):
+            session.record(shot_id, float(position), None, False)
+
+    assert sizes == [5, 5, 3]
+
+
+def test_a_short_last_generation_evolves_the_slots_it_reaches(runmanager):
+    """Its trials compete for their own slots like any other generation's.
+
+    The founding generation carries one shot whose cost is not usable, so a
+    proposal's position and the number of usable costs before it part company:
+    the slot each of the last three trials competes for is the one its
+    position names, not the one a running count would name.
+    """
+    config = de_config(population_size=5, max_num_runs=13)
+    session = Session(config, runmanager)
+    learner = session.learner
+
+    generations = (
+        [9.0, float('nan'), 9.0, 9.0, 9.0],
+        [9.0] * 5,
+        [0.0] * 3,
+    )
+    for costs in generations:
+        submitted = session.refill()
+        for shot_id, cost in zip(submitted, costs):
+            session.record(shot_id, cost, None, not np.isfinite(cost))
+
+    _, costs = learner.replay(session.history)
+    # The third generation opened at position 10, which is slot 0, so it
+    # reached slots 0, 1 and 2 and improved each. Slots 3 and 4 were never
+    # offered a trial and keep the members the second generation left them.
+    assert list(costs) == [0.0, 0.0, 0.0, 9.0, 9.0]
+
+
+def test_a_budget_under_two_generations_is_still_refused():
+    with pytest.raises(ValueError, match='less than two whole generations'):
+        de_config(population_size=5, max_num_runs=9)
+
+
+def test_the_budget_refusal_does_not_claim_a_generation_is_never_short():
+    with pytest.raises(ValueError) as raised:
+        de_config(population_size=5, max_num_runs=9)
+    message = str(raised.value)
+    assert 'never evolves anything at all' in message
+    assert 'need not be a whole number of generations' in message

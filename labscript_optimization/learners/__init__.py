@@ -175,8 +175,10 @@ def build(config, rng: np.random.Generator | None = None):
             f"generations of the {generation} proposals {name!r} makes at a "
             f"time, so set it to at least {2 * generation}, or configure "
             f"{name!r} to propose fewer at a time. The first generation is "
-            f"the population itself and the second is the first to evolve it; "
-            f"a second generation cut short evolves some of its slots rather "
-            f"than a generation."
+            f"the population itself and the second is the first to evolve it, "
+            f"so a budget under two of them never evolves anything at all. "
+            f"The budget need not be a whole number of generations: the last "
+            f"one is cut short where it runs out, and its trials compete for "
+            f"their own slots like any other."
         )
     return learner
