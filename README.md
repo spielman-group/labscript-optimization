@@ -8,7 +8,8 @@ through lyse. It replaces M-LOOP and its lyse plugin
 [analysislib-mloop](https://github.com/rpanderson/analysislib-mloop), taking
 the algorithms worth keeping and the shape of their TOML configuration, and
 depends only on numpy, scipy and scikit-learn. It does not read an
-analysislib-mloop file as it stands: see [Using it](#using-it).
+analysislib-mloop file as it stands: see
+[Coming from M-LOOP](#coming-from-m-loop).
 
 ## How it works
 
@@ -58,7 +59,7 @@ Add a routine to lyse containing:
 ```python
 import labscript_optimization.routine as optimisation
 
-optimisation.optimise('mloop_config.toml')
+optimisation.optimise('optimisation_config.toml')
 ```
 
 Adding the routine starts the session; removing it, restarting it, or reaching
@@ -77,7 +78,7 @@ anything about a shot, so they are not written onto every shot of it.
 `optimise` returns the whole status, which a routine that wants them prints:
 
 ```python
-print(optimisation.optimise('mloop_config.toml'))
+print(optimisation.optimise('optimisation_config.toml'))
 ```
 
 `num_buffered_runs` is usually set above one. BLACS asks for its next shot as
@@ -110,32 +111,25 @@ yet is not waited for either: the shot is recorded as a bad observation, and so
 is every other shot of the run, with nothing anywhere saying why.
 
 See [`examples/config_example.toml`](examples/config_example.toml) for the
-configuration. It has the shape of an analysislib-mloop file, without the
-settings that belong to M-LOOP itself and without that package's alternate
-spellings: every key must be one this package knows, and a spelling it does
+configuration. Every key must be one this package knows, and a spelling it does
 not stops the load with a message naming it, rather than being accepted and
 ignored — a setting nothing reads is one a lab believes is in force when it is
 not.
 
-`[MLOOP]` carries the session's own settings — which learner runs, which
+`[GENERAL]` carries the session's own settings — which learner runs, which
 learner trains it, how deep the queue is, what stops the run. A learner's knobs
 go in `[LEARNER.<name>]`, the table of the learner that takes them, and a knob
-found in `[MLOOP]` is refused with the table it belongs in named. Two learners
-run whenever the one you name has a trainer, so a knob both take is written
-twice, once in each table, and each gets its own value.
+found in `[GENERAL]` is refused with the table it belongs in named. Two
+learners run whenever the one you name has a trainer, so a knob both take is
+written twice, once in each table, and each gets its own value.
+
+`[PARAMETERS.<group>.<name>]` is one optimised parameter and
+`[RUNMANAGER_GLOBALS.<group>.<name>]` is a runmanager global computed from
+several of them; `[ANALYSIS] groups` says which groups take part.
 
 Knowing a key is not the same as acting on it: a table written for a learner
 this file does not build goes unread, so the settings for several learners can
-sit side by side and be switched between by changing `[MLOOP] learner`.
-
-An `mloop_config` file carried over therefore needs editing before it will
-load. Between them, analysislib-mloop's own two example files need the whole
-`[COMPILATION]` table deleted, along with `ignore_bad`, `no_delay`,
-`visualisations` and the log settings `analysislib_console_log_level`,
-`analysislib_file_log_level`, `console_log_level` and `console_log_string`;
-`controller_type` is spelt `learner` here and has to be renamed. Parameter
-bounds are `min` and `max`, and the long spellings `minimum` and `maximum` are
-not read either.
+sit side by side and be switched between by changing `[GENERAL] learner`.
 
 ## Learners
 
@@ -144,7 +138,7 @@ not read either.
 | `random` | Uniform draws. The reference the others are measured against. |
 | `directed_random` | Draws near a previously seen point, chosen from a band of middling costs rather than from the best one, so it explores rather than refines. |
 | `differential_evolution` | Evolves a population, one whole generation at a time: it proposes `population_size` shots together and is not asked again until all of them have been answered for. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds — around eight searches well and a budget over a thousand shots is worth sixteen, measured over four analytic test functions at two to eight parameters (`codex_issues_proposal.md`, "The dimension sweep", has the tables and the caveats; `benchmarks/` has the harness that produced them) — and it is the queue depth too, so `num_buffered_runs` is not accepted beside it. |
-| `gaussian_process` | Fits a Gaussian process and searches its posterior. The only learner that needs training: it runs the learner `[MLOOP] trainer` names for its training shots, and falls back to it for any proposal it cannot make. `trainer` defaults to `directed_random`, and cannot be `differential_evolution`, which proposes whole generations that a two-phase learner cannot hold a barrier for. |
+| `gaussian_process` | Fits a Gaussian process and searches its posterior. The only learner that needs training: it runs the learner `[GENERAL] trainer` names for its training shots, and falls back to it for any proposal it cannot make. `trainer` defaults to `directed_random`, and cannot be `differential_evolution`, which proposes whole generations that a two-phase learner cannot hold a barrier for. |
 
 ### A cost with noise in it
 
@@ -294,9 +288,10 @@ persistence layer; a new session starts from nothing.
 
 ## Coming from M-LOOP
 
-An existing `mloop_config` file needs a handful of settings cut and one
-renamed before it will load, and the two tag globals the old plugin needed can
-be deleted from runmanager. [UPGRADING.md](UPGRADING.md) is the step-by-step.
+An existing `mloop_config` file needs its two M-LOOP tables renamed and a
+handful of settings cut or renamed before it will load, and the two tag globals
+the old plugin needed can be deleted from runmanager.
+[UPGRADING.md](UPGRADING.md) is the step-by-step.
 
 ## Installing
 

@@ -11,11 +11,11 @@ BASE = """
 cost_key = ["r", "c"]
 maximize = {maximize}
 groups = ["G"]
-[MLOOP]
+[GENERAL]
 learner = "random"
 num_buffered_runs = {buffered}
 {extra}
-[MLOOP_PARAMS.G.x]
+[PARAMETERS.G.x]
 global_name = "gx"
 min = 0.0
 max = 1.0
@@ -26,11 +26,11 @@ GENERATIONAL = """
 [ANALYSIS]
 cost_key = ["r", "c"]
 groups = ["G"]
-[MLOOP]
+[GENERAL]
 learner = "differential_evolution"
 [LEARNER.differential_evolution]
 population_size = 4
-[MLOOP_PARAMS.G.x]
+[PARAMETERS.G.x]
 global_name = "gx"
 min = 0.0
 max = 1.0
@@ -404,10 +404,10 @@ def test_the_configured_start_point_is_proposed_once(runmanager):
 [ANALYSIS]
 cost_key = ["r", "c"]
 groups = ["G"]
-[MLOOP]
+[GENERAL]
 learner = "random"
 num_buffered_runs = 2
-[MLOOP_PARAMS.G.x]
+[PARAMETERS.G.x]
 global_name = "gx"
 min = 0.0
 max = 1.0

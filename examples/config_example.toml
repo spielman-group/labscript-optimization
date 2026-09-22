@@ -1,14 +1,14 @@
 # Configuration for a labscript-optimization session.
 #
-# This has the shape of an analysislib-mloop file, but it is not one: the
-# settings that belong to M-LOOP itself are not here, and neither are that
-# package's alternate spellings. Every key must be one this package knows, and
-# a spelling it does not stops the load with a message naming it, rather than
-# being accepted and ignored. [MLOOP] carries the session's own settings; a
-# learner's knobs go in [LEARNER.<name>], the table of the learner that takes
-# them, and a knob written in [MLOOP] is refused with the table it belongs in
-# named. A table written for a learner this file does not build goes unread,
-# so the settings for several learners can sit here and be switched between.
+# Every key must be one this package knows, and a spelling it does not stops
+# the load with a message naming it, rather than being accepted and ignored: a
+# setting nothing reads is one a lab believes is in force when it is not.
+#
+# [GENERAL] carries the session's own settings; a learner's knobs go in
+# [LEARNER.<name>], the table of the learner that takes them, and a knob
+# written in [GENERAL] is refused with the table it belongs in named. A table
+# written for a learner this file does not build goes unread, so the settings
+# for several learners can sit here and be switched between.
 
 [ANALYSIS]
 # Which (routine, result) column of the lyse dataframe holds the cost. The
@@ -26,7 +26,7 @@ maximize = true
 # Only parameter groups named here take part.
 groups = ["CMOT"]
 
-[MLOOP]
+[GENERAL]
 # random, directed_random, differential_evolution or gaussian_process.
 # gaussian_process is the one that trains first; "trainer" below says which
 # learner does the training.
@@ -62,7 +62,7 @@ max_num_runs_without_better_params = 80
 trainer = "directed_random"
 
 # Every learner knob goes in the table of the learner that takes it. A knob in
-# [MLOOP] would reach the learner and its trainer alike; here each gets its
+# [GENERAL] would reach the learner and its trainer alike; here each gets its
 # own, which is why trust_region is written twice below with two values.
 [LEARNER.directed_random]
 # How far from the centre point a draw may land, as a fraction of each
@@ -110,13 +110,13 @@ refit_interval = 4
 
 # One optimised parameter per table. "global_name" is shorthand for a
 # runmanager global that takes this parameter's value directly.
-[MLOOP_PARAMS.CMOT.CMOTCaptureWidth]
+[PARAMETERS.CMOT.CMOTCaptureWidth]
 global_name = "CMOTCaptureWidth"
 min = 0.01
 max = 0.5
 start = 0.05
 
-[MLOOP_PARAMS.CMOT.CMOTCurrent]
+[PARAMETERS.CMOT.CMOTCurrent]
 global_name = "CMOTCurrent"
 min = 5
 max = 40
@@ -124,7 +124,7 @@ start = 20
 
 # enable = false keeps a parameter in the file but out of the search, leaving
 # its runmanager global at whatever value it already holds.
-[MLOOP_PARAMS.CMOT.CMOTFreq]
+[PARAMETERS.CMOT.CMOTFreq]
 global_name = "CMOTFreq"
 enable = false
 min = -1
@@ -133,11 +133,11 @@ start = 0.5
 
 # When several parameters feed one global, give the global an expression
 # instead. "args" names the parameters, in the order the lambda takes them.
-# [MLOOP_PARAMS.CMOT.bx]
+# [PARAMETERS.CMOT.bx]
 # min = -1.0
 # max = 1.0
 #
-# [MLOOP_PARAMS.CMOT.by]
+# [PARAMETERS.CMOT.by]
 # min = -1.0
 # max = 1.0
 #

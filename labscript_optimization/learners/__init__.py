@@ -40,7 +40,7 @@ LEARNERS = {
 
 #: Learners whose proposals mean nothing until the history holds a spread of
 #: points, so a configuration naming one runs a trainer first. Which learner
-#: trains is the file's to say, in ``[MLOOP] trainer``; this only says who
+#: trains is the file's to say, in ``[GENERAL] trainer``; this only says who
 #: needs one.
 NEEDS_TRAINING = frozenset({"gaussian_process"})
 
@@ -125,7 +125,7 @@ def build(config, rng: np.random.Generator | None = None):
 
     A learner in :data:`NEEDS_TRAINING` is wrapped in a
     :class:`~labscript_optimization.learners.two_phase.TwoPhaseLearner` with
-    the learner ``[MLOOP] trainer`` names, which runs the training shots and is
+    the learner ``[GENERAL] trainer`` names, which runs the training shots and is
     also the fallback for proposals the main learner cannot make. Each is built
     from its own ``[LEARNER.<name>]`` table, so a trainer and a main learner
     that take the same knob take it separately.

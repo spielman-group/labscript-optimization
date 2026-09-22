@@ -1,6 +1,6 @@
 """Reading the TOML configuration.
 
-``[MLOOP_PARAMS.<group>.<name>]``
+``[PARAMETERS.<group>.<name>]``
     One optimised parameter, with ``min``, ``max``, optional ``start``,
     optional ``enable`` (default true), and optional ``global_name``. Giving
     ``global_name`` is shorthand for a runmanager global that takes this
@@ -17,14 +17,14 @@ that is listed is carried but not searched, and gets no mapping, so its
 runmanager global keeps whatever value it already holds.
 
 Every key must be one this package knows: a spelling it does not is refused
-rather than accepted and ignored, so a file carried over from analysislib-mloop
-has to be cut down to the keys named here before it will load.
+rather than accepted and ignored, so a stale file has to be cut down to the
+keys named here before it will load.
 
-``[MLOOP]`` carries the session's own settings -- which learner runs, which
+``[GENERAL]`` carries the session's own settings -- which learner runs, which
 learner trains it, how deep the queue is, what stops the run -- and a learner's
 knobs are written in ``[LEARNER.<name>]``, the table of the learner that takes
 them. A named table is held to that learner's constructor, so every key in it
-is a knob that learner takes, and a knob found in ``[MLOOP]`` is refused with
+is a knob that learner takes, and a knob found in ``[GENERAL]`` is refused with
 the tables it belongs in named. Two learners run whenever the one selected has
 a trainer, so a knob both take is written twice, once in each table, and each
 gets its own value.
@@ -50,21 +50,28 @@ from .space import Parameter, ParameterSpace
 TOP_LEVEL_TABLES = frozenset(
     {
         "ANALYSIS",
+        "GENERAL",
         "LEARNER",
-        "MLOOP",
-        "MLOOP_PARAMS",
+        "PARAMETERS",
         "RUNMANAGER_GLOBALS",
     }
 )
 
+#: The tables this package used to name after M-LOOP, and what each is called
+#: now. It replaces M-LOOP and carries none of its code, so a table named after
+#: it was a name nothing written under it answered to. Kept here to be refused
+#: by name: read under the new name instead, an old file would load and mean
+#: something, which is the one outcome worse than not loading.
+RENAMED_TABLES = {"MLOOP": "GENERAL", "MLOOP_PARAMS": "PARAMETERS"}
+
 #: The settings ``[ANALYSIS]`` carries.
 ANALYSIS_KEYS = frozenset({"cost_key", "groups", "maximize"})
 
-#: The whole of what ``[MLOOP]`` carries: the session's own settings and
+#: The whole of what ``[GENERAL]`` carries: the session's own settings and
 #: nothing else. Each is the name of a :class:`Config` field and is handed over
 #: under that name, so the two lists cannot drift apart. A learner's knobs are
 #: not here; they are written in that learner's own table.
-MLOOP_KEYS = frozenset(
+GENERAL_KEYS = frozenset(
     {
         "learner",
         "max_num_runs",
@@ -102,7 +109,7 @@ OPTIONAL_INTEGER_SETTINGS = frozenset(
     {"max_num_runs", "max_num_runs_without_better_params", "seed"}
 )
 
-#: The keys one ``[MLOOP_PARAMS.<group>.<name>]`` table carries.
+#: The keys one ``[PARAMETERS.<group>.<name>]`` table carries.
 PARAMETER_KEYS = frozenset({"enable", "global_name", "max", "min", "start"})
 
 #: Of those, the ones a parameter table must carry: bounds are what a search
@@ -339,10 +346,10 @@ def require_type(value: Any, kind: type, where: str) -> Any:
     return value
 
 
-def reject_misplaced_knobs(mloop: dict) -> None:
-    """Fail on a learner's knob written in ``[MLOOP]``, naming where it goes.
+def reject_misplaced_knobs(general: dict) -> None:
+    """Fail on a learner's knob written in ``[GENERAL]``, naming where it goes.
 
-    ``[MLOOP]`` is read once for the whole session, and a session runs two
+    ``[GENERAL]`` is read once for the whole session, and a session runs two
     learners whenever the one it names has a trainer. A knob written here would
     reach both of them with no way to tell them apart, so a trust region wide
     enough to train with and one tight enough to refine with cannot both be
@@ -356,7 +363,7 @@ def reject_misplaced_knobs(mloop: dict) -> None:
     from .learners import knobs_by_learner
 
     knobs = knobs_by_learner()
-    misplaced = [key for key in sorted(mloop) if key in knobs]
+    misplaced = [key for key in sorted(general) if key in knobs]
     if misplaced:
         written = []
         for key in misplaced:
@@ -366,7 +373,7 @@ def reject_misplaced_knobs(mloop: dict) -> None:
             written.append(f"{key!r} in {joined}")
         where = "; ".join(written)
         raise ValueError(
-            f"[MLOOP] carries the session's own settings and no learner's "
+            f"[GENERAL] carries the session's own settings and no learner's "
             f"knobs, so write {where}. A knob here reaches a learner and its "
             f"trainer alike, with no way to give them different values, and "
             f"goes unread by any learner that does not take it."
@@ -378,20 +385,36 @@ def check_keys(raw: dict) -> None:
 
     Accepting a key and ignoring it is how a lab comes to believe a setting is
     in force when it is not, so a stale file is stopped at the door instead. A
-    learner knob written in ``[MLOOP]`` is refused by that rule and gets its
+    learner knob written in ``[GENERAL]`` is refused by that rule and gets its
     own message, naming the tables it could have been written in: it is a real
     knob in the wrong place, not a spelling nothing here knows.
 
     Parameter and global tables are checked whether or not their group is
     active: a typo left to load in a switched-off group waits for the day
     somebody switches the group on.
+
+    A table this package has renamed is refused ahead of both, naming its
+    replacement, because the spelling check would call it a typo and leave the
+    reader to guess which of the tables it lists was meant.
     """
+    renamed = [
+        f"[{table}] is now [{RENAMED_TABLES[table]}]"
+        for table in sorted(raw)
+        if table in RENAMED_TABLES
+    ]
+    if renamed:
+        raise ValueError(
+            f"the configuration no longer names its tables after M-LOOP, "
+            f"which this package replaces and carries no code from: "
+            f"{'; '.join(renamed)}. Rename the table; nothing is read under "
+            f"the old name."
+        )
     reject_unknown(raw, TOP_LEVEL_TABLES, "the top level of the configuration")
     reject_unknown(raw.get("ANALYSIS", {}), ANALYSIS_KEYS, "[ANALYSIS]")
-    reject_misplaced_knobs(raw.get("MLOOP", {}))
-    reject_unknown(raw.get("MLOOP", {}), MLOOP_KEYS, "[MLOOP]")
+    reject_misplaced_knobs(raw.get("GENERAL", {}))
+    reject_unknown(raw.get("GENERAL", {}), GENERAL_KEYS, "[GENERAL]")
     for table, allowed, required in (
-        ("MLOOP_PARAMS", PARAMETER_KEYS, PARAMETER_REQUIRED),
+        ("PARAMETERS", PARAMETER_KEYS, PARAMETER_REQUIRED),
         ("RUNMANAGER_GLOBALS", GLOBAL_KEYS, GLOBAL_REQUIRED),
     ):
         for group, entries in raw.get(table, {}).items():
@@ -433,14 +456,14 @@ def from_dict(raw: dict) -> Config:
     check_keys(raw)
 
     analysis = raw.get("ANALYSIS", {})
-    mloop = raw.get("MLOOP", {})
+    general = raw.get("GENERAL", {})
 
     active_groups = require_type(analysis.get("groups", []), list, "ANALYSIS.groups")
 
     parameters: list[Parameter] = []
     mappings: list[GlobalMapping] = []
 
-    for group, entries in raw.get("MLOOP_PARAMS", {}).items():
+    for group, entries in raw.get("PARAMETERS", {}).items():
         if group not in active_groups:
             # A group nobody switched on is not part of this session at all.
             continue
@@ -482,7 +505,7 @@ def from_dict(raw: dict) -> Config:
     if not parameters:
         raise ValueError(
             f"no parameters are enabled. ANALYSIS.groups is {active_groups!r}; "
-            f"MLOOP_PARAMS defines {sorted(raw.get('MLOOP_PARAMS', {}))}"
+            f"PARAMETERS defines {sorted(raw.get('PARAMETERS', {}))}"
         )
 
     # Only searched parameters take part: a switched-off one is deliberately
@@ -517,7 +540,7 @@ def from_dict(raw: dict) -> Config:
 
     settings: dict[str, Any] = {
         **present(analysis, ("maximize",)),
-        **present(mloop, MLOOP_KEYS),
+        **present(general, GENERAL_KEYS),
     }
 
     config = Config(
@@ -531,7 +554,7 @@ def from_dict(raw: dict) -> Config:
     # tables. Import lazily so importing this module alone stays lightweight.
     from .learners import NEEDS_TRAINING, build
 
-    if "trainer" in mloop and config.learner not in NEEDS_TRAINING:
+    if "trainer" in general and config.learner not in NEEDS_TRAINING:
         raise ValueError(
             f"trainer is not accepted with learner {config.learner!r}, which "
             f"proposes from the first shot and so runs no training phase: no "
@@ -547,7 +570,7 @@ def from_dict(raw: dict) -> Config:
     # fits anything until it is asked to propose, and the built learner is
     # discarded -- a session builds its own, from this same configuration.
     learner = build(config)
-    if "num_buffered_runs" in mloop and learner.generation is not None:
+    if "num_buffered_runs" in general and learner.generation is not None:
         raise ValueError(
             f"num_buffered_runs is not accepted with learner "
             f"{config.learner!r}, which proposes one whole generation of "

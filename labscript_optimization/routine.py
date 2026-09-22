@@ -3,7 +3,7 @@
 A lab analysis routine is two lines::
 
     import labscript_optimization.routine as optimisation
-    optimisation.optimise('mloop_config.toml')
+    optimisation.optimise('optimisation_config.toml')
 
 Adding the routine to lyse starts the session; removing it, restarting it, or
 reaching the run budget stops it. :data:`SHOT_RESULTS` is written onto each

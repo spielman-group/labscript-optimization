@@ -19,7 +19,7 @@ cost_key = ["zTOF", "Nb"]
 maximize = true
 groups = ["CMOT", "SHIMS"]
 
-[MLOOP]
+[GENERAL]
 num_buffered_runs = 3
 num_training_runs = 20
 max_num_runs = 400
@@ -33,28 +33,28 @@ trust_region = 0.2
 trust_region = 0.05
 cost_has_noise = true
 
-[MLOOP_PARAMS.CMOT.width]
+[PARAMETERS.CMOT.width]
 global_name = "CMOTCaptureWidth"
 min = 0.01
 max = 0.5
 start = 0.05
 
-[MLOOP_PARAMS.CMOT.disabled_one]
+[PARAMETERS.CMOT.disabled_one]
 global_name = "NotUsed"
 enable = false
 min = 0.0
 max = 1.0
 
-[MLOOP_PARAMS.INACTIVE.elsewhere]
+[PARAMETERS.INACTIVE.elsewhere]
 global_name = "AlsoNotUsed"
 min = 0.0
 max = 1.0
 
-[MLOOP_PARAMS.SHIMS.bx]
+[PARAMETERS.SHIMS.bx]
 min = -1.0
 max = 1.0
 
-[MLOOP_PARAMS.SHIMS.by]
+[PARAMETERS.SHIMS.by]
 min = -1.0
 max = 1.0
 
@@ -70,7 +70,7 @@ MINIMAL = """
 [ANALYSIS]
 cost_key = ["r", "c"]
 groups = ["G"]
-[MLOOP_PARAMS.G.x]
+[PARAMETERS.G.x]
 global_name = "gx"
 min = 0.0
 max = 1.0
@@ -167,23 +167,23 @@ def test_a_trainer_and_a_main_learner_each_take_their_own_value_of_a_knob(config
     ],
     ids=['a knob one learner takes', 'the knob three learners take'],
 )
-def test_a_learner_knob_in_the_mloop_table_is_refused_naming_where_it_goes(
+def test_a_learner_knob_in_the_general_table_is_refused_naming_where_it_goes(
     knob, tables
 ):
     """Not accepted and dropped for the learners that do not take it.
 
-    [MLOOP] is read once for a session that runs two learners, so a knob here
+    [GENERAL] is read once for a session that runs two learners, so a knob here
     has no way of saying which one it meant.
     """
     with pytest.raises(ValueError) as raised:
-        config_module.loads(MINIMAL + f'[MLOOP]\n{knob}\n')
+        config_module.loads(MINIMAL + f'[GENERAL]\n{knob}\n')
     message = str(raised.value)
     assert knob.split(' =')[0] in message
     for table in tables:
         assert table in message
 
 
-#: The fifteen knobs ``UPGRADING.md`` §3 tells a lab to move out of ``[MLOOP]``,
+#: The fifteen knobs ``UPGRADING.md`` §3 tells a lab to move out of ``[GENERAL]``,
 #: written as that document's table has them. Hard-coded rather than derived
 #: from the learners: derived, this would agree with the loader by
 #: construction and say nothing about whether the document is true.
@@ -207,7 +207,7 @@ MOVED_KNOBS = {
 
 
 @pytest.mark.parametrize('knob, value', sorted(MOVED_KNOBS.items()))
-def test_every_knob_the_upgrade_document_moves_is_refused_in_mloop(knob, value):
+def test_every_knob_the_upgrade_document_moves_is_refused_in_general(knob, value):
     """The lab reads that document, not this file.
 
     A row of it the loader still accepts is a setting the document says has
@@ -215,15 +215,15 @@ def test_every_knob_the_upgrade_document_moves_is_refused_in_mloop(knob, value):
     schema exists to prevent.
     """
     with pytest.raises(ValueError) as raised:
-        config_module.loads(MINIMAL + f'[MLOOP]\n{knob} = {value}\n')
+        config_module.loads(MINIMAL + f'[GENERAL]\n{knob} = {value}\n')
     message = str(raised.value)
     assert knob in message
     assert '[LEARNER.' in message
 
 
-def test_the_learner_is_named_in_the_mloop_table():
+def test_the_learner_is_named_in_the_general_table():
     config = config_module.loads(
-        MINIMAL + '[MLOOP]\nlearner = "differential_evolution"\n'
+        MINIMAL + '[GENERAL]\nlearner = "differential_evolution"\n'
     )
     assert config.learner == 'differential_evolution'
 
@@ -231,13 +231,13 @@ def test_the_learner_is_named_in_the_mloop_table():
 # --- the trainer -----------------------------------------------------------
 
 
-def test_the_trainer_is_named_in_the_mloop_table():
+def test_the_trainer_is_named_in_the_general_table():
     """Which learner runs the training shots, and stands as the fallback.
 
     It decides where the first shots of every run land, so it is the lab's to
     choose rather than this package's to fix.
     """
-    named = config_module.loads(MINIMAL + '[MLOOP]\ntrainer = "random"\n')
+    named = config_module.loads(MINIMAL + '[GENERAL]\ntrainer = "random"\n')
     assert type(learners.build(named).trainer) is learners.RandomLearner
     # And what a file naming none gets: the band around middling costs.
     unnamed = learners.build(config_module.loads(MINIMAL))
@@ -247,7 +247,7 @@ def test_the_trainer_is_named_in_the_mloop_table():
 def test_an_unknown_trainer_is_refused_at_load():
     """Rather than at worker configure, with the apparatus already running."""
     with pytest.raises(ValueError, match="unknown trainer 'directed_randon'"):
-        config_module.loads(MINIMAL + '[MLOOP]\ntrainer = "directed_randon"\n')
+        config_module.loads(MINIMAL + '[GENERAL]\ntrainer = "directed_randon"\n')
 
 
 def test_a_trainer_named_for_a_learner_that_needs_none_is_refused():
@@ -256,7 +256,7 @@ def test_a_trainer_named_for_a_learner_that_needs_none_is_refused():
     A file that carried it would read as though the first shots came from
     somewhere they do not.
     """
-    written = MINIMAL + '[MLOOP]\nlearner = "differential_evolution"\n'
+    written = MINIMAL + '[GENERAL]\nlearner = "differential_evolution"\n'
     with pytest.raises(ValueError, match='trainer is not accepted') as raised:
         config_module.loads(written + 'trainer = "random"\n')
     # And the learner it could have been named for.
@@ -272,7 +272,7 @@ def test_the_learner_m_loop_trained_with_cannot_train_here():
     file is refused rather than silently running the generation in pieces.
     """
     with pytest.raises(ValueError, match='whole generations of 8') as raised:
-        config_module.loads(MINIMAL + '[MLOOP]\ntrainer = "differential_evolution"\n')
+        config_module.loads(MINIMAL + '[GENERAL]\ntrainer = "differential_evolution"\n')
     assert 'Name a trainer' in str(raised.value)
 
 
@@ -281,7 +281,7 @@ def test_a_trainer_that_will_not_propose_from_an_empty_history_is_refused():
     everything the main learner cannot make, so there is nothing behind it.
     """
     with pytest.raises(ValueError, match='will not propose until') as raised:
-        config_module.loads(MINIMAL + '[MLOOP]\ntrainer = "gaussian_process"\n')
+        config_module.loads(MINIMAL + '[GENERAL]\ntrainer = "gaussian_process"\n')
     assert 'begins with none' in str(raised.value)
 
 
@@ -353,7 +353,7 @@ def test_a_parameter_with_no_global_is_rejected():
 [ANALYSIS]
 cost_key = ["r", "c"]
 groups = ["G"]
-[MLOOP_PARAMS.G.orphan]
+[PARAMETERS.G.orphan]
 min = 0.0
 max = 1.0
 """
@@ -367,7 +367,7 @@ def test_a_global_taking_an_unknown_parameter_is_rejected():
 [ANALYSIS]
 cost_key = ["r", "c"]
 groups = ["G"]
-[MLOOP_PARAMS.G.x]
+[PARAMETERS.G.x]
 global_name = "gx"
 min = 0.0
 max = 1.0
@@ -384,7 +384,7 @@ def test_a_configuration_with_nothing_enabled_says_so():
 [ANALYSIS]
 cost_key = ["r", "c"]
 groups = []
-[MLOOP_PARAMS.G.x]
+[PARAMETERS.G.x]
 global_name = "gx"
 min = 0.0
 max = 1.0
@@ -404,7 +404,7 @@ def test_a_missing_cost_key_says_so():
             """
 [ANALYSIS]
 groups = ["G"]
-[MLOOP_PARAMS.G.x]
+[PARAMETERS.G.x]
 global_name = "gx"
 min = 0.0
 max = 1.0
@@ -419,10 +419,10 @@ def test_a_parameter_table_without_its_bounds_says_so(missing):
     kept = 'min = 0.0' if missing == 'max' else 'max = 1.0'
     with pytest.raises(ValueError) as raised:
         config_module.loads(
-            MINIMAL + f'[MLOOP_PARAMS.G.y]\nglobal_name = "gy"\n{kept}\n'
+            MINIMAL + f'[PARAMETERS.G.y]\nglobal_name = "gy"\n{kept}\n'
         )
     message = str(raised.value)
-    assert 'MLOOP_PARAMS.G.y' in message
+    assert 'PARAMETERS.G.y' in message
     assert f"'{missing}'" in message
     assert 'requires' in message
 
@@ -468,7 +468,7 @@ def test_a_list_written_as_a_bare_string_is_rejected(text, named):
         (MINIMAL.replace('groups', 'maximize = "false"\ngroups'), 'maximize'),
         (
             MINIMAL.replace('min = 0.0', 'enable = "false"\nmin = 0.0'),
-            'MLOOP_PARAMS.G.x',
+            'PARAMETERS.G.x',
         ),
     ],
 )
@@ -482,7 +482,7 @@ def test_a_quoted_boolean_is_rejected(text, named):
 def test_a_run_count_that_is_not_a_number_is_rejected():
     """Carried through as written it would reach the session as a string."""
     with pytest.raises(ValueError) as raised:
-        config_module.loads(MINIMAL + '[MLOOP]\nmax_num_runs = "many"\n')
+        config_module.loads(MINIMAL + '[GENERAL]\nmax_num_runs = "many"\n')
     assert str(raised.value) == (
         "max_num_runs must be written as a whole number, got 'many'."
     )
@@ -507,49 +507,49 @@ def test_a_run_count_that_is_not_a_number_is_rejected():
             '[ANALYSIS]',
         ),
         (
-            MINIMAL + '[MLOOP]\ncontroller_type = "differential_evolution"\n',
+            MINIMAL + '[GENERAL]\ncontroller_type = "differential_evolution"\n',
             'controller_type',
-            '[MLOOP]',
+            '[GENERAL]',
         ),
-        (MINIMAL + '[MLOOP]\nsession = "run-a"\n', 'session', '[MLOOP]'),
-        (MINIMAL + '[MLOOP]\nno_delay = true\n', 'no_delay', '[MLOOP]'),
-        (MINIMAL + '[MLOOP]\nvisualisations = false\n', 'visualisations', '[MLOOP]'),
+        (MINIMAL + '[GENERAL]\nsession = "run-a"\n', 'session', '[GENERAL]'),
+        (MINIMAL + '[GENERAL]\nno_delay = true\n', 'no_delay', '[GENERAL]'),
+        (MINIMAL + '[GENERAL]\nvisualisations = false\n', 'visualisations', '[GENERAL]'),
         (
-            MINIMAL + '[MLOOP]\nconsole_log_level = "DEBUG"\n',
+            MINIMAL + '[GENERAL]\nconsole_log_level = "DEBUG"\n',
             'console_log_level',
-            '[MLOOP]',
+            '[GENERAL]',
         ),
         (
-            MINIMAL + '[MLOOP]\nconsole_log_string = "%(message)s"\n',
+            MINIMAL + '[GENERAL]\nconsole_log_string = "%(message)s"\n',
             'console_log_string',
-            '[MLOOP]',
+            '[GENERAL]',
         ),
-        (MINIMAL + '[MLOOP]\narchive_type = "txt"\n', 'archive_type', '[MLOOP]'),
+        (MINIMAL + '[GENERAL]\narchive_type = "txt"\n', 'archive_type', '[GENERAL]'),
         (
-            MINIMAL + '[MLOOP]\nrestart_tolerance = 0.01\n',
+            MINIMAL + '[GENERAL]\nrestart_tolerance = 0.01\n',
             'restart_tolerance',
-            '[MLOOP]',
+            '[GENERAL]',
         ),
         (
             MINIMAL + '[LEARNER.differential_evolution]\nrestart_tolerance = 0.01\n',
             'restart_tolerance',
             '[LEARNER.differential_evolution]',
         ),
-        (MINIMAL + '[MLOOP]\ngeneration_size = 4\n', 'generation_size', '[MLOOP]'),
+        (MINIMAL + '[GENERAL]\ngeneration_size = 4\n', 'generation_size', '[GENERAL]'),
         (
             MINIMAL + '[LEARNER.gaussian_process]\ngeneration_size = 4\n',
             'generation_size',
             '[LEARNER.gaussian_process]',
         ),
         (
-            MINIMAL + '[MLOOP_PARAMS.G.y]\nminimum = 2.0\n',
+            MINIMAL + '[PARAMETERS.G.y]\nminimum = 2.0\n',
             'minimum',
-            '[MLOOP_PARAMS.G.y]',
+            '[PARAMETERS.G.y]',
         ),
         (
-            MINIMAL + '[MLOOP_PARAMS.G.y]\nmaximum = 2.0\n',
+            MINIMAL + '[PARAMETERS.G.y]\nmaximum = 2.0\n',
             'maximum',
-            '[MLOOP_PARAMS.G.y]',
+            '[PARAMETERS.G.y]',
         ),
         (MINIMAL + '[COMPILATION]\nmock = false\n', 'COMPILATION', 'the top level'),
     ],
@@ -557,19 +557,19 @@ def test_a_run_count_that_is_not_a_number_is_rejected():
         'ANALYSIS.ignore_bad',
         'ANALYSIS.analysislib_console_log_level',
         'ANALYSIS.analysislib_file_log_level',
-        'MLOOP.controller_type',
-        'MLOOP.session',
-        'MLOOP.no_delay',
-        'MLOOP.visualisations',
-        'MLOOP.console_log_level',
-        'MLOOP.console_log_string',
-        'MLOOP.archive_type',
-        'MLOOP.restart_tolerance',
+        'GENERAL.controller_type',
+        'GENERAL.session',
+        'GENERAL.no_delay',
+        'GENERAL.visualisations',
+        'GENERAL.console_log_level',
+        'GENERAL.console_log_string',
+        'GENERAL.archive_type',
+        'GENERAL.restart_tolerance',
         'LEARNER.differential_evolution.restart_tolerance',
-        'MLOOP.generation_size',
+        'GENERAL.generation_size',
         'LEARNER.gaussian_process.generation_size',
-        'MLOOP_PARAMS.minimum',
-        'MLOOP_PARAMS.maximum',
+        'PARAMETERS.minimum',
+        'PARAMETERS.maximum',
         'COMPILATION',
     ],
 )
@@ -590,6 +590,56 @@ def test_every_setting_the_upgrade_document_retires_is_refused(text, spelling, n
     message = str(raised.value)
     assert spelling in message
     assert named in message
+
+
+@pytest.mark.parametrize(
+    'text, old, new, other',
+    [
+        (
+            MINIMAL + '[MLOOP]\nlearner = "random"\n',
+            '[MLOOP]',
+            '[GENERAL]',
+            '[PARAMETERS]',
+        ),
+        (
+            MINIMAL.replace('[PARAMETERS.', '[MLOOP_PARAMS.'),
+            '[MLOOP_PARAMS]',
+            '[PARAMETERS]',
+            '[GENERAL]',
+        ),
+    ],
+    ids=['MLOOP', 'MLOOP_PARAMS'],
+)
+def test_a_table_named_after_mloop_is_refused_naming_what_replaces_it(
+    text, old, new, other
+):
+    """This package replaces M-LOOP and carries none of its code, so the two
+    tables named after it are gone. Nothing is preserved: read under the new
+    name, a file written for the old one would load and mean something, and a
+    lab would go on typing the name of a tool it is not running.
+
+    The message has to pair the table with its own replacement. Left to the
+    top-level spelling check, an old name is a typo and the reader is handed
+    every table this package accepts to choose from.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(text)
+    message = str(raised.value)
+    assert old in message
+    assert new in message
+    assert other not in message
+
+
+def test_a_file_using_both_old_table_names_is_told_about_both_at_once():
+    """An M-LOOP file has both, so reporting one is two loads and two edits."""
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(
+            MINIMAL.replace('[PARAMETERS.', '[MLOOP_PARAMS.')
+            + '[MLOOP]\nlearner = "random"\n'
+        )
+    message = str(raised.value)
+    assert '[MLOOP] is now [GENERAL]' in message
+    assert '[MLOOP_PARAMS] is now [PARAMETERS]' in message
 
 
 def test_a_typo_is_rejected_naming_the_key_its_table_and_what_that_table_takes():
@@ -640,7 +690,7 @@ def test_a_typo_in_a_group_nobody_switched_on_is_still_rejected():
     ANALYSIS.groups and wonders why the parameter behaves oddly.
     """
     with pytest.raises(ValueError, match='maxx'):
-        config_module.loads(MINIMAL + '[MLOOP_PARAMS.OFF.y]\nmin = 0.0\nmaxx = 1.0\n')
+        config_module.loads(MINIMAL + '[PARAMETERS.OFF.y]\nmin = 0.0\nmaxx = 1.0\n')
 
 
 def test_a_per_learner_table_rejects_a_knob_that_learner_does_not_take():
@@ -698,7 +748,7 @@ def test_the_old_spelling_of_the_refit_interval_is_refused():
 # --- the budget and the population -----------------------------------------
 
 
-DE = MINIMAL + '[MLOOP]\nlearner = "differential_evolution"\n'
+DE = MINIMAL + '[GENERAL]\nlearner = "differential_evolution"\n'
 
 
 def test_a_generational_learner_will_not_take_a_queue_depth_as_well():
@@ -712,7 +762,7 @@ def test_a_generational_learner_will_not_take_a_queue_depth_as_well():
     assert 'generation of 8' in str(raised.value)
 
     # A learner asked for any number of proposals at a time still takes one.
-    other = config_module.loads(MINIMAL + '[MLOOP]\nnum_buffered_runs = 3\n')
+    other = config_module.loads(MINIMAL + '[GENERAL]\nnum_buffered_runs = 3\n')
     assert other.num_buffered_runs == 3
 
 
@@ -740,7 +790,7 @@ def test_a_generation_a_constructor_assigns_is_refused_a_queue_depth_too(monkeyp
     assert Ordinary.generation is None
     monkeypatch.setitem(learners.LEARNERS, 'ordinary', Ordinary)
 
-    written = MINIMAL + '[MLOOP]\nlearner = "ordinary"\n'
+    written = MINIMAL + '[GENERAL]\nlearner = "ordinary"\n'
     with pytest.raises(ValueError, match='num_buffered_runs') as raised:
         config_module.loads(written + 'num_buffered_runs = 3\n')
     assert 'generation of 8' in str(raised.value)
@@ -806,7 +856,7 @@ def test_the_budget_is_measured_against_the_generation_a_learner_declares(monkey
 
     monkeypatch.setitem(learners.LEARNERS, 'doubling', Doubling)
 
-    written = MINIMAL + '[MLOOP]\nlearner = "doubling"\n'
+    written = MINIMAL + '[GENERAL]\nlearner = "doubling"\n'
     sized = '[LEARNER.doubling]\npopulation_size = 4\n'
     with pytest.raises(ValueError, match='max_num_runs') as raised:
         config_module.loads(written + 'max_num_runs = 15\n' + sized)
@@ -839,7 +889,7 @@ def test_a_whole_number_setting_written_as_a_fraction_is_refused(setting, writte
     reproducible is not the run the file asks for, and nothing says so.
     """
     with pytest.raises(ValueError) as raised:
-        config_module.loads(MINIMAL + f'[MLOOP]\n{setting} = {written}\n')
+        config_module.loads(MINIMAL + f'[GENERAL]\n{setting} = {written}\n')
     assert str(raised.value) == (
         f'{setting} must be written as a whole number, got {float(written)!r}.'
     )
@@ -856,7 +906,7 @@ def test_a_whole_number_setting_written_as_a_boolean_is_refused(setting):
     runs on a setting nobody wrote.
     """
     with pytest.raises(ValueError) as raised:
-        config_module.loads(MINIMAL + f'[MLOOP]\n{setting} = true\n')
+        config_module.loads(MINIMAL + f'[GENERAL]\n{setting} = true\n')
     assert str(raised.value) == (
         f'{setting} must be written as a whole number, got True.'
     )
@@ -872,7 +922,7 @@ def test_a_string_setting_written_as_a_number_is_refused(setting):
     is the quotes.
     """
     with pytest.raises(ValueError) as raised:
-        config_module.loads(MINIMAL + f'[MLOOP]\n{setting} = 2026\n')
+        config_module.loads(MINIMAL + f'[GENERAL]\n{setting} = 2026\n')
     assert str(raised.value) == f'{setting} must be written as a string, got 2026.'
 
 
@@ -896,8 +946,8 @@ def test_a_setting_below_its_floor_is_refused_and_the_floor_itself_loads(
     explains itself. tests/test_session.py shows what that looks like.
     """
     with pytest.raises(ValueError, match=f'{setting} must be at least'):
-        config_module.loads(MINIMAL + f'[MLOOP]\n{setting} = {refused}\n')
-    loaded = config_module.loads(MINIMAL + f'[MLOOP]\n{setting} = {accepted}\n')
+        config_module.loads(MINIMAL + f'[GENERAL]\n{setting} = {refused}\n')
+    loaded = config_module.loads(MINIMAL + f'[GENERAL]\n{setting} = {accepted}\n')
     assert getattr(loaded, setting) == accepted
 
 
@@ -920,10 +970,10 @@ def test_a_misspelled_learner_is_refused_while_the_file_is_being_read():
     """Not at build(), which is worker configure with the session starting.
 
     The per-table check looks at the [LEARNER.<name>] tables, and a file that
-    has none of them names its learner only in [MLOOP].
+    has none of them names its learner only in [GENERAL].
     """
     with pytest.raises(ValueError) as raised:
-        config_module.loads(MINIMAL + '[MLOOP]\nlearner = "gaussain_process"\n')
+        config_module.loads(MINIMAL + '[GENERAL]\nlearner = "gaussain_process"\n')
     message = str(raised.value)
     assert "unknown learner 'gaussain_process'" in message
     assert 'gaussian_process' in message
@@ -936,11 +986,11 @@ TWO_GROUPS = """
 [ANALYSIS]
 cost_key = ["r", "c"]
 groups = {groups}
-[MLOOP_PARAMS.GA.x]
+[PARAMETERS.GA.x]
 global_name = "ga"
 min = 0.0
 max = 1.0
-[MLOOP_PARAMS.GB.x]
+[PARAMETERS.GB.x]
 global_name = "gb"
 min = 5.0
 max = 6.0
@@ -977,11 +1027,11 @@ def test_a_name_repeated_in_a_group_nobody_switched_on_still_loads():
 [ANALYSIS]
 cost_key = ["r", "c"]
 groups = ["G"]
-[MLOOP_PARAMS.G.x]
+[PARAMETERS.G.x]
 global_name = "gx"
 min = 0.0
 max = 1.0
-[MLOOP_PARAMS.G.y]
+[PARAMETERS.G.y]
 global_name = "gx"
 min = 0.0
 max = 1.0
@@ -1009,10 +1059,10 @@ def test_one_runmanager_global_set_from_two_places_is_refused(text):
 [ANALYSIS]
 cost_key = ["r", "c"]
 groups = ["G"]
-[MLOOP_PARAMS.G.x]
+[PARAMETERS.G.x]
 min = 0.0
 max = 1.0
-[MLOOP_PARAMS.G.y]
+[PARAMETERS.G.y]
 min = 0.0
 max = 1.0
 [RUNMANAGER_GLOBALS.G.pair]
@@ -1046,10 +1096,10 @@ def test_an_expression_that_cannot_take_its_parameters_stops_the_load():
 [ANALYSIS]
 cost_key = ["r", "c"]
 groups = ["G"]
-[MLOOP_PARAMS.G.x]
+[PARAMETERS.G.x]
 min = 0.0
 max = 1.0
-[MLOOP_PARAMS.G.y]
+[PARAMETERS.G.y]
 min = 0.0
 max = 1.0
 [RUNMANAGER_GLOBALS.G.pair]
@@ -1073,10 +1123,10 @@ def test_an_expression_whose_signature_cannot_be_read_is_taken_as_written():
 [ANALYSIS]
 cost_key = ["r", "c"]
 groups = ["G"]
-[MLOOP_PARAMS.G.x]
+[PARAMETERS.G.x]
 min = 0.0
 max = 1.0
-[MLOOP_PARAMS.G.y]
+[PARAMETERS.G.y]
 min = 0.0
 max = 1.0
 [RUNMANAGER_GLOBALS.G.larger]

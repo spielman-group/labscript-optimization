@@ -14,5 +14,5 @@ threads, so they can be used on their own::
 In a lab, the entry point is the routine::
 
     import labscript_optimization.routine as optimisation
-    optimisation.optimise('mloop_config.toml')
+    optimisation.optimise('optimisation_config.toml')
 """

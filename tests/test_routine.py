@@ -49,7 +49,7 @@ CONFIG = """
 cost_key = ["zTOF", "Nb"]
 maximize = true
 groups = ["G"]
-[MLOOP_PARAMS.G.x]
+[PARAMETERS.G.x]
 global_name = "gx"
 min = 0.0
 max = 1.0
@@ -497,7 +497,7 @@ def session(monkeypatch, tmp_path):
     ``worker`` is the end the routine writes to: what it was ``sent``, and the
     ``replies`` it answers with in place of its default.
     """
-    path = tmp_path / 'mloop_config.toml'
+    path = tmp_path / 'optimisation_config.toml'
     path.write_text(CONFIG)
     from_worker = Pipe()
     to_worker = Answering(from_worker)
@@ -1131,10 +1131,10 @@ WORKER_CONFIG = """
 [ANALYSIS]
 cost_key = ["zTOF", "Nb"]
 groups = ["G"]
-[MLOOP]
+[GENERAL]
 learner = "random"
 num_buffered_runs = 2
-[MLOOP_PARAMS.G.x]
+[PARAMETERS.G.x]
 global_name = "gx"
 min = 0.0
 max = 1.0
@@ -1200,7 +1200,7 @@ def running(monkeypatch, tmp_path):
         # A deadline for configuring that a test can outrun if it has to, and
         # one these tests do not read the workstation's labconfig for.
         monkeypatch.setattr(routine_module, 'configure_timeout', lambda: 5.0)
-        path = tmp_path / 'mloop_config.toml'
+        path = tmp_path / 'optimisation_config.toml'
         path.write_text(WORKER_CONFIG)
         storage = types.SimpleNamespace()
         started.append((storage, to_worker, thread))

@@ -2,8 +2,8 @@
 
 Your existing `mloop_config.toml` will not load as it stands, and the two
 runmanager globals the old plugin needed are no longer used. Everything else
-carries over: the same parameter and globals tables, the same cost column, the
-same algorithms.
+carries over: the same parameters and globals, the same cost column, the same
+algorithms.
 
 Work through the six steps below. Each says what to change and why, so you can
 tell whether it applies to your lab.
@@ -34,12 +34,28 @@ Remove `mloop_multishot.py`, `mloop_interface.py`, `mloop_controller.py`,
 `mloop_learner.py` and `monkey.py` from your analysis directory. Nothing from
 analysislib-mloop is imported any more, and `mloop` itself is not a dependency.
 
-## 2. Cut the settings that no longer exist
+## 2. Rename the two M-LOOP tables, and cut the settings that no longer exist
 
-A key this package does not know is now **refused**, naming the key, the
-table it was found in, and what that table accepts. A setting that is accepted
-and then quietly ignored is how a lab comes to believe an option is in force
-when it is not, so loading stops rather than carrying on.
+Do the renames first. The rest of this document names the new tables, and an
+old name is **refused** before any other complaint about the file is reached.
+
+| Rename | To |
+| --- | --- |
+| `[MLOOP]` | `[GENERAL]` |
+| `[MLOOP_PARAMS.<group>.<name>]` | `[PARAMETERS.<group>.<name>]` |
+
+This package replaces M-LOOP and carries none of its code, so a settings table
+named after it was a name nothing written under it answered to. `[GENERAL]`
+reads against `[ANALYSIS]` and `[LEARNER.<name>]` without naming the table
+after the package every table in the file belongs to anyway.
+`[RUNMANAGER_GLOBALS.<group>.<name>]` was already named for what it holds and
+is untouched. Nothing is read under an old name, and a file carrying both is
+told about both at once.
+
+Then the keys. A key this package does not know is also **refused**, naming the
+key, the table it was found in, and what that table accepts. A setting that is
+accepted and then quietly ignored is how a lab comes to believe an option is in
+force when it is not, so loading stops rather than carrying on.
 
 Delete these from your configuration:
 
@@ -47,19 +63,19 @@ Delete these from your configuration:
 | --- | --- | --- |
 | `[ANALYSIS]` | `ignore_bad` | A shot whose cost is `NaN` is now recorded as a bad observation: counted as a completed run, left out of the fits. Nothing waits for it, so there is nothing to switch off. |
 | `[ANALYSIS]` | `analysislib_console_log_level`, `analysislib_file_log_level` | The plugin's own logging configuration. It has no logging of its own to configure. |
-| `[MLOOP]` | `session` | A label. Nothing read it but the status `optimise` returns, where it was one more key in the printed dictionary; it was never written onto a shot and never matched on. A shot is attributed by the id runmanager mints for its queue row, which lyse reads as the `shot_id` column. |
-| `[MLOOP]` | `no_delay` | The Gaussian process runs in a worker process that never blocks the routine, so there is no delay to avoid. |
-| `[MLOOP]` | `visualisations` | No plots and no GUI. Progress comes back as the routine's results. |
-| `[MLOOP]` | `console_log_level`, `console_log_string` | As above. |
-| `[MLOOP]`, `[LEARNER.differential_evolution]` | `restart_tolerance` | The population is not re-seeded when its costs converge. That decision was taken at a generation boundary from the costs resolved by then, so a cost arriving afterwards could change it and turn a block generated as trials into founders of a new epoch; and within a lab's budget it re-seeded populations that had converged to within a fraction of their initial spread but not to the minimum. `max_num_runs_without_better_params` is the stop to use instead. |
+| `[GENERAL]` | `session` | A label. Nothing read it but the status `optimise` returns, where it was one more key in the printed dictionary; it was never written onto a shot and never matched on. A shot is attributed by the id runmanager mints for its queue row, which lyse reads as the `shot_id` column. |
+| `[GENERAL]` | `no_delay` | The Gaussian process runs in a worker process that never blocks the routine, so there is no delay to avoid. |
+| `[GENERAL]` | `visualisations` | No plots and no GUI. Progress comes back as the routine's results. |
+| `[GENERAL]` | `console_log_level`, `console_log_string` | As above. |
+| `[GENERAL]`, `[LEARNER.differential_evolution]` | `restart_tolerance` | The population is not re-seeded when its costs converge. That decision was taken at a generation boundary from the costs resolved by then, so a cost arriving afterwards could change it and turn a block generated as trials into founders of a new epoch; and within a lab's budget it re-seeded populations that had converged to within a fraction of their initial spread but not to the minimum. `max_num_runs_without_better_params` is the stop to use instead. |
 | whole table | `[COMPILATION]` | Its only key was `mock`, which selected a dry-run interface that has been removed. |
 
-And rename two:
+And rename two keys:
 
 | Table | Rename | To |
 | --- | --- | --- |
-| `[MLOOP]` | `controller_type` | `learner` |
-| `[MLOOP]`, `[LEARNER.gaussian_process]` | `generation_size` | `refit_interval` |
+| `[GENERAL]` | `controller_type` | `learner` |
+| `[GENERAL]`, `[LEARNER.gaussian_process]` | `generation_size` | `refit_interval` |
 
 `generation_size` set two things at once: how often the Gaussian process
 refits its kernel hyperparameters, and the period of its exploration schedule.
@@ -93,30 +109,30 @@ history dies with it and a new session starts from nothing.
 
 ## 3. Move every learner knob into its learner's table
 
-`[MLOOP]` carries the session's own settings and nothing else. A learner's
+`[GENERAL]` carries the session's own settings and nothing else. A learner's
 knobs are written in `[LEARNER.<name>]`, the table of the learner that takes
-them, and a knob found in `[MLOOP]` is **refused**, with the table it belongs
+them, and a knob found in `[GENERAL]` is **refused**, with the table it belongs
 in named. Nothing is preserved: there is no shared table of learner knobs any
 more.
 
-| Move out of `[MLOOP]` | Into |
+| Move out of `[GENERAL]` | Into |
 | --- | --- |
 | `trust_range`, `trust_gaussian`, `explore_fraction` | `[LEARNER.directed_random]` |
 | `population_size`, `evolution_strategy`, `mutation_scale`, `cross_over_probability` | `[LEARNER.differential_evolution]` |
 | `cost_has_noise`, `cost_bias`, `uncer_bias`, `refit_interval`, `length_scale_bounds`, `noise_level_bounds`, `minimum_observations` | `[LEARNER.gaussian_process]` |
 | `trust_region` | all three of those tables take it — write it in each one you want it in, with the value you want there |
 
-That split is the reason for the change. Of the fifteen keys `[MLOOP]` used to
-accept as shared learner knobs, fourteen are taken by exactly one learner. The
-sharing served a single knob, `trust_region`, and for the other fourteen it put
-a setting where it read as though it might apply to any learner and then
-dropped it in silence for the ones that do not take it.
+That split is the reason for the change. Of the fifteen keys the session table
+used to accept as shared learner knobs, fourteen are taken by exactly one
+learner. The sharing served a single knob, `trust_region`, and for the other
+fourteen it put a setting where it read as though it might apply to any learner
+and then dropped it in silence for the ones that do not take it.
 
 The selectable trainer, under *What changed in the algorithms* below, is
-what forces it. A session that trains runs two
-learners at once, and a knob in `[MLOOP]` reaches both with no way to say which
-was meant — so a wide trust region to train with and a tight one to refine with
-could not both be asked for. In each learner's own table they can:
+what forces it. A session that trains runs two learners at once, and a knob in
+`[GENERAL]` reaches both with no way to say which was meant — so a wide trust
+region to train with and a tight one to refine with could not both be asked
+for. In each learner's own table they can:
 
 ```toml
 [LEARNER.directed_random]
@@ -128,7 +144,7 @@ trust_region = 0.05
 
 A table written for a learner this file does not build goes unread, so the
 settings for several learners can sit side by side and be switched between by
-changing `[MLOOP] learner`.
+changing `[GENERAL] learner`.
 
 ## 4. Remove the tag globals
 
@@ -193,11 +209,12 @@ goes out whole.
 
 ## What stays the same
 
-- `[MLOOP_PARAMS.<group>.<name>]` with `global_name`, `min`, `max`, `start`
-  and `enable`, and `[RUNMANAGER_GLOBALS.<group>.<name>]` with `expr` and
-  `args`, are unchanged. So is `ANALYSIS.groups` selecting which groups take
-  part, and `enable = false` keeping a parameter in the file but out of the
-  search.
+- What the parameter and globals tables carry is unchanged, and only the
+  first of them was renamed: `[PARAMETERS.<group>.<name>]` takes
+  `global_name`, `min`, `max`, `start` and `enable`, and
+  `[RUNMANAGER_GLOBALS.<group>.<name>]` takes `expr` and `args`.
+  `ANALYSIS.groups` still selects which groups take part, and `enable = false`
+  still keeps a parameter in the file but out of the search.
 - `cost_key` is still `[routine_name, result_name]`, `maximize` still means
   your cost column holds something to be made large, and an optional
   `u_<result>` column alongside is still read as the uncertainty and weights
@@ -213,8 +230,8 @@ goes out whole.
 ## What changed in the algorithms
 
 - **The learners are named** `random`, `directed_random`,
-  `differential_evolution` and `gaussian_process`, in `[MLOOP] learner`.
-- **The trainer is chosen**, in `[MLOOP] trainer`, and defaults to
+  `differential_evolution` and `gaussian_process`, in `[GENERAL] learner`.
+- **The trainer is chosen**, in `[GENERAL] trainer`, and defaults to
   `directed_random`. `gaussian_process` is the only learner that needs one: it
   runs the trainer for its training shots and falls back to it for any proposal
   it cannot make. A name that is not a learner is refused, and so is a trainer
@@ -267,7 +284,7 @@ goes out whole.
   out: over four analytic test functions at four parameters it is nothing
   measurable at 120 shots and a factor of 1.6 in the best cost found at 600.
   The name has to be true.
-- **`seed`** in `[MLOOP]` makes a run reproducible.
+- **`seed`** in `[GENERAL]` makes a run reproducible.
 
 ## What the routine reports
 

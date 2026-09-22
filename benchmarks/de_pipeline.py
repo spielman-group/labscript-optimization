@@ -157,7 +157,7 @@ def configuration(dimension, budget, learner, population_size, seed, buffered=No
         "[ANALYSIS]",
         'cost_key = ["bench", "cost"]',
         'groups = ["G"]',
-        "[MLOOP]",
+        "[GENERAL]",
         f'learner = "{learner}"',
         f"max_num_runs = {budget}",
         f"seed = {seed}",
@@ -173,7 +173,7 @@ def configuration(dimension, budget, learner, population_size, seed, buffered=No
     ]
     for i in range(dimension):
         lines += [
-            f"[MLOOP_PARAMS.G.p{i}]",
+            f"[PARAMETERS.G.p{i}]",
             f'global_name = "g{i}"',
             f"min = {BOX[0]}",
             f"max = {BOX[1]}",

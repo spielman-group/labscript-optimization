@@ -16,11 +16,11 @@ CONFIG = """
 [ANALYSIS]
 cost_key = ["r", "c"]
 groups = ["G"]
-[MLOOP_PARAMS.G.x]
+[PARAMETERS.G.x]
 global_name = "gx"
 min = 0.0
 max = 10.0
-[MLOOP_PARAMS.G.y]
+[PARAMETERS.G.y]
 min = 0.0
 max = 10.0
 [RUNMANAGER_GLOBALS.G.gy_doubled]
