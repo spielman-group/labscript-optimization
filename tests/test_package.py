@@ -110,15 +110,18 @@ def test_the_name_m_loop_appears_only_where_the_subject_is_m_loop():
     the configuration surface a lab types every day; nothing noticed, because
     noticing meant somebody re-running the grep.
 
-    Two tiers, because neither shape guards on its own. A file list alone lets
-    the word multiply inside a file already allowed one sentence of it -- a
-    README that explains what this replaces could grow twenty mentions and
-    stay on the list. A count alone, per file or in total, drifts: every edit
-    that moves the number is an edit that has to change this test, and a
-    number changed to make a test pass is no guard at all. So the files whose
-    whole subject is M-LOOP are named and not counted, and every other file is
-    counted exactly, compared as a whole mapping so that a file appearing for
-    the first time fails as loudly as a count that moved.
+    Two tiers, because neither shape guards on its own. A bare list of files
+    lets the word multiply inside one already allowed a sentence of it: the
+    README that explains what this package replaces could grow twenty
+    mentions and stay on the list. A bare total drifts silently the other
+    way, since one file losing a mention as another gains one leaves the
+    number where it was, and a total that does move says nothing about where.
+
+    So the files whose whole subject is M-LOOP are named and not counted --
+    counting them would break on every edit to prose that is meant to say the
+    word -- and every other file is counted exactly, with the whole mapping
+    compared at once, so a file saying it for the first time fails as loudly
+    as a count that moved.
     """
     listed = subprocess.run(
         ['git', 'ls-files', '-z'],
