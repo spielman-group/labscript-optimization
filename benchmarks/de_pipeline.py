@@ -158,7 +158,6 @@ def configuration(dimension, budget, learner, population_size, seed, buffered=No
         'cost_key = ["bench", "cost"]',
         'groups = ["G"]',
         "[MLOOP]",
-        'session = "bench"',
         f'learner = "{learner}"',
         f"max_num_runs = {budget}",
         f"seed = {seed}",

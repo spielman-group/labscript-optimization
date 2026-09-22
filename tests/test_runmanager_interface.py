@@ -16,8 +16,6 @@ CONFIG = """
 [ANALYSIS]
 cost_key = ["r", "c"]
 groups = ["G"]
-[MLOOP]
-session = "s"
 [MLOOP_PARAMS.G.x]
 global_name = "gx"
 min = 0.0

@@ -231,7 +231,6 @@ class Session:
         if best_cost is not None and self.config.maximize:
             best_cost = -best_cost
         return {
-            "session": self.config.session,
             "phase": self.learner.last_phase,
             "submitted": len(self.proposals),
             "completed": len(self.results),

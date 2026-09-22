@@ -72,7 +72,6 @@ MLOOP_KEYS = frozenset(
         "num_buffered_runs",
         "num_training_runs",
         "seed",
-        "session",
         "trainer",
     }
 )
@@ -197,18 +196,12 @@ class GlobalMapping:
 
 @dataclass
 class Config:
-    """Everything a session needs to run.
-
-    ``session`` is a label and nothing more: it is reported among the routine's
-    results so that a row can be attributed to the run that produced it, and
-    nothing is matched on it.
-    """
+    """Everything a session needs to run."""
 
     space: ParameterSpace
     globals: tuple[GlobalMapping, ...]
     cost_key: tuple[str, str]
     maximize: bool = False
-    session: str = "default"
     learner: str = "gaussian_process"
     #: The learner that runs the training shots for a ``learner`` that needs
     #: them, and stands as the fallback for any proposal that learner cannot
@@ -263,7 +256,7 @@ class Config:
                 f"maximize must be written as true or false, unquoted, not "
                 f"{self.maximize!r}."
             )
-        for key in ("learner", "session", "trainer"):
+        for key in ("learner", "trainer"):
             value = getattr(self, key)
             if not isinstance(value, str):
                 raise ValueError(f"{key} must be written as a string, got {value!r}.")

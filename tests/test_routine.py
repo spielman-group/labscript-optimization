@@ -49,8 +49,6 @@ CONFIG = """
 cost_key = ["zTOF", "Nb"]
 maximize = true
 groups = ["G"]
-[MLOOP]
-session = "run-a"
 [MLOOP_PARAMS.G.x]
 global_name = "gx"
 min = 0.0
@@ -817,7 +815,6 @@ def test_an_answer_still_on_its_way_is_left_for_the_next_shot(
 def status(**overrides):
     """A status of the shape the session sends, with nothing found yet."""
     return {
-        'session': 'run-a',
         'phase': 'main',
         'submitted': 1,
         'completed': 0,
@@ -1135,7 +1132,6 @@ WORKER_CONFIG = """
 cost_key = ["zTOF", "Nb"]
 groups = ["G"]
 [MLOOP]
-session = "run-a"
 learner = "random"
 num_buffered_runs = 2
 [MLOOP_PARAMS.G.x]

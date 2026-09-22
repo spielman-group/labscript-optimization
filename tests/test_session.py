@@ -12,7 +12,6 @@ cost_key = ["r", "c"]
 maximize = {maximize}
 groups = ["G"]
 [MLOOP]
-session = "s"
 learner = "random"
 num_buffered_runs = {buffered}
 {extra}
@@ -28,7 +27,6 @@ GENERATIONAL = """
 cost_key = ["r", "c"]
 groups = ["G"]
 [MLOOP]
-session = "s"
 learner = "differential_evolution"
 [LEARNER.differential_evolution]
 population_size = 4

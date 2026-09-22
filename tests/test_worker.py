@@ -17,7 +17,6 @@ CONFIG = """
 cost_key = ["r", "c"]
 groups = ["G"]
 [MLOOP]
-session = "s"
 learner = "random"
 num_buffered_runs = 2
 [MLOOP_PARAMS.G.x]

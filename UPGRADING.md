@@ -47,6 +47,7 @@ Delete these from your configuration:
 | --- | --- | --- |
 | `[ANALYSIS]` | `ignore_bad` | A shot whose cost is `NaN` is now recorded as a bad observation: counted as a completed run, left out of the fits. Nothing waits for it, so there is nothing to switch off. |
 | `[ANALYSIS]` | `analysislib_console_log_level`, `analysislib_file_log_level` | The plugin's own logging configuration. It has no logging of its own to configure. |
+| `[MLOOP]` | `session` | A label. Nothing read it but the status `optimise` returns, where it was one more key in the printed dictionary; it was never written onto a shot and never matched on. A shot is attributed by the id runmanager mints for its queue row, which lyse reads as the `shot_id` column. |
 | `[MLOOP]` | `no_delay` | The Gaussian process runs in a worker process that never blocks the routine, so there is no delay to avoid. |
 | `[MLOOP]` | `visualisations` | No plots and no GUI. Progress comes back as the routine's results. |
 | `[MLOOP]` | `console_log_level`, `console_log_string` | As above. |

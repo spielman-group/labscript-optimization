@@ -20,7 +20,6 @@ maximize = true
 groups = ["CMOT", "SHIMS"]
 
 [MLOOP]
-session = "run-a"
 num_buffered_runs = 3
 num_training_runs = 20
 max_num_runs = 400
@@ -512,6 +511,7 @@ def test_a_run_count_that_is_not_a_number_is_rejected():
             'controller_type',
             '[MLOOP]',
         ),
+        (MINIMAL + '[MLOOP]\nsession = "run-a"\n', 'session', '[MLOOP]'),
         (MINIMAL + '[MLOOP]\nno_delay = true\n', 'no_delay', '[MLOOP]'),
         (MINIMAL + '[MLOOP]\nvisualisations = false\n', 'visualisations', '[MLOOP]'),
         (
@@ -558,6 +558,7 @@ def test_a_run_count_that_is_not_a_number_is_rejected():
         'ANALYSIS.analysislib_console_log_level',
         'ANALYSIS.analysislib_file_log_level',
         'MLOOP.controller_type',
+        'MLOOP.session',
         'MLOOP.no_delay',
         'MLOOP.visualisations',
         'MLOOP.console_log_level',
@@ -847,13 +848,14 @@ def test_a_whole_number_setting_written_as_a_boolean_is_refused(setting):
     )
 
 
-@pytest.mark.parametrize('setting', ['learner', 'session'])
+@pytest.mark.parametrize('setting', ['learner', 'trainer'])
 def test_a_string_setting_written_as_a_number_is_refused(setting):
     """``str()`` coercion has the flaw ``int()`` coercion has.
 
-    A session labelled 2026 would come back through lyse as the string
-    "2026", which is not what the file says and not what a lab filtering on
-    the label would write.
+    A number here is a file that forgot the quotes. Coerced, it would reach
+    the lookup that turns this name into a learner as "2026" and be refused
+    there for naming no learner -- a complaint about the name, when the fault
+    is the quotes.
     """
     with pytest.raises(ValueError) as raised:
         config_module.loads(MINIMAL + f'[MLOOP]\n{setting} = 2026\n')

@@ -27,14 +27,6 @@ maximize = true
 groups = ["CMOT"]
 
 [MLOOP]
-# A label for this run, and nothing more. It comes back among this routine's
-# lyse results, so a row can be attributed to the run that produced it. No
-# matching is done on it: a cost reaches the proposal it answers by the shot id
-# runmanager mints for its queue row, which is unique across runs on its own.
-# Restarting the routine is what starts a fresh optimisation; changing this
-# only changes the label.
-session = "2026-09-18a"
-
 # random, directed_random, differential_evolution or gaussian_process.
 # gaussian_process is the one that trains first; "trainer" below says which
 # learner does the training.
