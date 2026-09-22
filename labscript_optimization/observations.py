@@ -7,7 +7,8 @@ it made them, so a position spent on a shot that is still running or on one
 that will never report is visible to them as a position spent.
 """
 
-from typing import NamedTuple, Sequence
+from dataclasses import dataclass
+from typing import Sequence
 
 import numpy as np
 
@@ -22,7 +23,8 @@ DROPPED = "dropped"
 COMPLETE = "complete"
 
 
-class Observation(NamedTuple):
+@dataclass(frozen=True)
+class Observation:
     """One proposal, and what became of it.
 
     Args:
@@ -52,13 +54,36 @@ class Observation(NamedTuple):
     bad: bool = False
     state: str = COMPLETE
 
+    def __post_init__(self) -> None:
+        """Refuse a completed shot with no cost.
+
+        ``state`` defaults to :data:`COMPLETE` because that is what almost
+        every record is, and ``cost`` is optional because the two states that
+        are not have no cost to carry. The pair a caller reaches by taking
+        both defaults at their word -- a completed shot with ``cost=None`` --
+        is the one combination that describes nothing: a shot that ran and
+        produced nothing usable is bad, and a bad shot carries a cost of NaN
+        and says so.
+        """
+        if self.state == COMPLETE and self.cost is None:
+            raise ValueError(
+                f"observation {self.shot_id!r} is complete and carries no "
+                f"cost. A shot that has run and produced nothing usable is "
+                f"bad, not costless: give it a cost of NaN with bad=True. A "
+                f"proposal with no cost yet is {PENDING!r}, and one that will "
+                f"never report is {DROPPED!r}."
+            )
+
     @property
     def usable(self) -> bool:
         """Whether this observation can inform a fit.
 
-        Only a completed shot has a cost to offer. A non-finite one is
-        excluded along with a bad one: it carries no gradient information and
-        would poison any statistic over the cost range.
+        Only a completed shot has a cost to offer, and only a completed shot
+        has one: the constructor refuses the other pairing, so the state is
+        the whole of the question and a cost of ``None`` never reaches the
+        finiteness test below. A non-finite cost is excluded along with a bad
+        one: it carries no gradient information and would poison any statistic
+        over the cost range.
         """
         if self.state != COMPLETE or self.bad:
             return False

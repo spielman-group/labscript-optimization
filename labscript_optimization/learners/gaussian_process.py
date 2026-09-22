@@ -67,10 +67,11 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         cost_has_noise: Add a white-noise term to the kernel. Leave this on for
             real data; turning it off asserts the cost is measured exactly.
             With it off, a history in which only some observations carry an
-            uncertainty gives the rest an ``alpha`` of exactly zero and there
-            is no jitter anywhere else, so two shots at the same parameter
-            vector make the covariance matrix singular and the fit raises
-            ``numpy.linalg.LinAlgError``.
+            uncertainty is refused: the rest would be fitted with an ``alpha``
+            of exactly zero and there is no jitter anywhere else, so the
+            covariance matrix is singular. The refusal comes from
+            :meth:`point_variances`, the first place that can see the history
+            is mixed.
         length_scale_bounds: Bounds on the RBF length scale, in units of the
             unit cube the parameters are scaled onto.
         noise_level_bounds: Bounds on the white-noise level, in units of the
@@ -135,6 +136,17 @@ class GaussianProcessLearner(ParameterSpaceLearner):
             if minimum_observations is None
             else int(minimum_observations)
         )
+        if self.minimum_observations < 1:
+            # A fit needs something to fit to. At zero the guard in ``fit``
+            # passes on an empty history, and the refusal a file gets is
+            # scikit-learn's, from inside a scaler, naming neither this
+            # setting nor the learner.
+            raise ValueError(
+                f"minimum_observations is how many usable observations the "
+                f"Gaussian process needs before it will fit, so it must be at "
+                f"least 1, got {self.minimum_observations}. A fit has nothing "
+                f"to work from on an empty history."
+            )
         self.num_restarts = max(10, space.num_params)
 
         self._kernel = None
@@ -165,10 +177,31 @@ class GaussianProcessLearner(ParameterSpaceLearner):
 
         An observation with no uncertainty of its own gets zero here rather
         than the scalar floor, because ``uncers_array`` fills it in as exact.
+
+        With ``cost_has_noise`` off there is no jitter anywhere else, so those
+        zeros are the whole of what keeps the covariance matrix conditioned
+        and a history carrying only some uncertainties is refused here. It is
+        refused at the first moment it is knowable: whether a lab's
+        uncertainty column is written on every shot is not something a
+        configuration can say, and the alternative is the ``LinAlgError`` the
+        fit raises from inside scikit-learn two calls later.
         """
         uncers = uncers_array(seen)
         if uncers is None:
             return 1e-10
+        if not self.cost_has_noise:
+            missing = [o.shot_id for o in seen if o.uncer is None]
+            if missing:
+                raise ValueError(
+                    f"cost_has_noise is off, which says every cost is measured "
+                    f"exactly, but {len(missing)} of {len(seen)} observations "
+                    f"carry no uncertainty -- the first is shot "
+                    f"{missing[0]!r}. Those are fitted with a variance of "
+                    f"exactly zero and there is no white-noise term to "
+                    f"condition the covariance matrix, so the fit is singular. "
+                    f"Turn cost_has_noise on, or write an uncertainty on every "
+                    f"shot."
+                )
         return (uncers / scaler.scale_[0]) ** 2
 
     def fit_hyperparameters(self, prefix: Sequence[Observation]):
@@ -345,6 +378,19 @@ class GaussianProcessLearner(ParameterSpaceLearner):
             )
             if result.fun < winning_value:
                 winner, winning_value = result.x, result.fun
+        if winner is None:
+            # Every start came back non-finite, so no comparison above was
+            # ever true. Raised rather than clipped: ``np.clip`` on nothing
+            # gives a type error out of numpy, which names neither this
+            # learner nor the fit it came from.
+            raise RuntimeError(
+                f"the acquisition was not finite at any of the "
+                f"{len(starts)} starting points, so there is no point to "
+                f"propose. The posterior this was searched over is not "
+                f"usable: check the costs in the history for a range a fit "
+                f"cannot describe, and the length scales the last refit "
+                f"reported."
+            )
         return np.clip(winner, lows, highs)
 
     def condition_on(self, regressor, scaled_point: np.ndarray):

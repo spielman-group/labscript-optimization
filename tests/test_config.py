@@ -1253,3 +1253,68 @@ args = ["x", "y"]
 """
     )
     assert config.globals_for([0.1, 0.9]) == {'larger': 0.9}
+
+
+def test_a_parameter_written_without_its_group_names_the_depth():
+    """The ordinary hand-edit slip: [PARAMETERS.<name>] instead of
+    [PARAMETERS.<group>.<name>]. Read at face value its settings are entries
+    and its values are not tables, so every check after it reads the wrong
+    thing and fails on a type.
+    """
+    written = """
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = ["G"]
+[PARAMETERS.G]
+global_name = "gx"
+min = 0.0
+max = 1.0
+"""
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(written)
+    message = str(raised.value)
+    assert '[PARAMETERS.G]' in message
+    assert '[PARAMETERS.<group>.<name>]' in message
+    assert "'global_name', 'max', 'min'" in message
+
+
+def test_a_global_written_without_its_group_names_the_depth():
+    """``args`` is a list, which is iterable, so the spelling check goes
+    through it and blames its first element for being a key.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(MINIMAL + '[RUNMANAGER_GLOBALS.G]\nargs = ["x"]\n')
+    message = str(raised.value)
+    assert '[RUNMANAGER_GLOBALS.G]' in message
+    assert '[RUNMANAGER_GLOBALS.<group>.<name>]' in message
+    assert "'args'" in message
+
+
+def test_a_parameter_table_written_as_a_value_names_the_depth():
+    """``PARAMETERS = 5`` is a known key at the top level, so nothing above
+    this refuses it.
+    """
+    with pytest.raises(ValueError, match=r'\[PARAMETERS\] is written as 5'):
+        config_module.loads(
+            'PARAMETERS = 5\n[ANALYSIS]\ncost_key = ["r", "c"]\ngroups = ["G"]\n'
+        )
+
+
+def test_a_learner_table_written_one_level_too_deep_names_the_key():
+    """The other direction, and already answered by the learner's own
+    constructor: the extra level is read as a knob that learner does not take.
+    """
+    with pytest.raises(ValueError, match="does not accept 'extra'"):
+        config_module.loads(
+            MINIMAL + '[LEARNER.gaussian_process.extra]\nanything = 1\n'
+        )
+
+
+def test_a_correctly_nested_file_of_each_kind_still_loads():
+    config = config_module.loads(
+        MINIMAL
+        + '[PARAMETERS.G.y]\nmin = 0.0\nmax = 1.0\n'
+        + '[RUNMANAGER_GLOBALS.G.gy]\nexpr = "lambda a: a"\nargs = ["y"]\n'
+    )
+    assert [p.name for p in config.space.parameters] == ['x', 'y']
+    assert sorted(g.name for g in config.globals) == ['gx', 'gy']

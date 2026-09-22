@@ -369,6 +369,36 @@ def require_type(value: Any, kind: type, where: str) -> Any:
     return value
 
 
+def require_tables(holder: Any, where: str, shape: str) -> dict:
+    """Fail on a value written where this package expects a table.
+
+    ``[PARAMETERS.<group>.<name>]`` is three levels deep, and the ordinary slip
+    in a hand-edited file is to write it two: the group left out, so a
+    parameter's own settings sit where its group's parameters belong. What the
+    checking below then reads as a parameter table is a number, and what it
+    reads as a key is a setting -- so it fails on a type rather than on the
+    file, and the message names neither.
+
+    A list is refused for the same reason and reads worse: it is iterable, so
+    the spelling check goes through it and blames its first element for being a
+    key the table does not accept.
+    """
+    if not isinstance(holder, dict):
+        raise ValueError(
+            f"{where} is written as {holder!r}, and {shape} expects a table."
+        )
+    wrong = sorted(key for key, value in holder.items() if not isinstance(value, dict))
+    if wrong:
+        named = ", ".join(repr(key) for key in wrong)
+        raise ValueError(
+            f"{where} gives {named} a value where {shape} expects a table, so "
+            f"this is one level short of where it belongs. Write the group "
+            f"it goes under: {shape} names the group and then the entry, and "
+            f"only the innermost table carries settings."
+        )
+    return holder
+
+
 def reject_misplaced_knobs(general: dict) -> None:
     """Fail on a learner's knob written in ``[GENERAL]``, naming where it goes.
 
@@ -414,7 +444,10 @@ def check_keys(raw: dict) -> None:
 
     Parameter and global tables are checked whether or not their group is
     active: a typo left to load in a switched-off group waits for the day
-    somebody switches the group on.
+    somebody switches the group on. Their depth is checked before their keys
+    are, because a table written one level short puts settings where entries
+    belong and every check after that reads the wrong thing; see
+    :func:`require_tables`.
 
     A table this package has renamed is refused ahead of both, naming its
     replacement, because the spelling check would call it a typo and leave the
@@ -440,7 +473,10 @@ def check_keys(raw: dict) -> None:
         ("PARAMETERS", PARAMETER_KEYS, PARAMETER_REQUIRED),
         ("RUNMANAGER_GLOBALS", GLOBAL_KEYS, GLOBAL_REQUIRED),
     ):
-        for group, entries in raw.get(table, {}).items():
+        shape = f"[{table}.<group>.<name>]"
+        groups = require_tables(raw.get(table, {}), f"[{table}]", shape)
+        for group, entries in groups.items():
+            require_tables(entries, f"[{table}.{group}]", shape)
             for name, entry in entries.items():
                 where = f"[{table}.{group}.{name}]"
                 reject_unknown(entry, allowed, where)
