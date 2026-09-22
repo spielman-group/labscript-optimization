@@ -256,8 +256,8 @@ it, and stops there.
 - [x] `differential_evolution.py` cites `benchmarks/README.md`
 - [x] `README.md`, `UPGRADING.md` and `tests/test_benchmarks.py` cite it too
 - [x] No file outside `issues/` references `codex_issues_proposal.md`
-- [x] The M-LOOP guard in `tests/test_package.py` still passes, with its
-      allowance for that file adjusted to what is true
+- [x] The name guard in `tests/test_package.py` still passes with its allowance
+      untouched: moving a citation moves no name
 
 ### Blocked by
 

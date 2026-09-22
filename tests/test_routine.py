@@ -1341,3 +1341,15 @@ def test_a_worker_that_will_not_quit_is_terminated_and_then_reaped(stopping):
 def test_a_worker_that_survives_being_terminated_is_killed_and_then_reaped(stopping):
     worker = stopping('kill')
     assert worker.signals == ['terminate', 'kill'] and worker.reaped
+
+
+def test_a_pass_of_only_default_shots_still_sends_one_message(
+    session, analysed, shot
+):
+    """Rows are present and none of them carries an id, so there is nothing to
+    report and still a message to send: reconciling and refilling happen in the
+    worker's trailing work, behind a reply.
+    """
+    analysed(shot(shot_id=''), shot(shot_id=''))
+    assert [command for command, _, _ in session.worker.sent] == ['shot']
+    assert ids_sent(session.worker) == [[]]

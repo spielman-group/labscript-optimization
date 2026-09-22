@@ -8,13 +8,21 @@ import inspect
 import numbers
 import warnings
 
+import dataclasses
+
 import numpy as np
 import pytest
 
 from labscript_optimization import learners
 from labscript_optimization.config import Config
 from labscript_optimization.learners.differential_evolution import STRATEGIES
-from labscript_optimization.observations import COMPLETE, DROPPED, best
+from labscript_optimization.observations import (
+    COMPLETE,
+    DROPPED,
+    PENDING,
+    best,
+    usable,
+)
 from labscript_optimization.session import Session
 from labscript_optimization.learners import (
     DifferentialEvolutionLearner,
@@ -388,7 +396,7 @@ def test_a_late_returning_founder_changes_no_other_proposals_role(rng):
     )
     before = learner.replay(history)
 
-    history[0] = history[0]._replace(cost=0.5, state=COMPLETE)
+    history[0] = dataclasses.replace(history[0], cost=0.5, state=COMPLETE)
     after = learner.replay(history)
 
     np.testing.assert_allclose(after[0][1:], before[0][1:])
@@ -683,7 +691,15 @@ def test_gaussian_process_state_depends_only_on_the_history(
     )
     fresh.fit(history)
 
-    np.testing.assert_allclose(all_session._kernel.theta, fresh._kernel.theta)
+    # The cache is observable through the posterior it produces: two learners
+    # that hold the same kernel predict the same thing everywhere, which is
+    # what "a cache holds what a fresh instance would compute" means.
+    grid = space.uniform(np.random.default_rng(4), 5)
+    carried_mean, carried_std = all_session.predict(grid)
+    fresh_mean, fresh_std = fresh.predict(grid)
+    np.testing.assert_allclose(carried_mean, fresh_mean)
+    np.testing.assert_allclose(carried_std, fresh_std)
+
     # And so the same proposals, once the two stand at the same point in their
     # own rng streams: that position is the one thing the history does not fix.
     all_session.rng = np.random.default_rng(3)
@@ -1357,3 +1373,120 @@ def test_a_period_leaving_the_main_learner_nothing_to_propose_is_refused():
         Marked(), Ready(), num_training=0, num_runs_between_trainer_runs=1
     )
     assert phases_over(learner, 4) == ['main', 'periodic trainer'] * 2
+
+
+def test_a_gaussian_process_that_would_fit_nothing_is_refused(space, rng):
+    """At zero the guard in ``fit`` passes on an empty history and the refusal
+    a file gets comes from inside a scikit-learn scaler.
+    """
+    with pytest.raises(ValueError, match='minimum_observations.*at least 1'):
+        GaussianProcessLearner(space, rng, minimum_observations=0)
+
+
+def test_a_gaussian_process_needing_one_observation_is_accepted(space, rng):
+    learner = GaussianProcessLearner(space, rng, minimum_observations=1)
+    assert learner.minimum_observations == 1
+
+
+def test_an_acquisition_that_is_never_finite_says_so(space, rng):
+    """Every start comes back NaN, so no comparison in the search is ever
+    true and there is no winner to clip.
+    """
+    class NotFinite:
+        def predict(self, u, return_std=False):
+            rows = np.atleast_2d(u).shape[0]
+            if return_std:
+                return np.full(rows, np.nan), np.full(rows, np.nan)
+            return np.full(rows, np.nan)
+
+    learner = GaussianProcessLearner(space, rng)
+    lows = np.zeros(space.num_params)
+    highs = np.ones(space.num_params)
+    with pytest.raises(RuntimeError, match='not finite at any'):
+        learner.minimise_acquisition(
+            NotFinite(), 1.0, space.minimum, lows, highs
+        )
+
+
+def test_an_exact_cost_beside_one_with_no_uncertainty_is_refused(space, rng):
+    """cost_has_noise off says every cost is measured exactly. A history where
+    only some shots carry an uncertainty gives the rest a variance of exactly
+    zero with no white-noise term anywhere, and the fit is singular.
+    """
+    learner = GaussianProcessLearner(
+        space, rng, cost_has_noise=False, minimum_observations=2
+    )
+    history = [
+        observe('a', space.minimum, 1.0, uncer=0.1),
+        observe('b', space.maximum, 2.0),
+    ]
+    with pytest.raises(ValueError, match="'b'"):
+        learner.fit(history)
+
+
+def test_costs_that_all_carry_an_uncertainty_fit_without_noise(space, rng):
+    learner = GaussianProcessLearner(
+        space, rng, cost_has_noise=False, minimum_observations=2
+    )
+    history = [
+        observe('a', space.minimum, 1.0, uncer=0.1),
+        observe('b', space.maximum, 2.0, uncer=0.2),
+    ]
+    assert learner.fit(history)
+
+
+def test_costs_that_carry_no_uncertainty_at_all_fit_without_noise(space, rng):
+    learner = GaussianProcessLearner(
+        space, rng, cost_has_noise=False, minimum_observations=2
+    )
+    history = [
+        observe('a', space.minimum, 1.0),
+        observe('b', space.maximum, 2.0),
+    ]
+    assert learner.fit(history)
+
+
+def test_a_mixed_history_still_fits_when_the_cost_has_noise(space, rng):
+    """The ordinary case: a lab whose uncertainty fit fails on some shots."""
+    learner = GaussianProcessLearner(
+        space, rng, cost_has_noise=True, minimum_observations=2
+    )
+    history = [
+        observe('a', space.minimum, 1.0, uncer=0.1),
+        observe('b', space.maximum, 2.0),
+    ]
+    assert learner.fit(history)
+
+
+def test_a_late_cost_refits_a_prefix_of_unchanged_length(space):
+    """The hyperparameter cache is keyed on *which* observations it was fitted
+    to, not on how many.
+
+    Costs arrive out of order and ``usable`` returns them in proposal order, so
+    a cost that turns up late is inserted in the middle rather than appended.
+    With nine proposals and one of them still pending, the prefix a refit uses
+    is eight long; when that pending cost lands the prefix is eight long still,
+    and holds a different eight. Keyed on a count, the cache would answer with
+    the kernel it fitted to the other set.
+    """
+    history = gaussian_process_history(space, 11, count=9)
+    waiting = list(history)
+    waiting[2] = dataclasses.replace(
+        waiting[2], cost=None, uncer=None, state=PENDING
+    )
+
+    carried = GaussianProcessLearner(
+        space, np.random.default_rng(1), refit_interval=4, minimum_observations=4
+    )
+    carried.fit(waiting)
+    assert len(usable(waiting)) == 8
+    carried.fit(history)
+
+    fresh = GaussianProcessLearner(
+        space, np.random.default_rng(1), refit_interval=4, minimum_observations=4
+    )
+    fresh.fit(history)
+
+    grid = space.uniform(np.random.default_rng(5), 5)
+    np.testing.assert_allclose(carried.predict(grid)[0], fresh.predict(grid)[0])
+    np.testing.assert_allclose(carried.predict(grid)[1], fresh.predict(grid)[1])

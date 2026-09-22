@@ -144,7 +144,7 @@ sit side by side and be switched between by changing `[GENERAL] learner`.
 | --- | --- |
 | `random` | Uniform draws. The reference the others are measured against. |
 | `directed_random` | Draws near a previously seen point, chosen from a band of middling costs rather than from the best one, so it explores rather than refines. |
-| `differential_evolution` | Evolves a population, one whole generation at a time: it proposes `population_size` shots together and is not asked again until all of them have been answered for. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds — around eight searches well and a budget over a thousand shots is worth sixteen, measured over four analytic test functions at two to eight parameters (`codex_issues_proposal.md`, "The dimension sweep", has the tables and the caveats; `benchmarks/` has the harness that produced them) — and it is the queue depth too, so `num_buffered_runs` is not accepted beside it. |
+| `differential_evolution` | Evolves a population, one whole generation at a time: it proposes `population_size` shots together and is not asked again until all of them have been answered for. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds — around eight searches well and a budget over a thousand shots is worth sixteen, measured over four analytic test functions at two to eight parameters (`benchmarks/README.md`, "What the sweep found", has the tables, the caveats and the harness that produced them) — and it is the queue depth too, so `num_buffered_runs` is not accepted beside it. |
 | `gaussian_process` | Fits a Gaussian process and searches its posterior. The only learner that needs training: it runs the learner `[GENERAL] trainer` names for its training shots. `trainer` defaults to `directed_random`, and cannot be `differential_evolution`, which proposes whole generations that a two-phase learner cannot hold a barrier for. `[GENERAL] num_training_runs` must be at least this learner's `minimum_observations`, which defaults to twice the parameter count; a shorter warmup is refused, because the handover would happen later than the number says. |
 
 ### Going back to the trainer
@@ -351,8 +351,8 @@ running suite.
 ## Benchmarks
 
 [`benchmarks/`](benchmarks/) holds the harness behind the measured figures
-quoted here and in `codex_issues_proposal.md`, the rows it produced, and a
-README naming the command and the commit for each table. It runs its test
+quoted here, the rows it produced, and a README carrying the tables, their
+caveats, and the command and commit behind each one. It runs its test
 functions noiseless, so the figures under *A cost with noise in it* are not
 among the ones it reproduces; that measurement states its own conditions
 where it is quoted. A benchmark measures

@@ -4,7 +4,7 @@
 minutes, so the suite runs one seed of it at a budget of twelve shots. What
 that proves is worth the second it costs: a harness nobody runs rots into
 something that cannot be run at all, and the numbers in
-``codex_issues_proposal.md`` point at it.
+``benchmarks/README.md`` point at it.
 
 It also holds the harness to the rule the numbers depend on -- every arm runs
 to the same number of *completed* shots, and nothing is left in the queue

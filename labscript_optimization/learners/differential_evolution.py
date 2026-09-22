@@ -48,9 +48,10 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
             eight members is where one stops converging prematurely, and a
             budget over a thousand shots is worth sixteen. Both numbers are
             read off a sweep over four analytic test functions at two to eight
-            parameters, recorded in ``codex_issues_proposal.md`` with its
-            caveats. Rules of thumb scaling it with the parameter count are
-            for choosing a number, not the shape of the setting.
+            parameters; ``benchmarks/README.md``, under "What the sweep
+            found", has the tables and the caveats. Rules of thumb scaling it
+            with the parameter count are for choosing a number, not the shape
+            of the setting.
         evolution_strategy: Which mutation to use, one of :data:`STRATEGIES`.
         mutation_scale: ``(low, high)`` bounds on the differential weight,
             redrawn each generation.
