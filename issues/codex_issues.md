@@ -42,7 +42,8 @@ backlog, which would also let BLACS stop mutating a client's deadline per call.
 - [x] Slice 10: Benchmark the shipped DE
 - [x] Slice 11: The benchmark evidence is in the repository, and the document is true
 - [x] Slice 12: Test cleanup
-- [ ] Slice 13: A learner's knobs live with that learner, and the trainer is chosen
+- [x] Slice 13: A learner's knobs live with that learner, and the trainer is chosen
+- [ ] Slice 14: The package stops calling itself M-LOOP
 
 ---
 
@@ -1145,4 +1146,72 @@ None - can start immediately.
 - Found running the optimiser against the dummy apparatus: the trainer's
   behaviour differs from M-LOOP's in a way the documentation denies, and the
   shared-knob table is the mechanism this package refuses everywhere else.
+
+---
+
+## Slice 14: The package stops calling itself M-LOOP
+
+### Type
+
+`AFK`
+
+### What to build
+
+This package replaces M-LOOP and shares none of its code. It still carries the
+name in the configuration surface a lab types every day: the `[MLOOP]` table,
+the `[MLOOP_PARAMS.<group>.<name>]` parameter tables, and the example file's
+name. A setting table named after the tool you are not using is a small lie
+told on every line under it.
+
+Rename:
+
+- `[MLOOP]` becomes **`[GENERAL]`** — Ian's choice, and it reads against
+  `[ANALYSIS]` and `[LEARNER.<name>]` without naming the table after the
+  package, which every table in the file belongs to anyway.
+- `[MLOOP_PARAMS.<group>.<name>]` becomes **`[PARAMETERS.<group>.<name>]`**.
+- `examples/config_example.toml` keeps its name; it was never `mloop`.
+
+Then sweep the word out of everything except where it is genuinely historical.
+Footprint measured at `368d4b2`, excluding `UPGRADING.md`: `config.py` 24,
+`tests/test_config.py` 79, `README.md` 13, `examples/config_example.toml` 10,
+and about a dozen across the other test files, `benchmarks/de_pipeline.py`,
+`routine.py`, `__init__.py` and `learners/__init__.py`.
+
+**Where the word stays, and must:**
+
+- `UPGRADING.md` throughout. Its whole job is telling a lab moving from M-LOOP
+  and analysislib-mloop what changed; stripping the name there would make it
+  useless. Both renames go in its table.
+- `codex_issues_proposal.md` and `issues/codex_issues.md`, which are decision
+  records for work already done. Editing them would be rewriting history.
+- Anywhere the package explains what it replaces and why a behaviour differs —
+  the trainer's documentation says M-LOOP trained with differential evolution,
+  and that sentence is the reason the setting exists.
+
+The distinction to hold: the name belongs wherever the subject *is* M-LOOP, and
+nowhere it is merely inherited.
+
+Refuse the old table names, naming the new one. This is a breaking change to a
+configuration surface, like `population_size` and `generation_size` before it,
+and nothing is preserved for compatibility.
+
+### Acceptance criteria
+
+- [ ] `[MLOOP]` and `[MLOOP_PARAMS.…]` are refused, each naming its replacement
+      — mutation: accept both spellings; a file using the old names loads
+- [ ] A grep for the word across the package, its tests, its examples and its
+      README returns only the places named above, and a test holds that list
+      rather than a human re-grepping it later
+- [ ] `examples/config_example.toml` is in the new shape and loads
+- [ ] `UPGRADING.md` carries both renames in its table
+
+### Blocked by
+
+- The Gaussian process patch, which renames `batch_size` and touches the same
+  configuration code and documents. Sequential, not parallel.
+
+### User stories covered
+
+- Ian: "except for historical reference the phrase mloop should be removed from
+  this package."
 
