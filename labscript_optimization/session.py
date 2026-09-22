@@ -167,7 +167,9 @@ class Session:
 
         A learner declaring a generation is asked for a whole one, and only
         once nothing of this session's is outstanding; any other learner is
-        topped up to ``num_buffered_runs``.
+        topped up to ``num_buffered_runs``. The very first proposal of a run
+        is the space's configured start, where the parameters carry one, and
+        the learner is asked for the rest of that same batch.
 
         Returns the shot ids submitted, which is empty once the session has
         stopped. Raises unless the interface answers with one shot id per
@@ -199,7 +201,28 @@ class Session:
             return []
 
         self.interface.check_unchanged()
-        proposals = np.atleast_2d(self.learner.propose(self.history, wanted))
+        # Where a run begins is the session's answer, not a learner's. The
+        # start is written on the parameters, beside each one's min and max,
+        # and is proposed here: once, at the first position of the run,
+        # whichever learner is running and whether or not that learner has any
+        # idea of an opening. Every learner then meets it in the history like
+        # any other observation, so "proposed exactly once" holds because
+        # there is one place that proposes it rather than because a guard
+        # somewhere declines to do it again.
+        #
+        # It takes the first place in the batch that was going to go out
+        # rather than a batch of its own: the batch is the size ``wanted``
+        # already settled on, so a learner declaring a generation still has
+        # exactly one whole generation queued and still waits for all of it.
+        # A generation of its own for the start would be the second route
+        # past that barrier.
+        batch = []
+        if not self.proposals and self.config.space.start is not None:
+            batch.append(self.config.space.start)
+            wanted -= 1
+        if wanted:
+            batch.append(np.atleast_2d(self.learner.propose(self.history, wanted)))
+        proposals = np.vstack(batch)
         shot_ids = self.interface.submit(proposals)
         if len(shot_ids) != len(proposals):
             # Nothing is recorded before the raise: the session is left as it

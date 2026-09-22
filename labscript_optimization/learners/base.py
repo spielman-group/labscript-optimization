@@ -96,8 +96,10 @@ class ParameterSpaceLearner(Learner):
     spelled the other way round searches the wrong thing, and knobs collected
     in ``**kwargs`` are matched by nothing.
 
-    Nothing else is shared. A learner keeps its own state, resolves its own
-    opening point, and is free not to have one.
+    Nothing else is shared. A learner keeps its own state. Where a run
+    begins is not part of it: the session proposes the space's configured
+    start itself, at the first position of the run, and a learner meets it
+    in the history like any other observation.
     """
 
     def __init__(self, space: ParameterSpace, rng: np.random.Generator):
@@ -118,50 +120,3 @@ class InsufficientData(RuntimeError):
     Raised rather than returning a fallback, so that a wrapper decides what to
     do; a bare learner reaching this state is a configuration error.
     """
-
-
-def opening_point(
-    space: ParameterSpace, first_params: np.ndarray | None
-) -> np.ndarray | None:
-    """Resolve where a learner starts, or ``None`` to start from a draw.
-
-    ``first_params`` overrides the space's configured start. Both are checked
-    here rather than at the first proposal, because construction is the last
-    moment at which a bad setting costs nothing to fix; the alternative is
-    finding out once the apparatus is running.
-    """
-    if first_params is None:
-        first_params = space.start
-    if first_params is None:
-        return None
-    point = np.array(first_params, dtype=float)
-    if point.shape != (space.num_params,):
-        raise ValueError(
-            f"first_params is one point over {space.num_params} parameters, "
-            f"so it needs shape ({space.num_params},), got {point.shape}"
-        )
-    if not space.contains(point).all():
-        raise ValueError(f"first_params outside the bounds: {point}")
-    return point
-
-
-def opening_batch(
-    space: ParameterSpace,
-    rng: np.random.Generator,
-    history: Sequence[Observation],
-    k: int,
-    first_params: np.ndarray | None,
-) -> np.ndarray | None:
-    """The opening batch, or ``None`` when this is not the opening call.
-
-    A starting point is the first thing proposed and only that: the history
-    holds a proposal from the moment it is made, so the second call sees the
-    first batch whether or not any of it has reported. The rest of the opening
-    batch is drawn uniformly, since a learner with no history has nothing
-    better to go on.
-    """
-    if history or first_params is None:
-        return None
-    proposals = space.uniform(rng, k)
-    proposals[0] = first_params
-    return proposals

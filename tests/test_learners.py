@@ -163,86 +163,6 @@ def test_there_is_no_last_phase_to_inherit(space, rng):
         Silent(space, rng).last_phase
 
 
-# --- the opening point -----------------------------------------------------
-
-
-@pytest.fixture
-def started_space():
-    """A space in which every parameter has a configured start."""
-    return ParameterSpace(
-        [
-            Parameter('x', -5.0, 5.0, start=1.5),
-            Parameter('y', -5.0, 5.0, start=-2.5),
-        ]
-    )
-
-
-def learners_starting_at(space, rng, first_params):
-    """Every learner that can be told where to begin."""
-    return [
-        RandomLearner(space, rng, first_params=first_params),
-        DirectedRandomLearner(space, rng, trust_region=0.1, first_params=first_params),
-        DifferentialEvolutionLearner(
-            space, rng, population_size=3, first_params=first_params
-        ),
-    ]
-
-
-def test_a_learner_told_where_to_start_proposes_that_point_first(space, rng):
-    """A run begins from the settings the lab already had.
-
-    Only the first proposal, though: the rest of the opening batch has
-    nothing to go on and explores.
-    """
-    start = np.array([1.5, -2.5])
-    for learner in learners_starting_at(space, rng, start):
-        proposals = np.atleast_2d(learner.propose([], 3))
-        np.testing.assert_allclose(proposals[0], start, err_msg=type(learner).__name__)
-        assert not np.allclose(proposals[1], start), type(learner).__name__
-
-
-def test_the_opening_point_defaults_to_the_configured_start(started_space, rng):
-    for learner in learners_starting_at(started_space, rng, None):
-        np.testing.assert_allclose(
-            learner.propose([], 1)[0], [1.5, -2.5], err_msg=type(learner).__name__
-        )
-
-
-def test_the_opening_point_is_offered_only_while_nothing_has_run(space, rng):
-    history = [observe(0, [0.0, 0.0], 1.0)]
-    start = np.array([1.5, -2.5])
-    for learner in learners_starting_at(space, rng, start):
-        proposal = np.atleast_2d(learner.propose(history, 1))[0]
-        assert not np.allclose(proposal, start), type(learner).__name__
-
-
-@pytest.mark.parametrize(
-    'first_params, message',
-    [
-        ([9.0, 0.0], 'outside the bounds'),
-        ([0.0], 'shape'),
-        ([[0.0, 0.0], [1.0, 1.0]], 'shape'),
-    ],
-)
-def test_an_impossible_opening_point_is_refused_at_construction(
-    space, rng, first_params, message
-):
-    """Construction is the last moment at which it costs nothing to fix.
-
-    A point of the wrong shape is the one that gets through unnoticed: a
-    single coordinate broadcasts over the whole vector, and several points
-    make the bounds check answer once per row, so neither is caught by asking
-    only whether the values are in range.
-    """
-    for build_one in (
-        RandomLearner,
-        DirectedRandomLearner,
-        DifferentialEvolutionLearner,
-    ):
-        with pytest.raises(ValueError, match=message):
-            build_one(space, rng, first_params=first_params)
-
-
 # --- directed random -------------------------------------------------------
 
 
@@ -702,21 +622,19 @@ def gaussian_process_history(space, seed, count=12):
 
 
 def test_gaussian_process_refuses_before_it_has_enough_data(space, rng):
+    """Including from nothing at all, which is not a case of its own.
+
+    An empty history is a history too short, answered the same way. Nothing
+    stands in for the data this learner does not have: where a run begins is
+    the session's to propose, so a learner asked from nothing says it cannot
+    rather than answering from nothing.
+    """
     learner = GaussianProcessLearner(space, rng, minimum_observations=6)
     with pytest.raises(InsufficientData):
         learner.propose([observe(0, [0.0, 0.0], 1.0)], 1)
 
-
-def test_a_gaussian_process_has_no_opening_point(started_space, rng):
-    """An empty history is refused even where every parameter has a start.
-
-    The other learners fall back to that start when told nothing. This one
-    must not: :func:`build` always wraps it, so an opening point here is
-    unreachable through a configuration, and bare it would answer from no
-    data instead of saying it cannot.
-    """
     with pytest.raises(InsufficientData):
-        GaussianProcessLearner(started_space, rng).propose([], 1)
+        GaussianProcessLearner(space, rng).propose([], 1)
 
 
 def test_gaussian_process_finds_the_minimum(space, rng):

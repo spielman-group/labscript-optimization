@@ -37,6 +37,37 @@ max = 1.0
 """
 
 
+STARTED = """
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = ["G"]
+[GENERAL]
+learner = "random"
+num_buffered_runs = 2
+[PARAMETERS.G.x]
+global_name = "gx"
+min = 0.0
+max = 1.0
+start = 0.25
+"""
+
+
+GENERATIONAL_STARTED = """
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = ["G"]
+[GENERAL]
+learner = "differential_evolution"
+[LEARNER.differential_evolution]
+population_size = 4
+[PARAMETERS.G.x]
+global_name = "gx"
+min = 0.0
+max = 1.0
+start = 0.25
+"""
+
+
 def make_config(buffered=3, maximize=False, **extra):
     lines = '\n'.join(f'{k} = {v}' for k, v in extra.items())
     return config_module.loads(
@@ -393,35 +424,51 @@ def test_a_minimised_best_cost_is_reported_as_it_was_measured(runmanager):
     assert (status['best_cost'], status['best_shot_id']) == (3.0, 'shot-0')
 
 
-def test_the_configured_start_point_is_proposed_once(runmanager):
-    """The history holds a proposal from the moment it is made, so the opening
-    batch is the opening batch. Every shot of it is lost here, so not one cost
-    has come back when the session refills again -- and the session still does
-    not start over from the point the file named.
+def test_the_configured_start_is_the_first_proposal_and_the_only_one(runmanager):
+    """Where a run begins is written on the parameters, and the session says it.
+
+    Once, and by construction: one place proposes it, so nothing has to
+    decline to propose it again. Every shot of the opening batch is lost
+    here, so not one cost has come back when the session refills -- and the
+    run still does not begin over from the point the file named.
     """
-    config = config_module.loads(
-        """
-[ANALYSIS]
-cost_key = ["r", "c"]
-groups = ["G"]
-[GENERAL]
-learner = "random"
-num_buffered_runs = 2
-[PARAMETERS.G.x]
-global_name = "gx"
-min = 0.0
-max = 1.0
-start = 0.25
-"""
-    )
-    session = Session(config, runmanager)
+    session = Session(config_module.loads(STARTED), runmanager)
     submitted = session.refill()
     runmanager.lose(*submitted)
     session.reconcile()
-    submitted += session.refill()
+    for _ in range(3):
+        for shot_id in session.refill():
+            submitted.append(shot_id)
+            session.record(shot_id, 1.0, None, False)
 
     started = [session.proposals[shot_id][0] for shot_id in submitted]
-    assert len(submitted) == 4
+    assert len(started) == 8
+    assert started[0] == 0.25
+    assert started.count(0.25) == 1
+
+
+def test_a_generation_opening_on_the_configured_start_is_still_whole(runmanager):
+    """The start takes the first place in the batch, not a batch of its own.
+
+    A generational learner is asked for a whole generation and only when none
+    of its proposals is outstanding. A start sent out on its own would be a
+    second route past that barrier: one shot, then a generation with the
+    queue drained between them, and a population founded a slot short of the
+    generation it is bred from.
+    """
+    session = Session(config_module.loads(GENERATIONAL_STARTED), runmanager)
+
+    opening = session.refill()
+    assert len(opening) == 4
+    assert session.proposals[opening[0]][0] == 0.25
+    assert session.refill() == []
+
+    for shot_id in opening:
+        session.record(shot_id, 1.0, None, False)
+    second = session.refill()
+    assert len(second) == 4
+
+    started = [session.proposals[shot_id][0] for shot_id in opening + second]
     assert started.count(0.25) == 1
 
 

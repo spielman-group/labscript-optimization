@@ -14,7 +14,7 @@ import numpy as np
 
 from ..observations import Observation, costs_array, params_array, usable
 from ..space import ParameterSpace
-from .base import ParameterSpaceLearner, opening_batch, opening_point
+from .base import ParameterSpaceLearner
 
 
 class RandomLearner(ParameterSpaceLearner):
@@ -23,28 +23,11 @@ class RandomLearner(ParameterSpaceLearner):
     Args:
         space: The parameter space to search.
         rng: Source of randomness.
-        first_params: A point to return as the very first proposal, or ``None``
-            to start from a random draw. Defaults to the space's configured
-            start.
     """
 
     last_phase = "main"
 
-    def __init__(
-        self,
-        space: ParameterSpace,
-        rng: np.random.Generator,
-        first_params: np.ndarray | None = None,
-    ):
-        super().__init__(space, rng)
-        self.first_params = opening_point(space, first_params)
-
     def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
-        opening = opening_batch(
-            self.space, self.rng, history, k, self.first_params
-        )
-        if opening is not None:
-            return opening
         return self.space.uniform(self.rng, k)
 
 
@@ -73,7 +56,6 @@ class DirectedRandomLearner(ParameterSpaceLearner):
             the centre instead of uniformly within it.
         explore_fraction: Share of proposals that ignore the trust region and
             draw from the whole space.
-        first_params: A point to return as the very first proposal.
     """
 
     last_phase = "main"
@@ -86,7 +68,6 @@ class DirectedRandomLearner(ParameterSpaceLearner):
         trust_range: Sequence[float] = (0.1, 0.25),
         trust_gaussian: bool = False,
         explore_fraction: float = 0.0,
-        first_params: np.ndarray | None = None,
     ):
         super().__init__(space, rng)
         self.trust_region = space.absolute_trust_region(trust_region)
@@ -109,8 +90,6 @@ class DirectedRandomLearner(ParameterSpaceLearner):
                 f"{trust_range!r}"
             )
         self.trust_range = tuple(float(t) for t in trust_range)
-
-        self.first_params = opening_point(space, first_params)
 
     def centre(self, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
         """Pick the point to draw around.
@@ -136,12 +115,6 @@ class DirectedRandomLearner(ParameterSpaceLearner):
         return self.space.uniform(self.rng, 1, centre, self.trust_region)[0]
 
     def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
-        opening = opening_batch(
-            self.space, self.rng, history, k, self.first_params
-        )
-        if opening is not None:
-            return opening
-
         seen = usable(history)
         if not seen or self.trust_region is None:
             return self.space.uniform(self.rng, k)

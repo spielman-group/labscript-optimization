@@ -26,7 +26,7 @@ import numpy as np
 
 from ..observations import Observation
 from ..space import ParameterSpace
-from .base import ParameterSpaceLearner, opening_batch, opening_point
+from .base import ParameterSpaceLearner
 
 #: The mutation strategies, and how many other population members each one
 #: draws on. The counts are read by :meth:`DifferentialEvolutionLearner.mutant`
@@ -57,7 +57,6 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         cross_over_probability: Chance that a given coordinate comes from the
             mutant rather than the incumbent.
         trust_region: Restrict sampling to this distance around the best member.
-        first_params: A point to return as the very first proposal.
     """
 
     last_phase = "main"
@@ -71,7 +70,6 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         mutation_scale: Sequence[float] = (0.5, 1.0),
         cross_over_probability: float = 0.7,
         trust_region=None,
-        first_params: np.ndarray | None = None,
     ):
         super().__init__(space, rng)
         if evolution_strategy not in STRATEGIES:
@@ -103,8 +101,6 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
                 f"{self.cross_over_probability}"
             )
         self.trust_region = space.absolute_trust_region(trust_region)
-
-        self.first_params = opening_point(space, first_params)
 
     @property
     def generation(self) -> int:
@@ -189,12 +185,6 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         return np.where(outside, fallback, trial)
 
     def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
-        opening = opening_batch(
-            self.space, self.rng, history, k, self.first_params
-        )
-        if opening is not None:
-            return opening
-
         params, costs = self.replay(history)
         proposals = np.empty((k, self.space.num_params))
         for i in range(k):
