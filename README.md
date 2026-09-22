@@ -155,8 +155,8 @@ what the number a run reports means, and it changes which learner to run.
 the cost at `best_params`.** A run keeps the best cost it happened to measure,
 and over a few hundred noisy shots the best one measured is the luckiest one.
 At a multiplicative noise of 20% on Rastrigin, a learner reported 1.45 for a
-point whose noiseless cost is 3.89 — a −3σ draw, which is the 3.89 × (1 − 0.6)
-that three standard deviations buys. The same on Ian's apparatus at 10% noise:
+point whose noiseless cost is 3.89 — about a −3σ draw, three standard
+deviations being the 3.89 × (1 − 0.6) = 1.56 next to it. The same on Ian's apparatus at 10% noise:
 a reported best of 186,531 atoms where those parameters measure 155,290, a
 +2.0σ draw. The honest number is a re-measurement at `best_params`, which
 costs one shot. Nothing in the reported column is that number.
