@@ -318,17 +318,19 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         )
 
     def minimise_acquisition(
-        self, regressor, uncer_bias: float, best: np.ndarray, lows, highs
+        self, regressor, uncer_weight: float, best: np.ndarray, lows, highs
     ):
         """Multi-start L-BFGS-B over the acquisition. Returns scaled parameters.
 
+        ``uncer_weight`` is one weight, the step of the exploration schedule
+        this proposal stands at, rather than the whole of ``uncer_bias``.
         ``lows`` and ``highs`` are the search bounds, already scaled.
         """
         from scipy.optimize import minimize
 
         def acquisition(u):
             mean, std = regressor.predict(np.atleast_2d(u), return_std=True)
-            return self.cost_bias * mean[0] - uncer_bias * std[0]
+            return self.cost_bias * mean[0] - uncer_weight * std[0]
 
         starts = [self.space.scale(best)]
         starts.extend(self.rng.uniform(lows, highs, size=(self.num_restarts, len(lows))))
