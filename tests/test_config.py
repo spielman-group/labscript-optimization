@@ -53,10 +53,12 @@ max = 1.0
 [PARAMETERS.SHIMS.bx]
 min = -1.0
 max = 1.0
+start = 0.0
 
 [PARAMETERS.SHIMS.by]
 min = -1.0
 max = 1.0
+start = 0.0
 
 [RUNMANAGER_GLOBALS.SHIMS.ShimVector]
 expr = "lambda a, b: (a, b)"
@@ -999,6 +1001,34 @@ global_name = "gb"
 min = 5.0
 max = 6.0
 """
+
+
+def test_a_start_written_for_some_parameters_stops_the_load():
+    """The file is where the mistake is made, so the load is where it stops.
+
+    A start on one parameter of two used to be taken, carried through, and
+    then dropped at the point of use, because the opening point is one vector
+    over all of them: the run opened on a uniform draw with nothing said. A
+    setting accepted and not acted on is what this file refuses everywhere
+    else.
+    """
+    with pytest.raises(ValueError, match="'x' has one; 'y' does not"):
+        config_module.loads(
+            """
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = ["G"]
+[PARAMETERS.G.x]
+global_name = "gx"
+min = 0.0
+max = 1.0
+start = 0.25
+[PARAMETERS.G.y]
+global_name = "gy"
+min = 0.0
+max = 1.0
+"""
+        )
 
 
 def test_one_name_for_two_searched_parameters_is_refused():

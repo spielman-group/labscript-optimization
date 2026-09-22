@@ -75,7 +75,14 @@ def test_containment_is_answered_once_per_row(space):
     )
 
 
-def test_a_start_is_only_offered_when_every_parameter_has_one():
+def test_a_start_on_some_parameters_but_not_all_is_refused():
+    """A start written for three of five used to be dropped for all five.
+
+    It is one point over every searched parameter, so a partial one has no
+    reading: the run opened on a uniform draw and nothing said that the
+    starts the file named had been ignored. The message names both sides,
+    because which parameters are missing one is the whole of the fix.
+    """
     both = ParameterSpace(
         [
             Parameter('a', 0.0, 1.0, start=0.5),
@@ -84,10 +91,29 @@ def test_a_start_is_only_offered_when_every_parameter_has_one():
     )
     np.testing.assert_allclose(both.start, [0.5, 0.25])
 
-    partial = ParameterSpace(
-        [Parameter('a', 0.0, 1.0, start=0.5), Parameter('b', 0.0, 1.0)]
+    none_of_them = ParameterSpace(
+        [Parameter('a', 0.0, 1.0), Parameter('b', 0.0, 1.0)]
     )
-    assert partial.start is None
+    assert none_of_them.start is None
+
+    with pytest.raises(ValueError, match="'a' has one; 'b' does not"):
+        ParameterSpace([Parameter('a', 0.0, 1.0, start=0.5), Parameter('b', 0.0, 1.0)])
+
+
+def test_a_start_on_a_switched_off_parameter_is_not_part_of_the_point():
+    """A disabled parameter is not searched, so it is not a coordinate.
+
+    Its start is neither wanted nor missed: requiring one of it would refuse
+    a file that switched a parameter off, and reading one would put a
+    dimension into the opening point that no learner proposes over.
+    """
+    space = ParameterSpace(
+        [
+            Parameter('a', 0.0, 1.0, start=0.5),
+            Parameter('b', 0.0, 1.0, enable=False),
+        ]
+    )
+    np.testing.assert_allclose(space.start, [0.5])
 
 
 def test_a_fractional_trust_region_scales_with_each_parameter():

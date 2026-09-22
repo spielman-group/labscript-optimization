@@ -73,6 +73,27 @@ class ParameterSpace:
                 f"enabled parameter. Each searched parameter needs a name of "
                 f"its own; the names given are {names}"
             )
+        # A start is the whole space's or it is nobody's: it is proposed as
+        # one point over every parameter, so there is nothing to do with one
+        # written for some of them. Refused rather than honoured for those and
+        # drawn for the rest, because a file that names a start has a reason
+        # for it and a draw is not that reason -- and refused rather than
+        # dropped, which is what used to happen: a start on three parameters
+        # of five was silently ignored for all five, and the run opened on a
+        # uniform draw with nothing said.
+        started = [p.name for p in self.parameters if p.start is not None]
+        unstarted = [p.name for p in self.parameters if p.start is None]
+        if started and unstarted:
+            raise ValueError(
+                f"a start is one point over every searched parameter, so it "
+                f"is written on all of them or on none. "
+                f"{', '.join(repr(n) for n in started)} "
+                f"{'has' if len(started) == 1 else 'have'} one; "
+                f"{', '.join(repr(n) for n in unstarted)} "
+                f"{'does' if len(unstarted) == 1 else 'do'} not. Give the "
+                f"rest a start, or delete the ones that have it and let the "
+                f"run open on a draw."
+            )
         self.minimum = np.array([p.minimum for p in self.parameters], dtype=float)
         self.maximum = np.array([p.maximum for p in self.parameters], dtype=float)
         self.extent = self.maximum - self.minimum
@@ -84,7 +105,11 @@ class ParameterSpace:
 
     @property
     def start(self) -> np.ndarray | None:
-        """The configured starting point, or ``None`` if not every parameter has one."""
+        """Where a run opens, or ``None`` where no parameter carries a start.
+
+        All or nothing, because the constructor refuses anything between, so
+        this answers a point or it answers that there is none.
+        """
         if any(p.start is None for p in self.parameters):
             return None
         return np.array([p.start for p in self.parameters], dtype=float)

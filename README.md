@@ -130,7 +130,9 @@ several of them; `[ANALYSIS] groups` says which groups take part.
 A parameter's `start` is where the run begins. The session proposes that point
 first and once, whichever learner is running: no learner has an opening of its
 own, and every one of them meets the start in the history as an ordinary
-observation.
+observation. It is one point over every searched parameter, so write it on all
+of them or on none — a start on some is refused, naming which have one and
+which do not. A parameter switched off is not searched and needs none.
 
 Knowing a key is not the same as acting on it: a table written for a learner
 this file does not build goes unread, so the settings for several learners can
