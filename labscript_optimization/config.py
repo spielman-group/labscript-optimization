@@ -78,6 +78,7 @@ GENERAL_KEYS = frozenset(
         "max_num_runs",
         "max_num_runs_without_better_params",
         "num_buffered_runs",
+        "num_runs_between_trainer_runs",
         "num_training_runs",
         "seed",
         "trainer",
@@ -93,6 +94,12 @@ GENERAL_KEYS = frozenset(
 INTEGER_SETTINGS = {
     "num_buffered_runs": (1, "a queue holding none of our shots is never refilled"),
     "num_training_runs": (0, "a negative number of training shots is not a number"),
+    "num_runs_between_trainer_runs": (
+        1,
+        "no runs between one trainer run and the next is every run a trainer "
+        "run, and the learner the file names never proposing at all; leave it "
+        "out for a run that never goes back to the trainer",
+    ),
     "seed": (0, "numpy's generator is seeded from a non-negative integer"),
     "max_num_runs": (
         1,
@@ -107,7 +114,12 @@ INTEGER_SETTINGS = {
 
 #: Of those, the ones a session may leave unset.
 OPTIONAL_INTEGER_SETTINGS = frozenset(
-    {"max_num_runs", "max_num_runs_without_better_params", "seed"}
+    {
+        "max_num_runs",
+        "max_num_runs_without_better_params",
+        "num_runs_between_trainer_runs",
+        "seed",
+    }
 )
 
 #: The keys one ``[PARAMETERS.<group>.<name>]`` table carries.
@@ -212,9 +224,9 @@ class Config:
     maximize: bool = False
     learner: str = "gaussian_process"
     #: The learner that runs the training shots for a ``learner`` that needs
-    #: them. Read only for such a learner: a file naming it beside one that
-    #: trains itself is refused rather than left with a setting nothing acts
-    #: on.
+    #: them, and the periodic runs after them. Read only for such a learner: a
+    #: file naming it beside one that trains itself is refused rather than left
+    #: with a setting nothing acts on.
     trainer: str = "directed_random"
     #: One table of knobs per learner, by learner name. A knob is written in
     #: the table of the learner that takes it and reaches no other, which is
@@ -232,6 +244,13 @@ class Config:
     #: handover could not happen where this says it does and the file is
     #: refused.
     num_training_runs: int = 5
+    #: How many consecutive proposals come from ``learner`` between one
+    #: proposal from ``trainer`` and the next, once training is over. Unset,
+    #: the run never goes back to the trainer after the handover; set, one
+    #: proposal in every cycle of this many plus one is the trainer's, which
+    #: goes on widening the history under a learner that is narrowing onto the
+    #: best point it has found. Read only for a ``learner`` that trains.
+    num_runs_between_trainer_runs: int | None = None
     max_num_runs: int | None = None
     #: Stop after this many completed shots without a better cost. Every
     #: completed shot counts, including one whose cost was not usable: it is
@@ -558,12 +577,21 @@ def from_dict(raw: dict) -> Config:
     # tables. Import lazily so importing this module alone stays lightweight.
     from .learners import NEEDS_TRAINING, build
 
-    if "trainer" in general and config.learner not in NEEDS_TRAINING:
+    # Both settings describe the trainer's part in the run, so both go unread
+    # for a learner that has no trainer. Named together because a file usually
+    # carries both and would otherwise be refused twice over.
+    idle = [
+        key
+        for key in ("num_runs_between_trainer_runs", "trainer")
+        if key in general
+    ]
+    if idle and config.learner not in NEEDS_TRAINING:
         raise ValueError(
-            f"trainer is not accepted with learner {config.learner!r}, which "
-            f"proposes from the first shot and so runs no training phase: no "
-            f"trainer is built, and the one named here would be a setting "
-            f"nothing acts on. Delete trainer, or name a learner that trains: "
+            f"{' and '.join(idle)} {'are' if len(idle) > 1 else 'is'} not "
+            f"accepted with learner {config.learner!r}, which proposes from "
+            f"the first shot and so runs no training phase: no trainer is "
+            f"built, and what is written here would be a setting nothing acts "
+            f"on. Delete it, or name a learner that trains: "
             f"{sorted(NEEDS_TRAINING)}."
         )
 

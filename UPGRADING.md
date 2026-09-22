@@ -244,18 +244,22 @@ goes out whole.
   `differential_evolution` and `gaussian_process`, in `[GENERAL] learner`.
 - **The trainer is chosen**, in `[GENERAL] trainer`, and defaults to
   `directed_random`. `gaussian_process` is the only learner that needs one: it
-  runs the trainer for its training shots. A name that is not a learner is
+  runs the trainer for its training shots, and for the periodic shots
+  `num_runs_between_trainer_runs` asks for. A name that is not a learner is
   refused, and so is a trainer named beside a learner that needs none, which
-  would be a setting nothing acts on.
+  would be a setting nothing acts on — `num_runs_between_trainer_runs` is
+  refused there for the same reason, and the two are named in one message.
 
   **The default is not what M-LOOP did.** Its machine-learning controllers took
   `training_type`, defaulting to `differential_evolution`
-  (`mloop/controllers.py`), and used that learner for the training shots and
-  for any point the machine-learning learner was too slow to supply — so both
+  (`mloop/controllers.py`), and used that learner for the training shots, for
+  the periodic training runs among them, and for any point the machine-learning
+  learner was too slow to supply — so all of them
   came from a population clustered around the best points seen. This package's
   `directed_random` centres its draws on a band of *middling* costs instead,
-  which is what makes it explore rather than refine, so the training shots
-  range much wider and produce stretches of poor shots that M-LOOP never
+  which is what makes it explore rather than refine, so the training shots, and
+  the periodic ones if you ask for them, range much wider and produce stretches
+  of poor shots that M-LOOP never
   showed. That is what a run against the dummy apparatus looks like.
 
   `differential_evolution` cannot be the trainer here: it proposes a whole
@@ -276,6 +280,34 @@ goes out whole.
   ten training shots. Raise `num_training_runs`, or lower
   `minimum_observations` in `[LEARNER.gaussian_process]` to the warmup you
   want.
+- **The trainer can come back after the handover**, under `[GENERAL]
+  num_runs_between_trainer_runs`. It is how many consecutive proposals come
+  from the main learner between one proposal from the trainer and the next, so
+  the cycle is one longer than the number: at 4, four shots from the Gaussian
+  process and then one from the trainer, over and over. The shot is the
+  trainer's own, knobs and all, out of `[LEARNER.<trainer>]`, and the routine
+  reports `periodic trainer` in the `phase` column for it.
+
+  M-LOOP did this with no setting for it. Its machine-learning controller ran
+  `generation_num` machine-learner runs and then one training run, round and
+  round (`mloop/controllers.py`), and `generation_num` was fixed at 4 — the
+  length of the Gaussian process's exploration-weight cycle, the same
+  `[0, 1, 2, 3]` that is `uncer_bias` here (`mloop/learners.py`). This package
+  took the weight cycle and left the periodic training run behind; this is it
+  back, as something a file asks for. The other half of M-LOOP's condition —
+  take a training point whenever the machine learner has none ready — was
+  `no_delay`, which step 2 above deletes: the learner here runs in a worker
+  process that never holds the routine up, so there is no delay to avoid.
+
+  **It is off unless a file asks for it.** On by default it would change what
+  every run already configured proposes, with nothing in the file that
+  configured it changed to say so. Which learner proposes is read off the
+  usable observations in hand rather than a count of proposals, so a shot that
+  is dropped or comes back unusable does not move the cycle on, exactly as it
+  does not move the handover. The turn is taken at the batch boundary —
+  whichever learner the first proposal of a batch belongs to makes the whole
+  batch — so at a deep `num_buffered_runs` the trainer's turn is a batch rather
+  than a single shot.
 - **Nelder-Mead and the neural network are gone.** Nelder-Mead may return;
   the neural network will not.
 - **The directed random learner's trust region now works.** Its guard sent

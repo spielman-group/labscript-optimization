@@ -278,6 +278,43 @@ def test_the_learner_m_loop_trained_with_cannot_train_here():
     assert 'Name a trainer' in str(raised.value)
 
 
+def test_how_often_the_trainer_comes_back_is_named_in_the_general_table():
+    """It configures the arrangement of the two learners, not either of them.
+
+    Neither learner's constructor could take it: the trainer does not know it
+    is behind a main learner, and the main learner does not know how often it
+    is stood down. That is what ``[GENERAL]`` carries, and why this is not a
+    knob in a ``[LEARNER.<name>]`` table.
+    """
+    named = config_module.loads(
+        MINIMAL + '[GENERAL]\nnum_runs_between_trainer_runs = 4\n'
+    )
+    assert learners.build(named).num_runs_between_trainer_runs == 4
+    # And what a file naming none gets: a run that never goes back.
+    unnamed = learners.build(config_module.loads(MINIMAL))
+    assert unnamed.num_runs_between_trainer_runs is None
+
+
+def test_how_often_the_trainer_comes_back_is_refused_where_there_is_no_trainer():
+    """No trainer is built for such a learner, so there is nothing to come back.
+
+    Refused beside the trainer's own name and in the same sentence, because a
+    file switching learners usually carries both and would otherwise be
+    refused twice over.
+    """
+    written = MINIMAL + '[GENERAL]\nlearner = "differential_evolution"\n'
+    with pytest.raises(
+        ValueError, match='num_runs_between_trainer_runs is not accepted'
+    ):
+        config_module.loads(written + 'num_runs_between_trainer_runs = 4\n')
+    with pytest.raises(
+        ValueError, match='num_runs_between_trainer_runs and trainer are not accepted'
+    ):
+        config_module.loads(
+            written + 'num_runs_between_trainer_runs = 4\ntrainer = "random"\n'
+        )
+
+
 def test_a_warmup_shorter_than_the_learner_needs_stops_the_load():
     """Rather than at worker configure, with the apparatus already running.
 
@@ -917,6 +954,7 @@ def test_the_budget_is_measured_against_the_generation_a_learner_declares(monkey
     [
         ('num_buffered_runs', '2.9'),
         ('num_training_runs', '19.5'),
+        ('num_runs_between_trainer_runs', '4.5'),
         ('max_num_runs', '400.5'),
         ('max_num_runs_without_better_params', '80.5'),
         ('seed', '1.9'),
@@ -940,6 +978,7 @@ def test_a_whole_number_setting_written_as_a_fraction_is_refused(setting, writte
     [
         'num_buffered_runs',
         'num_training_runs',
+        'num_runs_between_trainer_runs',
         'max_num_runs',
         'seed',
     ],
@@ -980,6 +1019,7 @@ def test_a_string_setting_written_as_a_number_is_refused(setting):
         # Gaussian process MINIMAL would otherwise build refuses a warmup
         # shorter than the two usable observations it needs for one parameter.
         ('num_training_runs', -1, 0, 'learner = "random"\n'),
+        ('num_runs_between_trainer_runs', 0, 1, ''),
         ('seed', -1, 0, ''),
         ('max_num_runs', 0, 1, ''),
         ('max_num_runs_without_better_params', 0, 1, ''),

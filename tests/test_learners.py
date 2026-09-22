@@ -1086,6 +1086,20 @@ class NeverReady(Learner):
         raise InsufficientData('not yet')
 
 
+class Marked(Learner):
+    """A trainer whose proposals cannot be mistaken for the main learner's.
+
+    ``Ready`` proposes the origin, so a batch of sevens came from here and a
+    batch of zeros did not: which learner made a batch is then read off the
+    batch rather than off the phase the wrapper reports about itself.
+    """
+
+    last_phase = 'main'
+
+    def propose(self, history, k):
+        return np.full((k, 2), 7.0)
+
+
 def test_two_phase_trains_first_then_hands_over(space, rng):
     learner = TwoPhaseLearner(RandomLearner(space, rng), Ready(), num_training=3)
     history = []
@@ -1232,3 +1246,114 @@ def test_a_learner_that_declares_no_barrier_is_wrapped(space, rng):
         DirectedRandomLearner(space, rng), GaussianProcessLearner(space, rng), 8
     )
     assert learner.generation is None
+
+
+# --- the trainer's periodic return -----------------------------------------
+
+
+def phases_over(learner, count, k=1):
+    """Drive ``learner`` one batch at a time and collect the phase of each."""
+    history = []
+    phases = []
+    for i in range(count):
+        learner.propose(history, k)
+        phases.append(learner.last_phase)
+        history.append(observe(i, [0.0, 0.0], float(i)))
+    return phases
+
+
+def test_the_trainer_does_not_come_back_unless_a_period_is_asked_for():
+    """The default leaves every existing file proposing what it proposed.
+
+    Switching this on by default would change the shots of every run already
+    configured, with the file that configured it unchanged and saying nothing.
+    """
+    learner = TwoPhaseLearner(Marked(), Ready(), num_training=2)
+    assert learner.num_runs_between_trainer_runs is None
+    assert phases_over(learner, 10) == ['training'] * 2 + ['main'] * 8
+
+
+def test_the_trainer_takes_one_proposal_in_every_cycle():
+    """Three from the main learner, then one from the trainer, and round again.
+
+    The period is how many come from the main learner between one of the
+    trainer's and the next, so the cycle is one longer than the number.
+    """
+    learner = TwoPhaseLearner(
+        Marked(), Ready(), num_training=2, num_runs_between_trainer_runs=3
+    )
+    assert phases_over(learner, 12) == (
+        ['training'] * 2
+        + ['main', 'main', 'main', 'periodic trainer'] * 2
+        + ['main', 'main']
+    )
+
+
+def test_the_periodic_proposal_is_the_trainers_own():
+    """The routing, not only the label the wrapper puts on it."""
+    learner = TwoPhaseLearner(
+        Marked(), Ready(), num_training=0, num_runs_between_trainer_runs=2
+    )
+    history = [observe(i, [0.0, 0.0], float(i)) for i in range(2)]
+    assert (learner.propose(history, 1) == 7.0).all()
+    assert learner.last_phase == 'periodic trainer'
+    # And the position before it, which is the main learner's.
+    assert (learner.propose(history[:1], 1) == 0.0).all()
+    assert learner.last_phase == 'main'
+
+
+def test_a_position_that_produced_no_observation_does_not_move_the_cycle_on():
+    """Read off the history like the handover, and not off a count of calls.
+
+    A dropped shot spends a position and produces nothing, so a learner
+    counting its own proposals would take the trainer's turn a shot early and
+    stay a shot out for the rest of the run. Handed the same usable
+    observations, this answers the same thing.
+    """
+    learner = TwoPhaseLearner(
+        Marked(), Ready(), num_training=0, num_runs_between_trainer_runs=2
+    )
+    seen = [observe(i, [0.0, 0.0], float(i)) for i in range(2)]
+    learner.propose(seen, 1)
+    assert learner.last_phase == 'periodic trainer'
+    spent = seen + [observe('gone', [0.0, 0.0], None, state=DROPPED)]
+    learner.propose(spent, 1)
+    assert learner.last_phase == 'periodic trainer'
+    # A third usable observation is what moves it on.
+    learner.propose(seen + [observe(2, [0.0, 0.0], 2.0)], 1)
+    assert learner.last_phase == 'main'
+
+
+def test_a_batch_is_made_whole_by_the_learner_whose_turn_it_opens_on():
+    """The turn is taken at the batch boundary rather than splitting the batch.
+
+    A split would have to say which position it had reached part way through a
+    batch, and the only count available for that is one observation per
+    proposal -- untrue of every shot that is dropped or comes back unusable.
+    It would also report one phase for a batch two learners made.
+    """
+    learner = TwoPhaseLearner(
+        Marked(), Ready(), num_training=0, num_runs_between_trainer_runs=2
+    )
+    opening_on_the_trainer = [observe(i, [0.0, 0.0], float(i)) for i in range(2)]
+    assert (learner.propose(opening_on_the_trainer, 3) == 7.0).all()
+    assert learner.last_phase == 'periodic trainer'
+    # One position earlier the trainer's turn falls inside the batch, and the
+    # main learner still makes the whole of it.
+    assert (learner.propose(opening_on_the_trainer[:1], 3) == 0.0).all()
+    assert learner.last_phase == 'main'
+
+
+def test_a_period_leaving_the_main_learner_nothing_to_propose_is_refused():
+    """Zero is every proposal the trainer's, which is the named learner never
+    running at all. Leaving the setting out is how it is switched off.
+    """
+    with pytest.raises(ValueError, match='at least 1'):
+        TwoPhaseLearner(
+            Marked(), Ready(), num_training=0, num_runs_between_trainer_runs=0
+        )
+    # And the floor itself, which alternates the two.
+    learner = TwoPhaseLearner(
+        Marked(), Ready(), num_training=0, num_runs_between_trainer_runs=1
+    )
+    assert phases_over(learner, 4) == ['main', 'periodic trainer'] * 2

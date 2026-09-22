@@ -147,6 +147,24 @@ sit side by side and be switched between by changing `[GENERAL] learner`.
 | `differential_evolution` | Evolves a population, one whole generation at a time: it proposes `population_size` shots together and is not asked again until all of them have been answered for. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds — around eight searches well and a budget over a thousand shots is worth sixteen, measured over four analytic test functions at two to eight parameters (`codex_issues_proposal.md`, "The dimension sweep", has the tables and the caveats; `benchmarks/` has the harness that produced them) — and it is the queue depth too, so `num_buffered_runs` is not accepted beside it. |
 | `gaussian_process` | Fits a Gaussian process and searches its posterior. The only learner that needs training: it runs the learner `[GENERAL] trainer` names for its training shots. `trainer` defaults to `directed_random`, and cannot be `differential_evolution`, which proposes whole generations that a two-phase learner cannot hold a barrier for. `[GENERAL] num_training_runs` must be at least this learner's `minimum_observations`, which defaults to twice the parameter count; a shorter warmup is refused, because the handover would happen later than the number says. |
 
+### Going back to the trainer
+
+`[GENERAL] num_runs_between_trainer_runs` puts the trainer back in after the
+handover: one proposal in every cycle of that many plus one comes from it
+rather than from the main learner, so a Gaussian process narrowing onto the
+best point it has found goes on being handed points from somewhere else. It is
+unset by default, and a run that leaves it unset never returns to the trainer.
+The proposal it produces is the trainer's own, knobs and all, out of
+`[LEARNER.<trainer>]`, and the session reports the phase as `periodic trainer`
+so the run can be read off the `phase` column.
+
+Which learner proposes is read off the number of usable observations in hand,
+not off a count of proposals: a shot that is dropped or comes back unusable
+does not move the cycle on, the same way it does not move the handover. The
+turn is taken at the batch boundary — whichever learner the first proposal of a
+batch belongs to makes the whole batch — so with a deep `num_buffered_runs` the
+trainer's turn can be a batch rather than a single shot.
+
 ### A cost with noise in it
 
 Shot-to-shot noise is not something these learners quietly absorb. It changes

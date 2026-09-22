@@ -133,8 +133,9 @@ def build(config, rng: np.random.Generator | None = None):
 
     A learner in :data:`NEEDS_TRAINING` is wrapped in a
     :class:`~labscript_optimization.learners.two_phase.TwoPhaseLearner` with
-    the learner ``[GENERAL] trainer`` names, which runs the training shots. Each
-    is built
+    the learner ``[GENERAL] trainer`` names, which runs the training shots and,
+    where ``[GENERAL] num_runs_between_trainer_runs`` asks for them, the
+    periodic runs after them. Each is built
     from its own ``[LEARNER.<name>]`` table, so a trainer and a main learner
     that take the same knob take it separately.
 
@@ -154,7 +155,12 @@ def build(config, rng: np.random.Generator | None = None):
         trainer = LEARNERS[config.trainer](
             config.space, rng, **options.get(config.trainer, {})
         )
-        learner = TwoPhaseLearner(trainer, main, config.num_training_runs)
+        learner = TwoPhaseLearner(
+            trainer,
+            main,
+            config.num_training_runs,
+            config.num_runs_between_trainer_runs,
+        )
     else:
         learner = main
 

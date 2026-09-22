@@ -7,6 +7,14 @@ The warmup is held to what the main learner needs: one shorter than that is
 refused, because the handover would then not happen at the shot the number
 names.
 
+The trainer can also be brought back after the handover, by
+``num_runs_between_trainer_runs``: one proposal in every cycle of that many
+plus one comes from the trainer instead. A main learner refining around the
+best point it has found narrows onto it, and a proposal from the trainer every
+so often is what goes on widening the history underneath it. Off unless a
+configuration asks for it, because turning it on changes what every existing
+file proposes.
+
 A proposer wrapping two proposers, not a controller: it proposes the same
 way as what it wraps, so it can be wrapped in turn. What it wraps is held to
 what it can answer for: a learner declaring a generation is refused, because
@@ -30,6 +38,14 @@ class TwoPhaseLearner(Learner):
     though: it searches no space of its own and so cannot be named in a
     configuration. :func:`~labscript_optimization.learners.build` wraps one
     around the two learners it builds instead.
+
+    Which learner proposes is a function of the history, like everything else a
+    learner computes: the phase is read off the number of usable observations
+    in hand, and so is whether this is a position the trainer takes back. No
+    count is kept. A counter would part company with the history the first time
+    a proposal was dropped or came back with a cost nothing can fit -- the
+    position would be spent and the counter would not know it -- and a learner
+    handed the same history twice would answer differently the second time.
 
     Of the three members a session reads, this answers ``last_phase`` for
     itself -- the phase is this learner's own, and naming the trainer and the
@@ -62,12 +78,17 @@ class TwoPhaseLearner(Learner):
     is refused rather than approximated.
 
     Args:
-        trainer: The learner used for the training phase.
+        trainer: The learner used for the training phase, and for the periodic
+            runs after it.
         main: The learner used once training is done.
         num_training: How many usable observations to gather before handing
             over. At least the main learner's own
             ``minimum_observations``, or the handover would not happen where
             this says it does.
+        num_runs_between_trainer_runs: How many consecutive proposals come from
+            the main learner between one proposal from the trainer and the
+            next, once training is over. ``None``, the default, never goes back
+            to the trainer.
     """
 
     #: Zero, and not inherited from either wrapped learner: this learner always
@@ -76,7 +97,13 @@ class TwoPhaseLearner(Learner):
     #: rather than passing it on.
     minimum_observations = 0
 
-    def __init__(self, trainer, main, num_training: int):
+    def __init__(
+        self,
+        trainer,
+        main,
+        num_training: int,
+        num_runs_between_trainer_runs: int | None = None,
+    ):
         for role, wrapped, instead in (
             ("trainer", trainer, "Name a trainer that proposes any number at a time"),
             ("main", main, f"Run {type(main).__name__} without a training phase"),
@@ -95,10 +122,11 @@ class TwoPhaseLearner(Learner):
                     f"would go out in pieces. {instead}."
                 )
 
-        # The trainer proposes the very first shot, from an empty history. A
-        # learner that refuses to propose without observations cannot: there is
-        # nothing behind it, so it would raise out through the session at the
-        # first shot of the run.
+        # The trainer proposes the very first shot, from an empty history, and
+        # every periodic run after training. A learner that refuses to propose
+        # without observations can be neither: at the first shot of the run
+        # there is nothing behind it, so it would raise out through the
+        # session.
         withheld = getattr(trainer, "minimum_observations", 0)
         if withheld:
             raise ValueError(
@@ -131,14 +159,50 @@ class TwoPhaseLearner(Learner):
                 f"{self.num_training}."
             )
 
+        self.num_runs_between_trainer_runs = (
+            None
+            if num_runs_between_trainer_runs is None
+            else int(num_runs_between_trainer_runs)
+        )
+        if (
+            self.num_runs_between_trainer_runs is not None
+            and self.num_runs_between_trainer_runs < 1
+        ):
+            # Zero would be no main-learner runs between one trainer run and
+            # the next, which is the main learner never proposing at all --
+            # a way of writing "do not run the learner this file names", and
+            # not the way anybody would mean to write it. Unset is how the
+            # periodic run is turned off.
+            raise ValueError(
+                f"num_runs_between_trainer_runs is how many proposals come "
+                f"from {type(main).__name__} between one from "
+                f"{type(trainer).__name__} and the next, so it must be at "
+                f"least 1, got {num_runs_between_trainer_runs}. Leave it "
+                f"unset for a run that never goes back to the trainer."
+            )
+
         # An instance attribute because this is the learner whose phase
         # changes, and answered before anything has been proposed because a
         # session may report its status first.
         self.last_phase = "training"
 
     def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
-        if len(usable(history)) < self.num_training:
+        seen = len(usable(history))
+        if seen < self.num_training:
             self.last_phase = "training"
+            return self.trainer.propose(history, k)
+        period = self.num_runs_between_trainer_runs
+        # The turn is taken at the batch boundary: whichever learner the first
+        # position of the batch belongs to proposes the whole of it. A batch
+        # split between the two would have to say which position it had
+        # reached part way through itself, and the only count it could say it
+        # from is one proposal per position -- the assumption a counter makes,
+        # and wrong for every proposal that is dropped or comes back unusable.
+        # It would also report one phase for a batch made by two learners, and
+        # cut the main learner's batch, which a Gaussian process conditions on
+        # its own earlier points, into pieces.
+        if period is not None and (seen - self.num_training) % (period + 1) == period:
+            self.last_phase = "periodic trainer"
             return self.trainer.propose(history, k)
         self.last_phase = "main"
         return self.main.propose(history, k)

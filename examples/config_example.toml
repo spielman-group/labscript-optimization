@@ -51,6 +51,15 @@ num_buffered_runs = 3
 # larger one.
 num_training_runs = 20
 
+# How many shots the Gaussian process proposes between one shot from the
+# trainer and the next, once training is over. Unset, the run never goes back
+# to the trainer: everything after the handover is the Gaussian process, which
+# narrows onto the best point it has found. Set, one shot in every cycle of
+# this many plus one comes from the trainer instead, on the trainer's own
+# knobs, and keeps widening the history underneath it. The phase the routine
+# reports reads "periodic trainer" for those shots.
+# num_runs_between_trainer_runs = 4
+
 # Stop conditions. Omit either to let the session run until removed from lyse.
 max_num_runs = 400
 max_num_runs_without_better_params = 80
@@ -58,11 +67,12 @@ max_num_runs_without_better_params = 80
 # Set for a reproducible run; omit for a different sequence each time.
 # seed = 12345
 
-# A learner that needs training runs this one for its training shots. random,
-# directed_random or
+# A learner that needs training runs this one for its training shots, and for
+# the periodic shots above if they are switched on. random, directed_random or
 # gaussian_process; differential_evolution cannot train, because it proposes a
 # whole population at a time. Only for a learner that trains: naming one
-# beside a learner that does not is refused.
+# beside a learner that does not is refused, as is
+# num_runs_between_trainer_runs.
 trainer = "directed_random"
 
 # Every learner knob goes in the table of the learner that takes it. A knob in
