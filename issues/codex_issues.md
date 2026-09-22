@@ -16,7 +16,7 @@ House rules that apply to every slice:
   behaviour changes, grep for every sentence that described the old behaviour.
 - No settings accepted for compatibility. An unknown or unusable key is refused
   at load, naming the key and what is accepted instead.
-- Branch is `Development`. The suite stands at 320 tests. A count quoted inside a slice is the one that slice was written against; recount before
+- Branch is `Development`. The suite stands at 397 tests. A count quoted inside a slice is the one that slice was written against; recount before
   relying on either.
 
 **Revised after a fourth review round.** Slices 5, 7, 8 and 9 below replace what
@@ -43,7 +43,7 @@ backlog, which would also let BLACS stop mutating a client's deadline per call.
 - [x] Slice 11: The benchmark evidence is in the repository, and the document is true
 - [x] Slice 12: Test cleanup
 - [x] Slice 13: A learner's knobs live with that learner, and the trainer is chosen
-- [ ] Slice 14: The package stops calling itself M-LOOP
+- [x] Slice 14: The package stops calling itself M-LOOP
 
 ---
 
