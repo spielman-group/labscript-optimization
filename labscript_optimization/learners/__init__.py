@@ -133,8 +133,8 @@ def build(config, rng: np.random.Generator | None = None):
 
     A learner in :data:`NEEDS_TRAINING` is wrapped in a
     :class:`~labscript_optimization.learners.two_phase.TwoPhaseLearner` with
-    the learner ``[GENERAL] trainer`` names, which runs the training shots and is
-    also the fallback for proposals the main learner cannot make. Each is built
+    the learner ``[GENERAL] trainer`` names, which runs the training shots. Each
+    is built
     from its own ``[LEARNER.<name>]`` table, so a trainer and a main learner
     that take the same knob take it separately.
 

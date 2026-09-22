@@ -2,9 +2,10 @@
 
 A Gaussian process needs a spread of observations before its posterior means
 anything, so the first ``num_training`` shots come from a second learner, the
-trainer, which a configuration names. After that the main learner takes over,
-and the trainer stays on as the fallback for any proposal the main learner
-cannot make.
+trainer, which a configuration names. After that the main learner takes over.
+The warmup is held to what the main learner needs: one shorter than that is
+refused, because the handover would then not happen at the shot the number
+names.
 
 A proposer wrapping two proposers, not a controller: it proposes the same
 way as what it wraps, so it can be wrapped in turn. What it wraps is held to
@@ -12,13 +13,12 @@ what it can answer for: a learner declaring a generation is refused, because
 two phases cannot hold one barrier between them.
 """
 
-import warnings
 from typing import Sequence
 
 import numpy as np
 
 from ..observations import Observation, usable
-from .base import InsufficientData, Learner
+from .base import Learner
 
 
 class TwoPhaseLearner(Learner):
@@ -32,12 +32,13 @@ class TwoPhaseLearner(Learner):
     around the two learners it builds instead.
 
     Of the three members a session reads, this answers ``last_phase`` for
-    itself -- the phase is this learner's own, and naming the trainer, the
-    fallback and the main learner is the whole point of it -- and declares
-    ``minimum_observations`` of zero, which is true because the trainer is the
-    fallback for anything the main learner cannot yet make -- and is held true
-    by refusing a trainer that withholds proposals of its own, since nothing
-    stands behind the fallback. ``generation`` it
+    itself -- the phase is this learner's own, and naming the trainer and the
+    main learner is the whole point of it -- and declares
+    ``minimum_observations`` of zero, which is true at both ends: below
+    ``num_training`` the trainer proposes, and a trainer that withholds
+    proposals of its own is refused, while at ``num_training`` and above the
+    main learner can propose, because a warmup shorter than the main learner's
+    own requirement is refused. ``generation`` it
     can neither answer for nor pass on, so a learner declaring one is refused
     here rather than wrapped.
 
@@ -61,16 +62,18 @@ class TwoPhaseLearner(Learner):
     is refused rather than approximated.
 
     Args:
-        trainer: The learner used for the training phase, and as the fallback.
+        trainer: The learner used for the training phase.
         main: The learner used once training is done.
         num_training: How many usable observations to gather before handing
-            over.
+            over. At least the main learner's own
+            ``minimum_observations``, or the handover would not happen where
+            this says it does.
     """
 
-    #: Zero, and not inherited from either wrapped learner: this learner
-    #: always proposes, falling back to the trainer for anything ``main``
-    #: cannot make, so it absorbs its main learner's requirement rather than
-    #: passing it on.
+    #: Zero, and not inherited from either wrapped learner: this learner always
+    #: proposes, because each of its two phases is held to a learner that can
+    #: propose throughout it, so it absorbs its main learner's requirement
+    #: rather than passing it on.
     minimum_observations = 0
 
     def __init__(self, trainer, main, num_training: int):
@@ -92,11 +95,10 @@ class TwoPhaseLearner(Learner):
                     f"would go out in pieces. {instead}."
                 )
 
-        # The trainer proposes the very first shot, from an empty history, and
-        # is the fallback for everything the main learner cannot make. A
-        # learner that refuses to propose without observations can be neither:
-        # there is nothing behind it to propose instead, so it would raise out
-        # through the session at the first shot of the run.
+        # The trainer proposes the very first shot, from an empty history. A
+        # learner that refuses to propose without observations cannot: there is
+        # nothing behind it, so it would raise out through the session at the
+        # first shot of the run.
         withheld = getattr(trainer, "minimum_observations", 0)
         if withheld:
             raise ValueError(
@@ -114,19 +116,21 @@ class TwoPhaseLearner(Learner):
 
         needed = getattr(main, "minimum_observations", 0)
         if self.num_training < needed:
-            # Not an error: the fallback covers it, and the shots are not
-            # wasted. But the handover a user configured will not happen when
-            # they expect, and neither number is stated in any document, so
-            # say it once rather than leave them reading "training (fallback)"
-            # and wondering.
-            warnings.warn(
-                f"{type(main).__name__} needs {needed} usable observations "
-                f"before it can propose, and num_training_runs is "
-                f"{self.num_training}, so the first proposals after training "
-                f"come from {type(trainer).__name__} instead. Raise "
-                f"num_training_runs to {needed} or more to hand over cleanly.",
-                stacklevel=2,
+            # The number would not mean what it says. The handover would happen
+            # at ``needed`` and not at ``num_training``, and the shots in
+            # between would come from the trainer under a phase called "main"
+            # -- a setting read back off the file as one thing and acted on as
+            # another.
+            raise ValueError(
+                f"num_training_runs is {self.num_training}, and "
+                f"{type(main).__name__} will not propose until the history "
+                f"holds {needed} usable observations, so the handover this "
+                f"asks for at {self.num_training} could not happen before "
+                f"{needed}. Set num_training_runs to {needed} or more, or "
+                f"lower {type(main).__name__}'s minimum_observations to "
+                f"{self.num_training}."
             )
+
         # An instance attribute because this is the learner whose phase
         # changes, and answered before anything has been proposed because a
         # session may report its status first.
@@ -136,12 +140,5 @@ class TwoPhaseLearner(Learner):
         if len(usable(history)) < self.num_training:
             self.last_phase = "training"
             return self.trainer.propose(history, k)
-        try:
-            proposals = self.main.propose(history, k)
-        except InsufficientData:
-            # The main learner is past its training runs but still cannot fit,
-            # so keep exploring rather than stalling the experiment.
-            self.last_phase = "training (fallback)"
-            return self.trainer.propose(history, k)
         self.last_phase = "main"
-        return proposals
+        return self.main.propose(history, k)

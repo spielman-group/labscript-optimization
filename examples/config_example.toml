@@ -44,7 +44,11 @@ learner = "gaussian_process"
 # at a time and waits for all of it: its queue depth is population_size.
 num_buffered_runs = 3
 
-# How many shots the trainer runs before the Gaussian process takes over.
+# How many shots the trainer runs before the Gaussian process takes over. At
+# least the Gaussian process's own minimum_observations, which defaults to
+# twice the number of searched parameters: a smaller number here would not be
+# where the handover happened, and is refused rather than quietly meaning the
+# larger one.
 num_training_runs = 20
 
 # Stop conditions. Omit either to let the session run until removed from lyse.
@@ -54,8 +58,8 @@ max_num_runs_without_better_params = 80
 # Set for a reproducible run; omit for a different sequence each time.
 # seed = 12345
 
-# A learner that needs training runs this one for its training shots, and
-# falls back to it for any proposal it cannot make. random, directed_random or
+# A learner that needs training runs this one for its training shots. random,
+# directed_random or
 # gaussian_process; differential_evolution cannot train, because it proposes a
 # whole population at a time. Only for a learner that trains: naming one
 # beside a learner that does not is refused.

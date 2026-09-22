@@ -234,7 +234,7 @@ def test_the_learner_is_named_in_the_general_table():
 
 
 def test_the_trainer_is_named_in_the_general_table():
-    """Which learner runs the training shots, and stands as the fallback.
+    """Which learner runs the training shots, and the periodic ones after them.
 
     It decides where the first shots of every run land, so it is the lab's to
     choose rather than this package's to fix.
@@ -268,7 +268,7 @@ def test_a_trainer_named_for_a_learner_that_needs_none_is_refused():
 
 def test_the_learner_m_loop_trained_with_cannot_train_here():
     """M-LOOP's machine-learning controllers defaulted to differential
-    evolution for the training shots and the fallback both. Here that learner
+    evolution for the training shots and its periodic runs both. Here that learner
     proposes a whole population at a time and only when none of its proposals
     is outstanding, which a two-phase learner cannot hold a barrier for, so the
     file is refused rather than silently running the generation in pieces.
@@ -278,9 +278,23 @@ def test_the_learner_m_loop_trained_with_cannot_train_here():
     assert 'Name a trainer' in str(raised.value)
 
 
+def test_a_warmup_shorter_than_the_learner_needs_stops_the_load():
+    """Rather than at worker configure, with the apparatus already running.
+
+    MINIMAL searches one parameter, so the Gaussian process it builds will not
+    fit below two usable observations. A file asking to hand over after one is
+    asking for a handover that would happen after two.
+    """
+    with pytest.raises(ValueError, match='num_training_runs is 1') as raised:
+        config_module.loads(MINIMAL + '[GENERAL]\nnum_training_runs = 1\n')
+    assert 'holds 2 usable observations' in str(raised.value)
+    loaded = config_module.loads(MINIMAL + '[GENERAL]\nnum_training_runs = 2\n')
+    assert loaded.num_training_runs == 2
+
+
 def test_a_trainer_that_will_not_propose_from_an_empty_history_is_refused():
-    """The trainer proposes the first shot of the run and is the fallback for
-    everything the main learner cannot make, so there is nothing behind it.
+    """The trainer proposes the first shot of the run, from an empty history,
+    so there is nothing behind it to propose instead.
     """
     with pytest.raises(ValueError, match='will not propose until') as raised:
         config_module.loads(MINIMAL + '[GENERAL]\ntrainer = "gaussian_process"\n')
@@ -923,7 +937,12 @@ def test_a_whole_number_setting_written_as_a_fraction_is_refused(setting, writte
 
 @pytest.mark.parametrize(
     'setting',
-    ['num_buffered_runs', 'num_training_runs', 'max_num_runs', 'seed'],
+    [
+        'num_buffered_runs',
+        'num_training_runs',
+        'max_num_runs',
+        'seed',
+    ],
 )
 def test_a_whole_number_setting_written_as_a_boolean_is_refused(setting):
     """``isinstance(True, int)`` is True, so a bare integer check takes it as 1.
@@ -953,17 +972,21 @@ def test_a_string_setting_written_as_a_number_is_refused(setting):
 
 
 @pytest.mark.parametrize(
-    'setting, refused, accepted',
+    'setting, refused, accepted, alongside',
     [
-        ('num_buffered_runs', 0, 1),
-        ('num_training_runs', -1, 0),
-        ('seed', -1, 0),
-        ('max_num_runs', 0, 1),
-        ('max_num_runs_without_better_params', 0, 1),
+        ('num_buffered_runs', 0, 1, ''),
+        # No training shots at all is a floor the dataclass holds, and a file
+        # reaches it only beside a learner that asks for no warmup: the
+        # Gaussian process MINIMAL would otherwise build refuses a warmup
+        # shorter than the two usable observations it needs for one parameter.
+        ('num_training_runs', -1, 0, 'learner = "random"\n'),
+        ('seed', -1, 0, ''),
+        ('max_num_runs', 0, 1, ''),
+        ('max_num_runs_without_better_params', 0, 1, ''),
     ],
 )
 def test_a_setting_below_its_floor_is_refused_and_the_floor_itself_loads(
-    setting, refused, accepted
+    setting, refused, accepted, alongside
 ):
     """The floors stand between a file and a session that says nothing.
 
@@ -971,9 +994,10 @@ def test_a_setting_below_its_floor_is_refused_and_the_floor_itself_loads(
     record, so a session that submits nothing never reaches it and never
     explains itself. tests/test_session.py shows what that looks like.
     """
+    written = MINIMAL + f'[GENERAL]\n{alongside}'
     with pytest.raises(ValueError, match=f'{setting} must be at least'):
-        config_module.loads(MINIMAL + f'[GENERAL]\n{setting} = {refused}\n')
-    loaded = config_module.loads(MINIMAL + f'[GENERAL]\n{setting} = {accepted}\n')
+        config_module.loads(written + f'{setting} = {refused}\n')
+    loaded = config_module.loads(written + f'{setting} = {accepted}\n')
     assert getattr(loaded, setting) == accepted
 
 

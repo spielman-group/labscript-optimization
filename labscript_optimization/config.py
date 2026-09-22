@@ -212,8 +212,7 @@ class Config:
     maximize: bool = False
     learner: str = "gaussian_process"
     #: The learner that runs the training shots for a ``learner`` that needs
-    #: them, and stands as the fallback for any proposal that learner cannot
-    #: make. Read only for such a learner: a file naming it beside one that
+    #: them. Read only for such a learner: a file naming it beside one that
     #: trains itself is refused rather than left with a setting nothing acts
     #: on.
     trainer: str = "directed_random"
@@ -228,6 +227,10 @@ class Config:
     #: file writing this beside one is refused rather than left with two
     #: settings for the same number.
     num_buffered_runs: int = 3
+    #: How many usable observations the ``trainer`` gathers before ``learner``
+    #: takes over. At least that learner's own ``minimum_observations``, or the
+    #: handover could not happen where this says it does and the file is
+    #: refused.
     num_training_runs: int = 5
     max_num_runs: int | None = None
     #: Stop after this many completed shots without a better cost. Every

@@ -145,7 +145,7 @@ sit side by side and be switched between by changing `[GENERAL] learner`.
 | `random` | Uniform draws. The reference the others are measured against. |
 | `directed_random` | Draws near a previously seen point, chosen from a band of middling costs rather than from the best one, so it explores rather than refines. |
 | `differential_evolution` | Evolves a population, one whole generation at a time: it proposes `population_size` shots together and is not asked again until all of them have been answered for. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds — around eight searches well and a budget over a thousand shots is worth sixteen, measured over four analytic test functions at two to eight parameters (`codex_issues_proposal.md`, "The dimension sweep", has the tables and the caveats; `benchmarks/` has the harness that produced them) — and it is the queue depth too, so `num_buffered_runs` is not accepted beside it. |
-| `gaussian_process` | Fits a Gaussian process and searches its posterior. The only learner that needs training: it runs the learner `[GENERAL] trainer` names for its training shots, and falls back to it for any proposal it cannot make. `trainer` defaults to `directed_random`, and cannot be `differential_evolution`, which proposes whole generations that a two-phase learner cannot hold a barrier for. |
+| `gaussian_process` | Fits a Gaussian process and searches its posterior. The only learner that needs training: it runs the learner `[GENERAL] trainer` names for its training shots. `trainer` defaults to `directed_random`, and cannot be `differential_evolution`, which proposes whole generations that a two-phase learner cannot hold a barrier for. `[GENERAL] num_training_runs` must be at least this learner's `minimum_observations`, which defaults to twice the parameter count; a shorter warmup is refused, because the handover would happen later than the number says. |
 
 ### A cost with noise in it
 
@@ -232,8 +232,10 @@ the wrapped learner's on, where the wrapper can hold what that value promises;
 or refuse to be built, where it cannot. Leaving one unanswered is none of the
 three — the reader's own default becomes the answer, and the wrapped learner's
 declaration is dropped with nothing said. The two-phase wrapper answers
-`last_phase` for itself, declares a `minimum_observations` of zero because its
-trainer is the fallback for anything its main learner cannot make, and refuses
+`last_phase` for itself, declares a `minimum_observations` of zero because each
+of its two phases is held to a learner that can propose throughout it — a
+trainer that withholds proposals is refused, and so is a training phase shorter
+than its main learner's own requirement — and refuses
 to wrap a learner declaring a `generation`, since a barrier cannot be held
 across two phases only one of which promises it.
 

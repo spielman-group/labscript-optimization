@@ -117,6 +117,10 @@ class ParameterSpaceLearner(Learner):
 class InsufficientData(RuntimeError):
     """A learner cannot propose from the history it has been given.
 
-    Raised rather than returning a fallback, so that a wrapper decides what to
-    do; a bare learner reaching this state is a configuration error.
+    Raised rather than quietly proposing on some other basis, so that a caller
+    given a proposal knows which learner made it. Nothing here catches it: a
+    learner is only ever asked to propose from a history long enough for it,
+    and the two-phase wrapper is refused at construction unless its training
+    phase covers what its main learner needs. Reaching this state is therefore
+    a configuration error.
     """

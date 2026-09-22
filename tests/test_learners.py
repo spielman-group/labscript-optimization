@@ -1097,12 +1097,19 @@ def test_two_phase_trains_first_then_hands_over(space, rng):
     assert phases == ['training'] * 3 + ['main'] * 3
 
 
-def test_two_phase_keeps_training_when_the_main_learner_cannot_propose(space, rng):
+def test_a_main_learner_that_cannot_propose_is_not_caught(space, rng):
+    """There is nothing left to catch it.
+
+    The wrapper used to fall back to the trainer here. It cannot be reached
+    from a configuration any more -- the training phase is refused unless it
+    covers what the main learner needs -- so a main learner refusing to
+    propose after that is a broken learner, and the run stops with that
+    learner's own message rather than going on under a phase reading "main".
+    """
     learner = TwoPhaseLearner(RandomLearner(space, rng), NeverReady(), num_training=1)
     history = [observe(i, [0.0, 0.0], float(i)) for i in range(5)]
-    proposals = learner.propose(history, 2)
-    assert learner.last_phase == 'training (fallback)'
-    assert space.contains(proposals).all()
+    with pytest.raises(InsufficientData, match='not yet'):
+        learner.propose(history, 2)
 
 
 def test_shots_without_a_usable_cost_do_not_count_as_training(space, rng):
@@ -1116,19 +1123,31 @@ def test_shots_without_a_usable_cost_do_not_count_as_training(space, rng):
     assert learner.last_phase == 'training'
 
 
-def test_a_handover_that_cannot_happen_yet_is_warned_about(space, rng):
-    """The fallback covers it, but the user configured a handover that will
-    not happen when they expect, and neither number is in any document."""
+def test_a_warmup_shorter_than_the_main_learner_needs_is_refused(space, rng):
+    """A number that does not mean what it says.
+
+    With a warmup of five in front of a learner that will not fit below six,
+    the handover happens at six: the sixth shot comes from the trainer under a
+    setting that says the fifth was the last of them. Both numbers are named,
+    because a message giving one leaves the reader to go and find the other.
+    """
     main = GaussianProcessLearner(space, rng, minimum_observations=6)
-    with pytest.warns(UserWarning, match='needs 6 usable observations'):
+    with pytest.raises(ValueError) as raised:
         TwoPhaseLearner(RandomLearner(space, rng), main, num_training=5)
+    assert 'num_training_runs is 5' in str(raised.value)
+    assert 'holds 6 usable observations' in str(raised.value)
 
 
-def test_a_handover_that_works_is_not_warned_about(space, rng):
-    main = GaussianProcessLearner(space, rng, minimum_observations=4)
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')
-        TwoPhaseLearner(RandomLearner(space, rng), main, num_training=4)
+def test_a_warmup_exactly_as_long_as_the_main_learner_needs_is_accepted(space, rng):
+    """The other arm of the comparison, and the one that matters.
+
+    At six the main learner can propose on the very shot the handover is
+    configured for, so this is the shortest warmup that means what it says --
+    and a refusal written one number wide would take it too.
+    """
+    main = GaussianProcessLearner(space, rng, minimum_observations=6)
+    learner = TwoPhaseLearner(RandomLearner(space, rng), main, num_training=6)
+    assert learner.num_training == 6
 
 
 def test_a_two_phase_learner_reports_a_phase_before_it_has_proposed(space, rng):
@@ -1138,8 +1157,8 @@ def test_a_two_phase_learner_reports_a_phase_before_it_has_proposed(space, rng):
 
 
 def test_a_two_phase_learner_answers_for_the_observations_it_needs(space, rng):
-    """It never refuses to propose -- the trainer is the fallback for anything
-    the main learner cannot make -- so it absorbs its main learner's
+    """It never refuses to propose -- each of its phases is held to a learner
+    that can propose throughout it -- so it absorbs its main learner's
     requirement rather than passing it on. Declared, because an attribute read
     off a learner with a default is the reader's answer and not the learner's.
     """
@@ -1191,14 +1210,13 @@ def test_a_generational_learner_cannot_be_the_trainer_either(space, rng):
 
 
 def test_a_trainer_that_withholds_its_proposals_is_refused(space, rng):
-    """Nothing stands behind the fallback.
+    """Nothing stands behind the trainer.
 
-    The trainer proposes the first shot of the run, from an empty history, and
-    answers for everything the main learner cannot make. One that refuses to
-    propose until the history holds points raises out through the session at
-    the first shot, and the wrapper's own ``minimum_observations`` of zero --
-    which a wrapper of this reads to size its own training phase -- is a
-    promise it could not keep.
+    It proposes the first shot of the run, from an empty history, and every
+    periodic run after training. One that refuses to propose until the history
+    holds points raises out through the session at the first shot, and the
+    wrapper's own ``minimum_observations`` of zero -- which a wrapper of this
+    reads to size its own training phase -- is a promise it could not keep.
     """
     trainer = GaussianProcessLearner(space, rng)
     assert trainer.minimum_observations > 0

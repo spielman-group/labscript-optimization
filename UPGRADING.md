@@ -233,7 +233,8 @@ goes out whole.
 - You still compute the cost yourself, in your own lyse routine. This package
   never computes one.
 - `num_training_runs`, `max_num_runs` and `max_num_runs_without_better_params`
-  mean what they meant.
+  mean what they meant. `num_training_runs` gains a rule — see *A warmup has to
+  be long enough* below — but not a new meaning.
 - Adding the routine to lyse starts a session; removing or restarting it, or
   reaching the run budget, stops it.
 
@@ -243,10 +244,9 @@ goes out whole.
   `differential_evolution` and `gaussian_process`, in `[GENERAL] learner`.
 - **The trainer is chosen**, in `[GENERAL] trainer`, and defaults to
   `directed_random`. `gaussian_process` is the only learner that needs one: it
-  runs the trainer for its training shots and falls back to it for any proposal
-  it cannot make. A name that is not a learner is refused, and so is a trainer
-  named beside a learner that needs none, which would be a setting nothing acts
-  on.
+  runs the trainer for its training shots. A name that is not a learner is
+  refused, and so is a trainer named beside a learner that needs none, which
+  would be a setting nothing acts on.
 
   **The default is not what M-LOOP did.** Its machine-learning controllers took
   `training_type`, defaulting to `differential_evolution`
@@ -254,7 +254,7 @@ goes out whole.
   for any point the machine-learning learner was too slow to supply — so both
   came from a population clustered around the best points seen. This package's
   `directed_random` centres its draws on a band of *middling* costs instead,
-  which is what makes it explore rather than refine, so training and fallback
+  which is what makes it explore rather than refine, so the training shots
   range much wider and produce stretches of poor shots that M-LOOP never
   showed. That is what a run against the dummy apparatus looks like.
 
@@ -266,6 +266,16 @@ goes out whole.
   `[LEARNER.directed_random]` centres on the best point rather than on
   middling ones, and `[1, 1]` is the best point alone. `trainer = "random"` is
   the plain uniform spread over the whole space.
+- **A warmup has to be long enough.** `num_training_runs` below the main
+  learner's own `minimum_observations` is **refused**, naming both numbers.
+  With a warmup of 5 in front of a Gaussian process that will not fit below
+  10, `num_training_runs = 5` meant 10: shots 5 to 9 came from the trainer
+  anyway, and the setting was read back off the file as one thing and acted on
+  as another. Most files leave `minimum_observations` unset, where it is twice
+  the number of searched parameters — five parameters therefore want at least
+  ten training shots. Raise `num_training_runs`, or lower
+  `minimum_observations` in `[LEARNER.gaussian_process]` to the warmup you
+  want.
 - **Nelder-Mead and the neural network are gone.** Nelder-Mead may return;
   the neural network will not.
 - **The directed random learner's trust region now works.** Its guard sent
