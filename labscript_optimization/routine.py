@@ -49,7 +49,37 @@ RESULTS_GROUP = "labscript_optimization"
 #: of the status is the session's bookkeeping, one answer for the whole run
 #: that would be repeated onto every shot of it; :func:`optimise` returns all
 #: of it.
+#:
+#: ``stopped`` is here rather than with the bookkeeping because it is a marker
+#: and not a tally. A counter carries a running total onto every shot and says
+#: nothing about the one it lands on; ``stopped`` is empty until the session
+#: ends, so the first shot carrying a reason is the shot the run ended on, and
+#: where it sits in the column is the answer to the question a lab asks of a
+#: finished run.
 SHOT_RESULTS = ("phase", "best_cost", "best_params", "best_shot_id", "stopped")
+
+#: What each of :data:`SHOT_RESULTS` is written as while the session has
+#: nothing to report for it.
+#:
+#: An h5 attribute cannot be ``None``, so a key without a value needs a stand
+#: in. lyse gives a dataframe column one dtype, and the shots already written
+#: fix it: a stand in of a different type than the value it holds a place for
+#: types the column against that value, and the shot that finally has one
+#: cannot be written into it. So each empty here carries the type of the value
+#: that replaces it -- ``""`` for the string-valued keys, an empty list for the
+#: parameter vector, NaN only for the float that NaN is the empty of. lyse
+#: reads a shot with no identifier back as ``""`` for the same reason.
+#:
+#: None of these collide with a value the session reports: ``stopped`` is a
+#: sentence, ``best_shot_id`` is an id runmanager minted, and a configuration
+#: with no enabled parameters is refused, so ``best_params`` is never empty.
+NO_VALUE_YET = {
+    "phase": "",
+    "best_cost": float("nan"),
+    "best_params": [],
+    "best_shot_id": "",
+    "stopped": "",
+}
 
 #: Seconds the routine waits for the worker to answer the message it has just
 #: sent. Generous for an answer that is a dictionary and a socket hop, and
@@ -182,7 +212,9 @@ def save_status(filepath, status) -> None:
     is saved with ``save_result`` although it is a list --
     ``save_result_array`` would write it as a dataset, into a part of the file
     the dataframe never looks at. A value the session does not have yet is
-    written as NaN, because an h5 attribute cannot be ``None``.
+    written as its :data:`NO_VALUE_YET` stand in, which has the type of the
+    value it holds a place for, so that the column is one dtype from the first
+    shot onwards.
 
     A write that fails is reported to lyse's output and otherwise passed over.
     """
@@ -196,7 +228,9 @@ def save_status(filepath, status) -> None:
         with run.open("r+"):
             for name in SHOT_RESULTS:
                 reported = status[name]
-                run.save_result(name, float("nan") if reported is None else reported)
+                if reported is None:
+                    reported = NO_VALUE_YET[name]
+                run.save_result(name, reported)
     except Exception as exc:
         print(
             f"could not write the optimisation status to {filepath}: {exc!r}",

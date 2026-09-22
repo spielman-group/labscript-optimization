@@ -35,6 +35,7 @@ except ImportError:
     pass
 
 import h5py
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -93,8 +94,12 @@ def shot(tmp_path):
     def build(shot_id='row-3', cost=7.0, uncer=None, with_cost=True):
         path = tmp_path / f'shot{len(made)}.h5'
         made.append(path)
-        with h5py.File(path, 'w'):
-            pass
+        with h5py.File(path, 'w') as f:
+            # The least a shot file needs for lyse to read it into a dataframe
+            # row: the globals group the row takes its columns from, and the
+            # sequence it is indexed by.
+            f.create_group('globals')
+            f.attrs['sequence_id'] = '20260922T120000_optimisation'
         row = {'filepath': str(path), 'shot_id': shot_id}
         if with_cost:
             row[('zTOF', 'Nb')] = cost
@@ -907,20 +912,126 @@ def test_the_sessions_own_counters_are_not_written_onto_every_shot(
     assert answer['starved'] == 0 and answer['submitted'] == 1
 
 
-def test_a_value_the_session_does_not_have_yet_is_written_as_nan(
+def test_a_value_the_session_does_not_have_yet_is_written_as_its_own_empty(
     session, analysed, shot, results
 ):
-    """An h5 attribute cannot be None, and a column that changes type partway
-    through a session is one lyse cannot plot.
+    """An h5 attribute cannot be None, so a key without a value needs a stand
+    in, and lyse gives a column one dtype: the stand in has to be the type of
+    the value it holds a place for. NaN is that only for the one key that is a
+    float.
     """
     row = shot()
     session.worker.replies.append(('status', ((True,), status())))
     analysed(row)
     written = results(row)
-    assert all(
-        math.isnan(written[key])
-        for key in ('best_cost', 'best_params', 'best_shot_id', 'stopped')
-    )
+    assert written['best_shot_id'] == ''
+    assert written['stopped'] == ''
+    assert list(written['best_params']) == []
+    assert math.isnan(written['best_cost'])
+
+
+def test_every_key_written_onto_a_shot_has_an_empty_to_stand_in_for_it(config):
+    """save_status walks SHOT_RESULTS by name and looks each one up, so a key
+    the routine gained without an empty is one that raises on the first shot
+    the session has nothing to report it for -- which is every first shot.
+    """
+    assert set(routine_module.NO_VALUE_YET) == set(routine_module.SHOT_RESULTS)
+
+
+@pytest.fixture
+def lyse_column(shot, results):
+    """Drive both halves of lyse that stand between a status and a column.
+
+    ``dataframe_utilities`` is what turns the attributes of the shots already
+    on disk into columns, and so what fixes a column's dtype. Then
+    ``lyse.Run.save_result`` records the value it wrote in ``_updated_data``,
+    the analysis subprocess hands that dict back to the file box, and
+    ``FileBox.update_row`` sets each value with ``dataframe.at``. That
+    assignment is the line the lab's traceback ends on. It is spelt out here
+    rather than called because ``update_row`` is welded to the Qt model, but
+    everything either side of it is lyse's own code.
+
+    Its recovery is spelt out with it: lyse widens the column to ``object`` and
+    retries when the assignment raises ``ValueError``, which is what a list
+    into a float column raises, so leaving it out would fail a case lyse
+    survives. It does not catch ``TypeError``, which is what a string into a
+    float column raises, and that is the crash.
+
+    Takes the number of shots the session has nothing to report on and the
+    status it finally has, and returns the column they produce.
+    """
+    pytest.importorskip('lyse')
+    from lyse import utils as lyse_utils
+    from lyse.dataframe_utilities import get_dataframe_from_shots
+
+    def build(empty_shots, reported):
+        rows = [shot() for _ in range(empty_shots + 1)]
+        for row in rows[:-1]:
+            routine_module.save_status(row['filepath'], status())
+
+        # The shots on disk when the last one is analysed. Its own row is
+        # there -- lyse adds a row when the file appears -- and carries
+        # nothing of the optimiser's yet.
+        frame = get_dataframe_from_shots([r['filepath'] for r in rows])
+
+        lyse_utils.worker.spinning_top = True
+        lyse_utils.worker._updated_data = {}
+        routine_module.save_status(rows[-1]['filepath'], status(**reported))
+        updated = lyse_utils.worker._updated_data[rows[-1]['filepath']]
+
+        depth = frame.columns.nlevels
+        row_number = len(rows) - 1
+        for (group, name), value in updated.items():
+            column = (group, name) + ('',) * (depth - 2)
+            try:
+                frame.at[row_number, column] = value
+            except ValueError:
+                frame[column] = frame[column].astype('object')
+                frame.at[row_number, column] = value
+        return frame
+
+    return build
+
+
+def plain(value):
+    """A column entry as the status wrote it.
+
+    h5 gives a list back as an array, and a column of arrays holds arrays, so
+    the one key whose value is a vector needs saying which it is before it can
+    be compared with what was reported. Anything scalar is left alone, so a
+    column holding the wrong type is reported by the assertion rather than
+    raising here.
+    """
+    return list(value) if np.ndim(value) else value
+
+
+@pytest.mark.parametrize(
+    'key, empty, reported',
+    [
+        ('stopped', '', 'reached max_num_runs (400)'),
+        ('best_shot_id', '', '701dd468d82d4fc5b523ef69c0b2aaf2'),
+        ('best_params', [], [0.25, 1.5]),
+    ],
+)
+@pytest.mark.parametrize('empty_shots', [1, 3])
+def test_the_shot_that_first_has_a_value_can_be_written_into_its_column(
+    lyse_column, key, empty, reported, empty_shots
+):
+    """A run reaches its budget, or spends its first shots on costs the fits
+    cannot use, and then has an answer. lyse fixes a column's dtype on the
+    shots that came before, and writes the new value in with ``dataframe.at``,
+    which refuses a value of another type. So the stand in written while there
+    was nothing to report decides whether the shot that finally has something
+    can be recorded at all.
+
+    Three shots before the answer as well as one, because the lab saw this on
+    a run whose opening shots all went to costs the fits could not use: the
+    column is established across several rows before the value arrives.
+    """
+    frame = lyse_column(empty_shots, {key: reported})
+    column = [plain(value) for value in frame[('labscript_optimization', key)]]
+    assert column[-1] == reported
+    assert column[:-1] == [empty] * empty_shots
 
 
 def test_a_shot_carrying_no_identifier_is_not_written_to(session, analysed, shot):
