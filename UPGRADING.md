@@ -67,6 +67,7 @@ Delete these from your configuration:
 | `[GENERAL]` | `no_delay` | The Gaussian process runs in a worker process that never blocks the routine, so there is no delay to avoid. |
 | `[GENERAL]` | `visualisations` | No plots and no GUI. Progress comes back as the routine's results. |
 | `[GENERAL]` | `console_log_level`, `console_log_string` | As above. |
+| `[LEARNER.random]`, `[LEARNER.directed_random]`, `[LEARNER.differential_evolution]` | `first_params` | Where a run begins is written on the parameters, as each one's `start` beside its own `min` and `max`, and the session proposes that point first and once, whichever learner is running. `first_params` was a second way to say the same thing, and only three of the four learners took it, so the file's answer to where a run starts depended on which learner had been chosen. As a bare vector it could not be checked against the parameter tables it stood for either: reorder them and it silently meant a different experiment, which is not an error but a different run. Write `start` on the parameters instead. |
 | `[GENERAL]`, `[LEARNER.differential_evolution]` | `restart_tolerance` | The population is not re-seeded when its costs converge. That decision was taken at a generation boundary from the costs resolved by then, so a cost arriving afterwards could change it and turn a block generated as trials into founders of a new epoch; and within a lab's budget it re-seeded populations that had converged to within a fraction of their initial spread but not to the minimum. `max_num_runs_without_better_params` is the stop to use instead. |
 | whole table | `[COMPILATION]` | Its only key was `mock`, which selected a dry-run interface that has been removed. |
 
@@ -106,6 +107,14 @@ history dies with it and a new session starts from nothing.
 
 `min` and `max` in a parameter table keep those spellings; `minimum` and
 `maximum` are not accepted.
+
+`start` keeps its spelling and gains a rule. It is one coordinate of a single
+opening point over every searched parameter, so it is written on all of them
+or on none, and a file writing it on some is **refused**, naming which
+parameters carry one and which do not. It used to be dropped instead: a start
+on three parameters of five was ignored for all five, and the run opened on a
+uniform draw with nothing said. A parameter carrying `enable = false` is not
+searched, so it is not a coordinate of that point and needs no `start`.
 
 ## 3. Move every learner knob into its learner's table
 
@@ -211,7 +220,8 @@ goes out whole.
 
 - What the parameter and globals tables carry is unchanged, and only the
   first of them was renamed: `[PARAMETERS.<group>.<name>]` takes
-  `global_name`, `min`, `max`, `start` and `enable`, and
+  `global_name`, `min`, `max`, `start` and `enable` -- `start` under the rule
+  above -- and
   `[RUNMANAGER_GLOBALS.<group>.<name>]` takes `expr` and `args`.
   `ANALYSIS.groups` still selects which groups take part, and `enable = false`
   still keeps a parameter in the file but out of the search.
