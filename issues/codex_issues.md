@@ -42,6 +42,7 @@ backlog, which would also let BLACS stop mutating a client's deadline per call.
 - [x] Slice 10: Benchmark the shipped DE
 - [x] Slice 11: The benchmark evidence is in the repository, and the document is true
 - [x] Slice 12: Test cleanup
+- [ ] Slice 13: A learner's knobs live with that learner, and the trainer is chosen
 
 ---
 
@@ -1063,3 +1064,85 @@ would be the failure this repository keeps naming.
 
 - Repository practice: "A check that does not run looks exactly like a clean
   one"
+
+---
+
+## Slice 13: A learner's knobs live with that learner, and the trainer is chosen
+
+### Type
+
+`AFK`
+
+### What to build
+
+Two changes that belong together: doing the first without the second would need
+immediate redoing.
+
+**The Gaussian process's trainer is selectable.** `NEEDS_TRAINING` is a module
+constant naming `directed_random`, used both for the training shots and as the
+fallback for any proposal the main learner cannot make. M-LOOP's equivalent
+defaulted to **differential evolution** — `mloop/controllers.py:770`,
+`training_type='differential_evolution'`, whose docstring says that learner "is
+also called if the machine learning learner is too slow and a new point is
+needed". So M-LOOP trained and fell back with a population clustered near good
+points; this package does both with a learner that draws in a band around
+middling costs and explores wide. In a lab that shows up as long stretches of
+poor shots that M-LOOP never produced — observed on the dummy apparatus.
+
+Make it a `[MLOOP]` setting — `trainer` — defaulting to whatever keeps current
+behaviour, and refuse a name that is not a known learner. A learner that needs
+no training ignores it; decide whether naming one for such a learner is refused
+or accepted, and say why.
+
+`UPGRADING.md` currently claims the present arrangement "is what
+`controller_type = "gaussian_process"` did before". **That is false** and must
+be corrected whatever else this slice does.
+
+**Learner knobs move out of `[MLOOP]` and into `[LEARNER.<name>]`.** Measured
+across the four learners' constructors: of the fifteen keys `[MLOOP]` accepts as
+shared learner knobs, **fourteen are taken by exactly one learner**. Only
+`trust_region` is taken by more than one, and by three. So the sharing mechanism
+serves a single knob, and for the other fourteen it puts a setting in a table
+that implies it might apply to any learner and then drops it silently for the
+three it does not — which is precisely what `check_keys` exists to prevent and
+says so: "Accepting a key and ignoring it is how a lab comes to believe a
+setting is in force when it is not."
+
+The selectable trainer forces this rather than merely raising it: with a trainer
+and a main learner both live, a knob in `[MLOOP]` reaches both with no way to
+say otherwise, so a lab cannot give the trainer a wide trust region and the
+Gaussian process a tight one — which is the first thing anyone will want.
+
+So: `[MLOOP]` keeps the session's own settings, and every learner knob is
+written in that learner's table, which is already strict. `trust_region` in
+three tables is explicit and costs three lines.
+
+This is a breaking change to the configuration surface. Refuse a learner knob
+found in `[MLOOP]`, naming the table it belongs in, and list the move in
+`UPGRADING.md`. Nothing is preserved for compatibility — the same rule the
+`population_size` rename followed.
+
+### Acceptance criteria
+
+- [ ] The trainer is chosen from the configuration, and an unknown name is
+      refused at load — mutation: accept any string; a misspelling reaches the
+      worker
+- [ ] A trainer and a main learner can be given different values of the same
+      knob, and each gets its own — mutation: read both from one table; they
+      collide
+- [ ] A learner knob written in `[MLOOP]` is refused, naming the table it
+      belongs in — mutation: accept and drop it, which is the shipped behaviour
+- [ ] `UPGRADING.md` no longer claims the trainer arrangement matches M-LOOP's,
+      and documents both the trainer setting and the move
+- [ ] `examples/config_example.toml` shows the new shape
+
+### Blocked by
+
+None - can start immediately.
+
+### User stories covered
+
+- Found running the optimiser against the dummy apparatus: the trainer's
+  behaviour differs from M-LOOP's in a way the documentation denies, and the
+  shared-knob table is the mechanism this package refuses everywhere else.
+
