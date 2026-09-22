@@ -14,7 +14,7 @@ import pytest
 from labscript_optimization import learners
 from labscript_optimization.config import Config
 from labscript_optimization.learners.differential_evolution import STRATEGIES
-from labscript_optimization.observations import COMPLETE, DROPPED
+from labscript_optimization.observations import COMPLETE, DROPPED, best
 from labscript_optimization.session import Session
 from labscript_optimization.learners import (
     DifferentialEvolutionLearner,
@@ -775,51 +775,90 @@ def test_gaussian_process_state_depends_only_on_the_history(
     )
 
 
-#: The batch the exploration tests below configure, and so the number of
-#: proposals the schedule takes to come back round to its greedy step.
-BATCH = 4
+#: The schedule the exploration tests below configure: four weights, the
+#: first of them greedy, so it takes four proposals to come back round.
+SCHEDULE = [0.0, 50.0, 100.0, 150.0]
 
 
-def exploring_and_greedy(space, count):
-    """The same proposal made with the exploration weight up and turned off.
+def exploring_and_greedy(space, count, uncer_bias=SCHEDULE):
+    """The same proposal made under ``uncer_bias`` and with exploration off.
 
     The two learners share a seed and see the same history, so the acquisition
     weight is the only thing that differs between them.
     """
     history = gaussian_process_history(space, 5, count=count)
     greedy = GaussianProcessLearner(
-        space, np.random.default_rng(3), uncer_bias=0.0, batch_size=BATCH
+        space, np.random.default_rng(3), uncer_bias=0.0
     )
     explorer = GaussianProcessLearner(
-        space, np.random.default_rng(3), uncer_bias=50.0, batch_size=BATCH
+        space, np.random.default_rng(3), uncer_bias=uncer_bias
     )
     return float(
         np.linalg.norm(explorer.propose(history, 1)[0] - greedy.propose(history, 1)[0])
     )
 
 
+@pytest.mark.parametrize('count', [12, 13, 14, 15])
+def test_the_schedule_is_the_list_of_weights_it_was_handed(space, count):
+    """``[0.0, 5.0]`` proposes greedily and then widely, by turns.
+
+    The list is the schedule itself: its entries are the weights and its
+    length is the period. Asked for two proposals, a learner running it spends
+    one of them at each weight, and which one explores is decided by the
+    parity of the history -- so the wider of the two picks changes places as
+    the session goes on.
+    """
+    learner = GaussianProcessLearner(
+        space, np.random.default_rng(3), uncer_bias=[0.0, 5.0]
+    )
+    history = gaussian_process_history(space, 5, count=count)
+    away = np.linalg.norm(
+        learner.propose(history, 2) - best(history).params, axis=1
+    )
+    # The greedy weight comes first from an even history and second from an
+    # odd one, and the exploring proposal is the one that leaves the incumbent.
+    assert (away[0] < away[1]) == (count % 2 == 0)
+
+
+@pytest.mark.parametrize('count', [12, 13, 14, 15])
+def test_a_single_weight_is_a_fixed_one_and_not_a_first_step(space, count):
+    """A number written where a schedule goes weights every proposal.
+
+    A cycle of one step has no greedy proposal in it unless the weight itself
+    is zero, so a fixed weight explores at every count -- including the ones a
+    four-step schedule spends on its greedy step.
+    """
+    assert exploring_and_greedy(space, count=count, uncer_bias=50.0) > 0.1
+
+
+def test_a_schedule_of_no_weights_is_refused(space, rng):
+    """There is no weight to propose at, and the cycle has no period."""
+    with pytest.raises(ValueError, match='uncer_bias'):
+        GaussianProcessLearner(space, rng, uncer_bias=[])
+
+
 def test_the_exploration_weight_reaches_a_proposal_asked_for_on_its_own(space):
     """A session running one shot at a time still has to explore.
 
-    It asks for a full batch once and then for a single point per completed
-    shot, so a weight that stepped with the position within a batch would
-    stand at its greedy first step for the whole run and uncer_bias would do
-    nothing whatever in the lab.
+    It asks for several points once and then for a single point per completed
+    shot, so a schedule that advanced with the position within the group asked
+    for would stand at its first weight for the whole run and every other
+    weight in the list would go unused.
     """
     assert exploring_and_greedy(space, count=13) > 0.1
 
 
 @pytest.mark.parametrize('count', [12, 13, 14, 15, 16])
 def test_the_exploration_schedule_advances_as_observations_arrive(space, count):
-    """The weight steps once per proposal and cycles over a batch.
+    """The weight moves on once per proposal and cycles over the list.
 
-    One proposal in each batch is purely greedy and the rest look
-    progressively further afield, which is how the schedule spends a batch.
-    Reading the position off the history rather than a counter is what keeps
-    a learner handed the same history proposing the same thing.
+    The first weight of this schedule is zero, so one proposal in four is
+    purely greedy and the rest look progressively further afield. Reading the
+    position off the history rather than a counter is what keeps a learner
+    handed the same history proposing the same thing.
     """
     apart = exploring_and_greedy(space, count=count)
-    if count % BATCH:
+    if count % len(SCHEDULE):
         assert apart > 0.1
     else:
         # A weight of zero times anything is the greedy proposal itself.
@@ -837,9 +876,9 @@ def test_a_gaussian_process_batch_does_not_repeat_itself(space, rng):
     so a run of proposals spanning two batches asks for the same greedy point
     twice.
     """
-    learner = GaussianProcessLearner(space, rng, batch_size=BATCH)
+    learner = GaussianProcessLearner(space, rng)
     history = gaussian_process_history(space, 5)
-    proposals = learner.propose(history, BATCH + 2)
+    proposals = learner.propose(history, 6)
     # Twelve observations in hand, so the weights run 0, 1, 2, 3, 0, 1 and the
     # sixth pick repeats the weight of the second. Nothing but the fold-in
     # keeps it off that point: without it the two land 4e-6 apart.

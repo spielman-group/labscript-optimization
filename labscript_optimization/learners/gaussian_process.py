@@ -8,12 +8,13 @@ Exploration comes from the acquisition, which minimises
 
     cost_bias * predicted_cost - uncer_bias * predicted_standard_deviation
 
-with the weight on the uncertainty stepping 0, 1, 2, ... across successive
-proposals and returning to zero every ``batch_size`` of them. One proposal in
-each batch is therefore purely greedy and the rest trade predicted cost for a
-look somewhere less certain. The step is read off the history, so it advances
-with the proposals a session makes rather than with a point's position within
-the group of them asked for at once.
+where ``uncer_bias`` is a list of weights cycled by the number of
+observations in hand, so that the schedule's period is the list's length. The
+default runs 0, 1, 2, 3: one proposal in four is purely greedy and the rest
+trade predicted cost for a look somewhere less certain. The position in the
+cycle is read off the history, so it advances with the proposals a session
+makes rather than with a point's position within the group of them asked for
+at once.
 
 Refitting the kernel hyperparameters is the expensive part, so it happens once
 per ``batch_size`` new observations rather than on every call; the
@@ -62,9 +63,11 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         noise_level_bounds: Bounds on the white-noise level, in units of the
             standardised cost.
         cost_bias: Weight on predicted cost in the acquisition.
-        uncer_bias: Weight on predicted uncertainty, one step of the
-            exploration schedule described above. Raising it buys a wider look
-            without moving each batch's greedy proposal.
+        uncer_bias: The weights on predicted uncertainty the exploration
+            schedule above cycles through, one per proposal. A single number
+            is a cycle of one step, and so a fixed weight on every proposal.
+            A zero in the list is a purely greedy proposal; the larger the
+            weight, the wider the look.
         batch_size: How many proposals a batch holds: the period of that
             schedule, and the number of new observations accepted before the
             kernel hyperparameters are refit.
@@ -85,7 +88,7 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         length_scale_bounds: Sequence[float] = (1e-2, 1e2),
         noise_level_bounds: Sequence[float] = (1e-5, 1e1),
         cost_bias: float = 1.0,
-        uncer_bias: float = 1.0,
+        uncer_bias: float | Sequence[float] = (0.0, 1.0, 2.0, 3.0),
         batch_size: int = 4,
         trust_region=None,
         minimum_observations: int | None = None,
@@ -95,7 +98,20 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         self.length_scale_bounds = tuple(length_scale_bounds)
         self.noise_level_bounds = tuple(noise_level_bounds)
         self.cost_bias = float(cost_bias)
-        self.uncer_bias = float(uncer_bias)
+        # Written out rather than derived from a step and a period, because
+        # the schedule a session runs is what a lab wants to read off the
+        # file: a list says which proposal explores how far, where a pair of
+        # numbers leaves that to be worked out. A single number is a cycle of
+        # one step, so a file that writes a weight gets that weight on every
+        # proposal.
+        schedule = [uncer_bias] if np.ndim(uncer_bias) == 0 else list(uncer_bias)
+        self.uncer_bias = tuple(float(weight) for weight in schedule)
+        if not self.uncer_bias:
+            raise ValueError(
+                "uncer_bias is the cycle of weights the exploration schedule "
+                "runs through and needs at least one of them; an empty list "
+                "leaves no weight to propose at"
+            )
         self.batch_size = int(batch_size)
         if self.batch_size < 1:
             raise ValueError(
@@ -290,13 +306,14 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         proposals = np.empty((k, self.space.num_params))
         for i in range(k):
             # Where the exploration schedule stands, counted off the history
-            # and then the points picked so far in this batch. A schedule kept
-            # as a counter over the batch would sit at its greedy first step
-            # for ever in a session that settles into asking for one point at
-            # a time, and uncer_bias would do nothing whatever.
-            step = (len(seen) + i) % self.batch_size
+            # and then the points picked so far in this group. A schedule kept
+            # as a counter over the group asked for at once would sit at its
+            # first weight -- the greedy one, by default -- for ever in a
+            # session that settles into asking for one point at a time, and
+            # every other weight in the list would go unused.
+            weight = self.uncer_bias[(len(seen) + i) % len(self.uncer_bias)]
             scaled = self.minimise_acquisition(
-                regressor, self.uncer_bias * step, best_params, lows, highs
+                regressor, weight, best_params, lows, highs
             )
             proposals[i] = self.space.clip(self.space.unscale(scaled))
             if i + 1 < k:
