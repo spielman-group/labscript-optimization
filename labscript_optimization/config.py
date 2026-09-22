@@ -365,11 +365,13 @@ def reject_misplaced_knobs(mloop: dict) -> None:
     knobs = knobs_by_learner()
     misplaced = [key for key in sorted(mloop) if key in knobs]
     if misplaced:
-        where = "; ".join(
-            f"{key!r} in "
-            + " or ".join(f"[LEARNER.{name}]" for name in knobs[key])
-            for key in misplaced
-        )
+        written = []
+        for key in misplaced:
+            tables = [f"[LEARNER.{name}]" for name in knobs[key]]
+            last = tables.pop()
+            joined = f"{', '.join(tables)} or {last}" if tables else last
+            written.append(f"{key!r} in {joined}")
+        where = "; ".join(written)
         raise ValueError(
             f"[MLOOP] carries the session's own settings and no learner's "
             f"knobs, so write {where}. A knob here reaches a learner and its "
