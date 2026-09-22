@@ -735,9 +735,9 @@ def test_gaussian_process_finds_the_minimum(space, rng):
     np.testing.assert_allclose(best.params, [1.3, -2.1], atol=0.3)
 
 
-@pytest.mark.parametrize('batch_size, carried, count', [(4, 8, 15), (8, 6, 7)])
+@pytest.mark.parametrize('refit_interval, carried, count', [(4, 8, 15), (8, 6, 7)])
 def test_gaussian_process_state_depends_only_on_the_history(
-    space, batch_size, carried, count
+    space, refit_interval, carried, count
 ):
     """Two learners given the same history must hold the same model.
 
@@ -748,20 +748,20 @@ def test_gaussian_process_state_depends_only_on_the_history(
 
     Both cases are ones where the cache has to give way between the two fits,
     because a case where it does not cannot tell the two learners apart
-    whatever the caching does. The first crosses a batch boundary -- the kernel
+    whatever the caching does. The first crosses a refit boundary -- the kernel
     is owed to eight observations and then to twelve -- and the second is a
-    history short of one full batch, where there is no whole batch to fit to
-    and the cache gives way on every arrival.
+    history short of one whole interval, where there is no whole interval to
+    fit to and the cache gives way on every arrival.
     """
     history = gaussian_process_history(space, 9, count=count)
     all_session = GaussianProcessLearner(
-        space, np.random.default_rng(1), batch_size=batch_size
+        space, np.random.default_rng(1), refit_interval=refit_interval
     )
     all_session.fit(history[:carried])
     all_session.fit(history)
 
     fresh = GaussianProcessLearner(
-        space, np.random.default_rng(2), batch_size=batch_size
+        space, np.random.default_rng(2), refit_interval=refit_interval
     )
     fresh.fit(history)
 

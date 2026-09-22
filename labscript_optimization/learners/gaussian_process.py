@@ -17,7 +17,7 @@ makes rather than with a point's position within the group of them asked for
 at once.
 
 Refitting the kernel hyperparameters is the expensive part, so it happens once
-per ``batch_size`` new observations rather than on every call; the
+per ``refit_interval`` new observations rather than on every call; the
 posterior is refit to all the data every time.
 
 scikit-learn and scipy are imported where they are used rather than at the top
@@ -68,8 +68,7 @@ class GaussianProcessLearner(ParameterSpaceLearner):
             is a cycle of one step, and so a fixed weight on every proposal.
             A zero in the list is a purely greedy proposal; the larger the
             weight, the wider the look.
-        batch_size: How many proposals a batch holds: the period of that
-            schedule, and the number of new observations accepted before the
+        refit_interval: How many new observations are accepted before the
             kernel hyperparameters are refit.
         trust_region: Restrict the search to this distance around the best
             point seen.
@@ -89,7 +88,7 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         noise_level_bounds: Sequence[float] = (1e-5, 1e1),
         cost_bias: float = 1.0,
         uncer_bias: float | Sequence[float] = (0.0, 1.0, 2.0, 3.0),
-        batch_size: int = 4,
+        refit_interval: int = 4,
         trust_region=None,
         minimum_observations: int | None = None,
     ):
@@ -112,10 +111,10 @@ class GaussianProcessLearner(ParameterSpaceLearner):
                 "runs through and needs at least one of them; an empty list "
                 "leaves no weight to propose at"
             )
-        self.batch_size = int(batch_size)
-        if self.batch_size < 1:
+        self.refit_interval = int(refit_interval)
+        if self.refit_interval < 1:
             raise ValueError(
-                f"batch_size must be at least 1, got {self.batch_size}"
+                f"refit_interval must be at least 1, got {self.refit_interval}"
             )
         self.trust_region = space.absolute_trust_region(trust_region)
         self.minimum_observations = (
@@ -189,11 +188,11 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         if len(seen) < self.minimum_observations:
             return False
 
-        # Hyperparameters come from whole batches, so that an instance that
+        # Hyperparameters come from whole intervals, so that an instance that
         # has been fitting all session holds the kernel a fresh one handed the
         # same history computes, and what it keeps is a cache. Short of one
-        # batch there is nothing to hold back.
-        whole = len(seen) - len(seen) % self.batch_size
+        # interval there is nothing to hold back.
+        whole = len(seen) - len(seen) % self.refit_interval
         prefix = seen[:whole] if whole else seen
         # Keyed on which observations they were fitted to and not how many: a
         # cost arriving late lands in proposal order and rewrites a prefix of

@@ -59,14 +59,30 @@ And rename two:
 | Table | Rename | To |
 | --- | --- | --- |
 | `[MLOOP]` | `controller_type` | `learner` |
-| `[MLOOP]`, `[LEARNER.gaussian_process]` | `generation_size` | `batch_size` |
+| `[MLOOP]`, `[LEARNER.gaussian_process]` | `generation_size` | `refit_interval` |
 
-`batch_size` does what `generation_size` did: it is the period of the Gaussian
-process's exploration schedule and how many new observations it accepts before
-refitting the kernel, which is what batch Bayesian optimisation calls a batch.
-The word `generation` belongs to differential evolution, where it names the
-population's step from one whole set of members to the next, and one document
-cannot hold two senses of it.
+`generation_size` set two things at once: how often the Gaussian process
+refits its kernel hyperparameters, and the period of its exploration schedule.
+The schedule is now written out as `uncer_bias`, a list of weights whose
+length is its own period, so the key has one job left and is named for it:
+`refit_interval` is how many new observations arrive between one refit of the
+kernel and the next. The word `generation` belongs to differential evolution,
+where it names the population's step from one whole set of members to the
+next, and one document cannot hold two senses of it.
+
+`uncer_bias` takes the schedule the two of them used to imply. Under
+`generation_size = 4` and `uncer_bias = 1.0`, successive proposals weighted
+the predicted uncertainty by 0, 1, 2 and 3 and then began again; write that as
+
+```toml
+[LEARNER.gaussian_process]
+uncer_bias = [0.0, 1.0, 2.0, 3.0]
+refit_interval = 4
+```
+
+which is the default, so a file that wants it need write neither. A single
+number is still accepted and is a cycle of one step -- `uncer_bias = 1.0`
+alone is a weight of 1.0 on every proposal, with no greedy one among them.
 
 Archive paths, `archive_type` and the other M-LOOP pass-through keys go the
 same way if you have them. There is no archive: if the worker dies, the
@@ -87,7 +103,7 @@ more.
 | --- | --- |
 | `trust_range`, `trust_gaussian`, `explore_fraction` | `[LEARNER.directed_random]` |
 | `population_size`, `evolution_strategy`, `mutation_scale`, `cross_over_probability` | `[LEARNER.differential_evolution]` |
-| `cost_has_noise`, `cost_bias`, `uncer_bias`, `batch_size`, `length_scale_bounds`, `noise_level_bounds`, `minimum_observations` | `[LEARNER.gaussian_process]` |
+| `cost_has_noise`, `cost_bias`, `uncer_bias`, `refit_interval`, `length_scale_bounds`, `noise_level_bounds`, `minimum_observations` | `[LEARNER.gaussian_process]` |
 | `trust_region` | all three of those tables take it — write it in each one you want it in, with the value you want there |
 
 That split is the reason for the change. Of the fifteen keys `[MLOOP]` used to

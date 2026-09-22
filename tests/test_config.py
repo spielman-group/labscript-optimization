@@ -199,7 +199,7 @@ MOVED_KNOBS = {
     'cross_over_probability': '0.9',
     'cost_bias': '1.0',
     'uncer_bias': '1.0',
-    'batch_size': '4',
+    'refit_interval': '4',
     'length_scale_bounds': '[1e-2, 1e2]',
     'noise_level_bounds': '[1e-5, 1e1]',
     'minimum_observations': '6',
@@ -322,7 +322,7 @@ def test_a_file_that_sets_no_options_gets_exactly_the_dataclass_defaults():
     'load',
     [
         f'config.loads({MINIMAL!r})',
-        f'config.loads({MINIMAL + "[LEARNER.gaussian_process]\nbatch_size = 4\n"!r})',
+        f'config.loads({MINIMAL + "[LEARNER.gaussian_process]\nrefit_interval = 4\n"!r})',
         f'config.load({str(EXAMPLE)!r})',
     ],
     ids=['a minimal file', 'a table naming the gaussian process', 'the example'],
@@ -671,14 +671,28 @@ def test_the_example_configuration_loads_and_builds_its_learner():
     assert learner.num_training == 20
 
 
-# --- the Gaussian process's batch ------------------------------------------
+# --- the Gaussian process's refit interval ---------------------------------
 
 
-def test_batch_size_is_the_gaussian_process_knob():
+def test_refit_interval_is_the_gaussian_process_knob():
     config = config_module.loads(
-        MINIMAL + '[LEARNER.gaussian_process]\nbatch_size = 6\n'
+        MINIMAL + '[LEARNER.gaussian_process]\nrefit_interval = 6\n'
     )
-    assert learners.build(config).main.batch_size == 6
+    assert learners.build(config).main.refit_interval == 6
+
+
+def test_the_old_spelling_of_the_refit_interval_is_refused():
+    """It named a batch, and there is no batch left for it to name.
+
+    The key set the period of the exploration schedule as well, which
+    uncer_bias now holds, so a file still writing batch_size is asking for a
+    schedule it would not get. Taken quietly it would set the refit interval
+    and say nothing about the half of its meaning that had gone.
+    """
+    with pytest.raises(ValueError, match='batch_size'):
+        config_module.loads(
+            MINIMAL + '[LEARNER.gaussian_process]\nbatch_size = 6\n'
+        )
 
 
 # --- the budget and the population -----------------------------------------

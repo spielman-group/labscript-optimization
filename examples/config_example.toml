@@ -95,10 +95,10 @@ cost_has_noise = true
 # a list is a cycle of one step, and so a fixed weight on every proposal.
 uncer_bias = [0.0, 1.0, 2.0, 3.0]
 
-# How many proposals make a batch. It sets two things: how often the kernel's
-# hyperparameters are refit, which is the expensive part, and the period of the
-# exploration schedule above.
-batch_size = 4
+# How many new observations arrive between one refit of the kernel's
+# hyperparameters and the next. That fit is the expensive part; the posterior
+# is refit to all the data on every proposal regardless.
+refit_interval = 4
 
 # One optimised parameter per table. "global_name" is shorthand for a
 # runmanager global that takes this parameter's value directly.
