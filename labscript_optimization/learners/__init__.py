@@ -113,10 +113,18 @@ def validate_options(config) -> None:
         accepted = _option_names(name)
         unknown = sorted(set(config.learner_options.get(name, {})) - accepted)
         if unknown:
+            # A learner may take no knobs at all, and then "it accepts:"
+            # trails off into nothing, which reads as a message that failed to
+            # finish rather than as the answer it is.
+            takes = (
+                f"It accepts: {', '.join(sorted(accepted))}."
+                if accepted
+                else "That learner takes no knobs at all, so its table holds "
+                "nothing and is as well left out."
+            )
             raise ValueError(
                 f"[LEARNER.{name}] does not accept "
-                f"{', '.join(repr(key) for key in unknown)}. It accepts: "
-                f"{', '.join(sorted(accepted))}."
+                f"{', '.join(repr(key) for key in unknown)}. {takes}"
             )
 
 

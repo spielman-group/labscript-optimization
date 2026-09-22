@@ -700,11 +700,31 @@ def test_a_typo_in_a_group_nobody_switched_on_is_still_rejected():
 
 
 def test_a_per_learner_table_rejects_a_knob_that_learner_does_not_take():
-    """A named table has one constructor that can define its valid keys."""
-    with pytest.raises(ValueError, match=r'\[LEARNER\.random\].*cost_has_noise'):
+    """A named table has one constructor that can define its valid keys.
+
+    A learner whose constructor takes nothing but the space and the rng is
+    the case the message has to be written for: listing what its table
+    accepts would list nothing, and a sentence that trails off reads as one
+    that failed rather than as the answer.
+    """
+    with pytest.raises(ValueError) as raised:
         config_module.loads(
             MINIMAL + '[LEARNER.random]\ncost_has_noise = true\n'
         )
+    assert str(raised.value) == (
+        "[LEARNER.random] does not accept 'cost_has_noise'. That learner "
+        "takes no knobs at all, so its table holds nothing and is as well "
+        "left out."
+    )
+
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(
+            MINIMAL + '[LEARNER.differential_evolution]\ncost_has_noise = true\n'
+        )
+    assert str(raised.value).endswith(
+        "It accepts: cross_over_probability, evolution_strategy, "
+        "mutation_scale, population_size, trust_region."
+    )
 
 
 def test_an_unknown_per_learner_table_is_rejected():
