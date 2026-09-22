@@ -146,6 +146,46 @@ not read either.
 | `differential_evolution` | Evolves a population, one whole generation at a time: it proposes `population_size` shots together and is not asked again until all of them have been answered for. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds — around eight searches well and a budget over a thousand shots is worth sixteen, measured over four analytic test functions at two to eight parameters (`codex_issues_proposal.md`, "The dimension sweep", has the tables and the caveats; `benchmarks/` has the harness that produced them) — and it is the queue depth too, so `num_buffered_runs` is not accepted beside it. |
 | `gaussian_process` | Fits a Gaussian process and searches its posterior. The only learner that needs training: it runs the learner `[MLOOP] trainer` names for its training shots, and falls back to it for any proposal it cannot make. `trainer` defaults to `directed_random`, and cannot be `differential_evolution`, which proposes whole generations that a two-phase learner cannot hold a barrier for. |
 
+### A cost with noise in it
+
+Shot-to-shot noise is not something these learners quietly absorb. It changes
+what the number a run reports means, and it changes which learner to run.
+
+**The `best_cost` a run reports is an extreme-value draw, not an estimate of
+the cost at `best_params`.** A run keeps the best cost it happened to measure,
+and over a few hundred noisy shots the best one measured is the luckiest one.
+At a multiplicative noise of 20% on Rastrigin, a learner reported 1.45 for a
+point whose noiseless cost is 3.89 — a −3σ draw, which is the 3.89 × (1 − 0.6)
+that three standard deviations buys. The same on Ian's apparatus at 10% noise:
+a reported best of 186,531 atoms where those parameters measure 155,290, a
++2.0σ draw. The honest number is a re-measurement at `best_params`, which
+costs one shot. Nothing in the reported column is that number.
+
+**`differential_evolution` assumes the cost is deterministic.** Its selection
+is elitist on a single draw of each member, so a member that measured lucky is
+one nothing honest can displace and the population stalls around it. Measured
+at four parameters, a population of eight, 600 shots and 16 seeds, with a
+multiplicative noise `f · (1 + σz)`: the true cost at the reported best roughly
+doubles on Rosenbrock between σ = 0 and σ = 10–20%, and barely moves on
+Rastrigin. It bites where progress depends on chaining small improvements,
+which is what Rosenbrock's valley is, and hardly at all where the landscape is
+coarse enough for its structure to survive the noise.
+
+**A lab whose cost carries noise should run `gaussian_process` with
+`cost_has_noise = true`**, which is its default and is the one setting here
+that models exactly this. The white-noise term is what lets the fit attribute
+scatter to the measurement rather than to structure, and the posterior mean it
+proposes against is an average over the shots near a point rather than any one
+of them.
+
+Those figures understate the effect for most apparatus costs, and are worth
+reading for their direction rather than their size. The test functions have
+their optimum at zero, where a multiplicative noise vanishes — so the region
+the search spends its budget in is the quietest part of the landscape. A cost
+that is the peak of a positive quantity has the opposite shape: an atom number
+carries its largest absolute noise exactly at the top, where the search ends
+up.
+
 A learner is a function from the proposal history to `k` proposals:
 
 ```python
@@ -288,9 +328,12 @@ running suite.
 
 ## Benchmarks
 
-[`benchmarks/`](benchmarks/) holds the harness behind every measured figure
+[`benchmarks/`](benchmarks/) holds the harness behind the measured figures
 quoted here and in `codex_issues_proposal.md`, the rows it produced, and a
-README naming the command and the commit for each table. A benchmark measures
+README naming the command and the commit for each table. It runs its test
+functions noiseless, so the figures under *A cost with noise in it* are not
+among the ones it reproduces; that measurement states its own conditions
+where it is quoted. A benchmark measures
 search quality, which is a number that moves; the tests prove behaviour. The
 suite runs one second of the harness, to keep it from rotting.
 
