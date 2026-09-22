@@ -59,9 +59,10 @@ TOP_LEVEL_TABLES = frozenset(
 
 #: The tables this package used to name after M-LOOP, and what each is called
 #: now. It replaces M-LOOP and carries none of its code, so a table named after
-#: it was a name nothing written under it answered to. Kept here to be refused
-#: by name: read under the new name instead, an old file would load and mean
-#: something, which is the one outcome worse than not loading.
+#: it was a name nothing written under it answered to. They are kept here to be
+#: refused by name: aliased to their replacements instead, an old file would go
+#: on loading and a lab would go on typing the name of a tool it is not
+#: running.
 RENAMED_TABLES = {"MLOOP": "GENERAL", "MLOOP_PARAMS": "PARAMETERS"}
 
 #: The settings ``[ANALYSIS]`` carries.

@@ -513,7 +513,11 @@ def test_a_run_count_that_is_not_a_number_is_rejected():
         ),
         (MINIMAL + '[GENERAL]\nsession = "run-a"\n', 'session', '[GENERAL]'),
         (MINIMAL + '[GENERAL]\nno_delay = true\n', 'no_delay', '[GENERAL]'),
-        (MINIMAL + '[GENERAL]\nvisualisations = false\n', 'visualisations', '[GENERAL]'),
+        (
+            MINIMAL + '[GENERAL]\nvisualisations = false\n',
+            'visualisations',
+            '[GENERAL]',
+        ),
         (
             MINIMAL + '[GENERAL]\nconsole_log_level = "DEBUG"\n',
             'console_log_level',
