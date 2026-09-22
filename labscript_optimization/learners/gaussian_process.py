@@ -29,6 +29,7 @@ process, which never asks the learner for a proposal and should not pay
 several seconds to import the scientific stack.
 """
 
+import warnings
 from typing import Sequence
 
 import numpy as np
@@ -43,6 +44,18 @@ from ..observations import (
 )
 from .base import InsufficientData, ParameterSpaceLearner
 from ..space import ParameterSpace
+
+
+#: scikit-learn's warning for a fitted length scale sitting at one end of
+#: ``length_scale_bounds``, as a regular expression against the start of its
+#: message. It is filtered out of the refit and answered instead by
+#: :meth:`GaussianProcessLearner.report_length_scale_bounds`. Written narrowly
+#: so that nothing else a fit warns about matches it -- and should scikit-learn
+#: reword the message, it stops matching and the lab gets the repetition back
+#: rather than silence.
+LENGTH_SCALE_AT_BOUND = (
+    r"The optimal value found for dimension \d+ of parameter \S*length_scale "
+)
 
 
 class GaussianProcessLearner(ParameterSpaceLearner):
@@ -128,6 +141,11 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         self._fitted_to = None
         self.regressor = None
         self._cost_scaler = None
+        #: Which parameters the last refit left at an end of
+        #: ``length_scale_bounds``, and which end. Empty before the first
+        #: refit and after one that leaves every length scale inside them;
+        #: see :meth:`report_length_scale_bounds`.
+        self.at_length_scale_bounds: dict[str, str] = {}
 
     def new_kernel(self):
         from sklearn.gaussian_process.kernels import RBF, WhiteKernel
@@ -162,7 +180,17 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         draws are seeded from the length of ``prefix``, not from the learner's
         rng, which would make the search depend on how much this instance had
         already proposed.
+
+        scikit-learn warns once per length scale left at a bound on every fit,
+        which is a real diagnostic said too often to be read. That one message
+        is filtered out here and answered by
+        :meth:`report_length_scale_bounds`, which names the parameters rather
+        than the kernel's numbering and speaks only when the set of them
+        changes. :data:`LENGTH_SCALE_AT_BOUND` is what the filter matches, so
+        everything else the fit warns about -- the white-noise level reaching
+        its own bound, an optimiser that gave up -- reaches the lab untouched.
         """
+        from sklearn.exceptions import ConvergenceWarning
         from sklearn.gaussian_process import GaussianProcessRegressor
         from sklearn.preprocessing import StandardScaler
 
@@ -175,10 +203,71 @@ class GaussianProcessLearner(ParameterSpaceLearner):
             n_restarts_optimizer=self.num_restarts,
             random_state=len(prefix),
         )
-        regressor.fit(
-            self.space.scale(params_array(prefix)), scaler.transform(costs).ravel()
-        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=LENGTH_SCALE_AT_BOUND,
+                category=ConvergenceWarning,
+            )
+            regressor.fit(
+                self.space.scale(params_array(prefix)),
+                scaler.transform(costs).ravel(),
+            )
+        self.report_length_scale_bounds(regressor.kernel_)
         return scaler, regressor.kernel_
+
+    def report_length_scale_bounds(self, kernel) -> None:
+        """Say which parameters a refit left at an end of the length-scale bounds.
+
+        Recorded on :attr:`at_length_scale_bounds` and warned about only when
+        that set changes, so a lab hears once when a parameter reaches a bound
+        and once more when it leaves. Reported at every refit instead -- which
+        is what scikit-learn does -- a dimension that stays pinned repeats the
+        same paragraph for the length of the run, and the one refit where the
+        set moves reads like all the others.
+
+        A length scale at the upper end means the fit sees no structure along
+        that parameter: the posterior is flat in it and the search is
+        effectively over the others. At the lower end it means the opposite, a
+        fit that can explain the costs only as varying faster than the shots
+        are spaced. Either way the bound rather than the data set the number,
+        which is why it is worth saying at all.
+        """
+        from sklearn.exceptions import ConvergenceWarning
+
+        at_bound = np.isclose(kernel.bounds, np.atleast_2d(kernel.theta).T)
+        reached, position = {}, 0
+        for hyperparameter in kernel.hyperparameters:
+            if hyperparameter.fixed:
+                continue
+            for dim in range(hyperparameter.n_elements):
+                lower, upper = at_bound[position]
+                position += 1
+                if hyperparameter.name.endswith("length_scale") and (lower or upper):
+                    reached[self.space.parameters[dim].name] = (
+                        "lower" if lower else "upper"
+                    )
+        if reached == self.at_length_scale_bounds:
+            return
+        self.at_length_scale_bounds = reached
+        if reached:
+            where = ", ".join(
+                f"{name} at the {end} end" for name, end in reached.items()
+            )
+            warnings.warn(
+                f"the Gaussian process fit leaves {where} of "
+                f"length_scale_bounds {self.length_scale_bounds}. At the upper "
+                f"end the fit sees no structure along that parameter; at the "
+                f"lower end, structure finer than the shots are spaced. Said "
+                f"again only when the set of them changes.",
+                ConvergenceWarning,
+            )
+        else:
+            warnings.warn(
+                "the Gaussian process fit now leaves every length scale "
+                "inside length_scale_bounds",
+                ConvergenceWarning,
+            )
 
     def fit(self, history: Sequence[Observation]) -> bool:
         """Fit the regressor to ``history``. Returns whether a fit was possible."""

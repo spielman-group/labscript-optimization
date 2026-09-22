@@ -87,6 +87,14 @@ trust_region = 0.05
 # Whether the cost column carries noise, which the kernel is fitted with.
 cost_has_noise = true
 
+# Bounds on the kernel's length scale, in units of the unit cube every
+# parameter is scaled onto. A fit that leaves a length scale at the upper end
+# sees no structure along that parameter; at the lower end, structure finer
+# than the shots are spaced. Either is worth knowing, so it is said in lyse's
+# output -- once when the set of such parameters appears, and once more when
+# it changes or clears, rather than on every refit.
+# length_scale_bounds = [1e-2, 1e2]
+
 # The exploration schedule: the weight on predicted uncertainty, one entry per
 # proposal, cycled by the number of observations in hand. A zero is a purely
 # greedy proposal and the rest look progressively further from what is already

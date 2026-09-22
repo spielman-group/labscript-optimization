@@ -885,6 +885,75 @@ def test_a_gaussian_process_batch_does_not_repeat_itself(space, rng):
     assert np.linalg.norm(proposals[5] - proposals[1]) > 1e-3
 
 
+def flat_in_y_history(space, count):
+    """Observations of a cost that varies in x alone.
+
+    The fit finds no structure along y, so its length scale there runs to the
+    upper end of ``length_scale_bounds`` -- which is the fit scikit-learn
+    warns about, once per dimension, on every refit. The same fit drives the
+    white-noise level to its own lower bound and is warned about for that too.
+    """
+    points = space.uniform(np.random.default_rng(5), count)
+    return [
+        observe(i, p, float((p[0] - 1.3) ** 2)) for i, p in enumerate(points)
+    ]
+
+
+def test_a_length_scale_at_a_bound_is_reported_when_the_set_of_them_changes(
+    space, rng
+):
+    """Once when a parameter reaches a bound, once when it leaves.
+
+    A dimension the apparatus keeps pinned is warned about by scikit-learn on
+    every refit, which for a run of several hundred shots buries the
+    diagnostic in copies of itself. Said on the change instead, the one thing
+    a lab has to act on -- that the set moved -- is the only thing it reads.
+    """
+    from sklearn.exceptions import ConvergenceWarning
+
+    learner = GaussianProcessLearner(space, rng, refit_interval=1)
+
+    with pytest.warns(ConvergenceWarning, match='y at the upper end') as first:
+        learner.fit(flat_in_y_history(space, 12))
+    assert learner.at_length_scale_bounds == {'y': 'upper'}
+    # And scikit-learn's own copy of it is not there beside ours. Its wording
+    # is what tells it apart from the white-noise level's bound, which is the
+    # same message about a different hyperparameter and is left alone.
+    assert not [
+        w
+        for w in first
+        if 'close to the specified' in str(w.message)
+        and 'length_scale' in str(w.message)
+    ]
+
+    with warnings.catch_warnings(record=True) as again:
+        warnings.simplefilter('always')
+        learner.fit(flat_in_y_history(space, 13))
+    assert learner.at_length_scale_bounds == {'y': 'upper'}
+    assert not [w for w in again if 'length_scale' in str(w.message)]
+
+    # The set moving back to empty is a change like any other: silence here
+    # would read the same as the refit above, where it had not moved.
+    with pytest.warns(ConvergenceWarning, match='inside length_scale_bounds'):
+        learner.fit(gaussian_process_history(space, 5))
+    assert learner.at_length_scale_bounds == {}
+
+
+def test_the_rest_of_what_a_refit_warns_about_still_reaches_the_lab(space, rng):
+    """Only the length-scale message is held back.
+
+    The fit that pins a length scale drives the white-noise level to its own
+    bound as well, and scikit-learn warns about that in the same category. A
+    filter written against the category rather than the message would take it
+    too, and a lab would lose a diagnostic that was never repeating.
+    """
+    from sklearn.exceptions import ConvergenceWarning
+
+    learner = GaussianProcessLearner(space, rng, refit_interval=1)
+    with pytest.warns(ConvergenceWarning, match='noise_level'):
+        learner.fit(flat_in_y_history(space, 12))
+
+
 def test_a_gaussian_process_describes_the_real_data_after_proposing(space, rng):
     """Proposing must not leave the model believing its own guesses."""
     learner = GaussianProcessLearner(space, rng)
