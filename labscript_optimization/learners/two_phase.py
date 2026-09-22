@@ -1,9 +1,10 @@
 """Run a trainer first, then hand over to the main learner.
 
 A Gaussian process needs a spread of observations before its posterior means
-anything, so the first ``num_training`` shots come from a cheap learner that
-explores. After that the main learner takes over, and the trainer stays on as
-the fallback for any proposal the main learner cannot make.
+anything, so the first ``num_training`` shots come from a second learner, the
+trainer, which a configuration names. After that the main learner takes over,
+and the trainer stays on as the fallback for any proposal the main learner
+cannot make.
 
 A proposer wrapping two proposers, not a controller: it proposes the same
 way as what it wraps, so it can be wrapped in turn. What it wraps is held to
@@ -34,7 +35,9 @@ class TwoPhaseLearner(Learner):
     itself -- the phase is this learner's own, and naming the trainer, the
     fallback and the main learner is the whole point of it -- and declares
     ``minimum_observations`` of zero, which is true because the trainer is the
-    fallback for anything the main learner cannot yet make. ``generation`` it
+    fallback for anything the main learner cannot yet make -- and is held true
+    by refusing a trainer that withholds proposals of its own, since nothing
+    stands behind the fallback. ``generation`` it
     can neither answer for nor pass on, so a learner declaring one is refused
     here rather than wrapped.
 
@@ -71,7 +74,10 @@ class TwoPhaseLearner(Learner):
     minimum_observations = 0
 
     def __init__(self, trainer, main, num_training: int):
-        for role, wrapped in (("trainer", trainer), ("main", main)):
+        for role, wrapped, instead in (
+            ("trainer", trainer, "Name a trainer that proposes any number at a time"),
+            ("main", main, f"Run {type(main).__name__} without a training phase"),
+        ):
             # Read straight off the object, with no default standing in for it:
             # a learner declares its own generation, and one that declares
             # nothing is not something this can hold a barrier for.
@@ -83,9 +89,22 @@ class TwoPhaseLearner(Learner):
                     f"proposals is outstanding. A two-phase learner declares "
                     f"no generation of its own, so a session would top its "
                     f"queue up whenever there was room and the generation "
-                    f"would go out in pieces. Run "
-                    f"{type(wrapped).__name__} without a training phase."
+                    f"would go out in pieces. {instead}."
                 )
+
+        # The trainer proposes the very first shot, from an empty history, and
+        # is the fallback for everything the main learner cannot make. A
+        # learner that refuses to propose without observations can be neither:
+        # there is nothing behind it to propose instead, so it would raise out
+        # through the session at the first shot of the run.
+        withheld = getattr(trainer, "minimum_observations", 0)
+        if withheld:
+            raise ValueError(
+                f"the trainer {type(trainer).__name__} will not propose until "
+                f"the history holds {withheld} usable observations, and the "
+                f"training phase begins with none. Name a trainer that "
+                f"proposes from an empty history."
+            )
 
         self.trainer = trainer
         self.main = main

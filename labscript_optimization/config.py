@@ -20,14 +20,18 @@ Every key must be one this package knows: a spelling it does not is refused
 rather than accepted and ignored, so a file carried over from analysislib-mloop
 has to be cut down to the keys named here before it will load.
 
-Known is not the same as acted on. The learner knobs in ``[MLOOP]`` are the
-union over every learner, and a learner is built with the ones its own
-constructor takes, so whichever learner is named leaves the rest of them
-unused -- which is what lets one file serve several. A ``[LEARNER.<name>]``
-table is held to the constructor of the learner it names, so every key in it
-is a knob that learner takes; whether it is acted on still depends on which
-learner ``[MLOOP] learner`` selects, since the tables for the others are not
-read.
+``[MLOOP]`` carries the session's own settings -- which learner runs, which
+learner trains it, how deep the queue is, what stops the run -- and a learner's
+knobs are written in ``[LEARNER.<name>]``, the table of the learner that takes
+them. A named table is held to that learner's constructor, so every key in it
+is a knob that learner takes, and a knob found in ``[MLOOP]`` is refused with
+the tables it belongs in named. Two learners run whenever the one selected has
+a trainer, so a knob both take is written twice, once in each table, and each
+gets its own value.
+
+Known is not the same as acted on: a table written for a learner no session
+builds goes unread, which is what lets one file carry the settings for several
+learners and switch between them.
 
 A parameter name and a global name are each unique across the active groups:
 both are looked up by name when a proposal is turned into runmanager globals,
@@ -56,30 +60,10 @@ TOP_LEVEL_TABLES = frozenset(
 #: The settings ``[ANALYSIS]`` carries.
 ANALYSIS_KEYS = frozenset({"cost_key", "groups", "maximize"})
 
-#: Learner knobs that a configuration puts directly in ``[MLOOP]``.
-SHARED_LEARNER_KEYS = frozenset(
-    {
-        "trust_region",
-        "trust_range",
-        "trust_gaussian",
-        "explore_fraction",
-        "cost_has_noise",
-        "population_size",
-        "evolution_strategy",
-        "mutation_scale",
-        "cross_over_probability",
-        "cost_bias",
-        "uncer_bias",
-        "batch_size",
-        "length_scale_bounds",
-        "noise_level_bounds",
-        "minimum_observations",
-    }
-)
-
-#: The session settings ``[MLOOP]`` carries, alongside the learner knobs in
-#: :data:`SHARED_LEARNER_KEYS`. Each is the name of a :class:`Config` field and
-#: is handed over under that name, so the two lists cannot drift apart.
+#: The whole of what ``[MLOOP]`` carries: the session's own settings and
+#: nothing else. Each is the name of a :class:`Config` field and is handed over
+#: under that name, so the two lists cannot drift apart. A learner's knobs are
+#: not here; they are written in that learner's own table.
 MLOOP_KEYS = frozenset(
     {
         "learner",
@@ -89,6 +73,7 @@ MLOOP_KEYS = frozenset(
         "num_training_runs",
         "seed",
         "session",
+        "trainer",
     }
 )
 
@@ -225,7 +210,16 @@ class Config:
     maximize: bool = False
     session: str = "default"
     learner: str = "gaussian_process"
-    shared_learner_options: dict[str, Any] = field(default_factory=dict)
+    #: The learner that runs the training shots for a ``learner`` that needs
+    #: them, and stands as the fallback for any proposal that learner cannot
+    #: make. Read only for such a learner: a file naming it beside one that
+    #: trains itself is refused rather than left with a setting nothing acts
+    #: on.
+    trainer: str = "directed_random"
+    #: One table of knobs per learner, by learner name. A knob is written in
+    #: the table of the learner that takes it and reaches no other, which is
+    #: what lets a trainer and a main learner be given different values of the
+    #: same knob.
     learner_options: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: How many of this session's shots to keep in runmanager's queue. Read
     #: for a learner asked for any number of proposals at a time; a learner
@@ -269,7 +263,7 @@ class Config:
                 f"maximize must be written as true or false, unquoted, not "
                 f"{self.maximize!r}."
             )
-        for key in ("learner", "session"):
+        for key in ("learner", "session", "trainer"):
             value = getattr(self, key)
             if not isinstance(value, str):
                 raise ValueError(f"{key} must be written as a string, got {value!r}.")
@@ -296,12 +290,6 @@ class Config:
         """The column holding the uncertainty on the cost, by convention."""
         routine, result = self.cost_key
         return routine, f"u_{result}"
-
-    def options_for(self, learner: str) -> dict[str, Any]:
-        """Knobs for one learner: the shared ones, overridden per learner."""
-        options = dict(self.shared_learner_options)
-        options.update(self.learner_options.get(learner, {}))
-        return options
 
     def globals_for(self, params: Sequence[float]) -> dict[str, Any]:
         """The runmanager globals that realise one parameter vector."""
@@ -358,14 +346,46 @@ def require_type(value: Any, kind: type, where: str) -> Any:
     return value
 
 
+def reject_misplaced_knobs(mloop: dict) -> None:
+    """Fail on a learner's knob written in ``[MLOOP]``, naming where it goes.
+
+    ``[MLOOP]`` is read once for the whole session, and a session runs two
+    learners whenever the one it names has a trainer. A knob written here would
+    reach both of them with no way to tell them apart, so a trust region wide
+    enough to train with and one tight enough to refine with cannot both be
+    asked for; and it would be dropped in silence for every learner whose
+    constructor does not take it.
+
+    Which keys those are is read from the constructors, so a learner that gains
+    a knob moves that knob's message with it.
+    """
+    # Lazily, so importing this module alone stays lightweight.
+    from .learners import knobs_by_learner
+
+    knobs = knobs_by_learner()
+    misplaced = [key for key in sorted(mloop) if key in knobs]
+    if misplaced:
+        where = "; ".join(
+            f"{key!r} in "
+            + " or ".join(f"[LEARNER.{name}]" for name in knobs[key])
+            for key in misplaced
+        )
+        raise ValueError(
+            f"[MLOOP] carries the session's own settings and no learner's "
+            f"knobs, so write {where}. A knob here reaches a learner and its "
+            f"trainer alike, with no way to give them different values, and "
+            f"goes unread by any learner that does not take it."
+        )
+
+
 def check_keys(raw: dict) -> None:
     """Fail on a key this package does not know, and on a required one left out.
 
     Accepting a key and ignoring it is how a lab comes to believe a setting is
     in force when it is not, so a stale file is stopped at the door instead. A
-    key that is known may still go unused: the learner knobs in ``[MLOOP]``
-    cover every learner between them and only the selected learner's are read,
-    which is the price of a file that keeps working when the learner changes.
+    learner knob written in ``[MLOOP]`` is refused by that rule and gets its
+    own message, naming the tables it could have been written in: it is a real
+    knob in the wrong place, not a spelling nothing here knows.
 
     Parameter and global tables are checked whether or not their group is
     active: a typo left to load in a switched-off group waits for the day
@@ -373,7 +393,8 @@ def check_keys(raw: dict) -> None:
     """
     reject_unknown(raw, TOP_LEVEL_TABLES, "the top level of the configuration")
     reject_unknown(raw.get("ANALYSIS", {}), ANALYSIS_KEYS, "[ANALYSIS]")
-    reject_unknown(raw.get("MLOOP", {}), MLOOP_KEYS | SHARED_LEARNER_KEYS, "[MLOOP]")
+    reject_misplaced_knobs(raw.get("MLOOP", {}))
+    reject_unknown(raw.get("MLOOP", {}), MLOOP_KEYS, "[MLOOP]")
     for table, allowed, required in (
         ("MLOOP_PARAMS", PARAMETER_KEYS, PARAMETER_REQUIRED),
         ("RUNMANAGER_GLOBALS", GLOBAL_KEYS, GLOBAL_REQUIRED),
@@ -495,11 +516,6 @@ def from_dict(raw: dict) -> Config:
     require_type(analysis["cost_key"], list, "ANALYSIS.cost_key")
     cost_key = tuple(analysis["cost_key"])
 
-    # Learner knobs written straight into [MLOOP] are the shared defaults, and
-    # [LEARNER.<name>] overrides them for one learner.
-    shared_learner_options = {
-        key: value for key, value in mloop.items() if key in SHARED_LEARNER_KEYS
-    }
     learner_options = {
         name: dict(table) for name, table in raw.get("LEARNER", {}).items()
     }
@@ -513,13 +529,21 @@ def from_dict(raw: dict) -> Config:
         space=ParameterSpace(parameters),
         globals=tuple(mappings),
         cost_key=cost_key,
-        shared_learner_options=shared_learner_options,
         learner_options=learner_options,
         **settings,
     )
     # Learner constructors are the authoritative schema for their named
     # tables. Import lazily so importing this module alone stays lightweight.
-    from .learners import build
+    from .learners import NEEDS_TRAINING, build
+
+    if "trainer" in mloop and config.learner not in NEEDS_TRAINING:
+        raise ValueError(
+            f"trainer is not accepted with learner {config.learner!r}, which "
+            f"proposes from the first shot and so runs no training phase: no "
+            f"trainer is built, and the one named here would be a setting "
+            f"nothing acts on. Delete trainer, or name a learner that trains: "
+            f"{sorted(NEEDS_TRAINING)}."
+        )
 
     # Build the selected learner and ask it, rather than predicting from its
     # class or its constructor what an instance would say. How many proposals

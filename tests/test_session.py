@@ -30,6 +30,7 @@ groups = ["G"]
 [MLOOP]
 session = "s"
 learner = "differential_evolution"
+[LEARNER.differential_evolution]
 population_size = 4
 [MLOOP_PARAMS.G.x]
 global_name = "gx"

@@ -1,4 +1,4 @@
-"""The learners, and how a configuration names one."""
+"""The learners, and how a configuration names the ones a session runs."""
 
 import inspect
 
@@ -20,7 +20,7 @@ __all__ = [
     "RandomLearner",
     "TwoPhaseLearner",
     "build",
-    "make_learner",
+    "knobs_by_learner",
     "validate_options",
 ]
 
@@ -38,9 +38,11 @@ LEARNERS = {
     "gaussian_process": GaussianProcessLearner,
 }
 
-#: Learners that need a training phase before their proposals mean anything,
-#: and the learner that provides it.
-NEEDS_TRAINING = {"gaussian_process": "directed_random"}
+#: Learners whose proposals mean nothing until the history holds a spread of
+#: points, so a configuration naming one runs a trainer first. Which learner
+#: trains is the file's to say, in ``[MLOOP] trainer``; this only says who
+#: needs one.
+NEEDS_TRAINING = frozenset({"gaussian_process"})
 
 
 def _constructor_parameters(name: str):
@@ -55,8 +57,9 @@ def _constructor_parameters(name: str):
     if any(p.kind is p.VAR_KEYWORD for p in accepted.values()):
         raise TypeError(
             f"learner {name!r} collects its knobs in **kwargs, which names "
-            f"none of them, so every option would be dropped and the learner "
-            f"built entirely from its defaults; spell the knobs out"
+            f"none of them, so its table has no schema: every key written in "
+            f"it would be refused and the learner built from its defaults "
+            f"alone; spell the knobs out"
         )
     return accepted
 
@@ -66,24 +69,49 @@ def _option_names(name: str) -> set[str]:
     return set(_constructor_parameters(name)) - {"space", "rng"}
 
 
-def validate_options(config) -> None:
-    """Hold a configuration to the learner it names.
+def knobs_by_learner() -> dict[str, tuple[str, ...]]:
+    """Every knob any learner takes, and the learners that take it.
 
-    The learner has to be one of :data:`LEARNERS`, or the misspelling is found
-    at ``build()`` -- which is worker configure, with the session already
-    starting. A ``[LEARNER.<name>]`` table has one constructor that defines its
-    keys, so anything else in it is a knob that learner ignores.
+    A configuration reads this to tell a knob written in the wrong table from a
+    spelling nothing here knows: the two want different messages, and only the
+    constructors can say which is which.
+    """
+    knobs: dict[str, list[str]] = {}
+    for name in LEARNERS:
+        for key in _option_names(name):
+            knobs.setdefault(key, []).append(name)
+    return {key: tuple(names) for key, names in knobs.items()}
+
+
+def validate_options(config) -> None:
+    """Hold a configuration to the learners it names.
+
+    The learner and the trainer each have to be one of :data:`LEARNERS`, or the
+    misspelling is found at ``build()`` -- which is worker configure, with the
+    session already starting. A ``[LEARNER.<name>]`` table has one constructor
+    that defines its keys, so anything else in it is a knob that learner
+    ignores.
+
+    The learners that will be built are read for their signatures whether or
+    not a table names them, because a learner collecting its knobs in
+    ``**kwargs`` leaves its table without a schema: every key written in it
+    would be refused, and the learner built from its defaults alone.
 
     Everything here is answered by a name and a table, before any learner
     exists. What only a learner can answer is checked in :func:`build`.
     """
-    if config.learner not in LEARNERS:
-        raise ValueError(
-            f"unknown learner {config.learner!r}; choose one of {sorted(LEARNERS)}"
-        )
-    for name, options in config.learner_options.items():
+    for role in ("learner", "trainer"):
+        name = getattr(config, role)
+        if name not in LEARNERS:
+            raise ValueError(
+                f"unknown {role} {name!r}; choose one of {sorted(LEARNERS)}"
+            )
+    built = [config.learner]
+    if config.learner in NEEDS_TRAINING:
+        built.append(config.trainer)
+    for name in dict.fromkeys([*built, *config.learner_options]):
         accepted = _option_names(name)
-        unknown = sorted(set(options) - accepted)
+        unknown = sorted(set(config.learner_options.get(name, {})) - accepted)
         if unknown:
             raise ValueError(
                 f"[LEARNER.{name}] does not accept "
@@ -92,24 +120,15 @@ def validate_options(config) -> None:
             )
 
 
-def make_learner(name: str, space, rng, options):
-    accepted = _option_names(name)
-    cls = LEARNERS[name]
-    # A shared table carries knobs for every learner, so pass on the ones this
-    # learner actually takes. What it takes is its signature and nothing wider:
-    # a name the constructor happens to use as a local variable is not a knob,
-    # and letting one through blames the shared table for a collision the user
-    # cannot see.
-    return cls(space, rng, **{k: v for k, v in options.items() if k in accepted})
-
-
 def build(config, rng: np.random.Generator | None = None):
     """Build the learner a configuration asks for, and hold it to the budget.
 
-    A learner that needs a training phase is wrapped in a
+    A learner in :data:`NEEDS_TRAINING` is wrapped in a
     :class:`~labscript_optimization.learners.two_phase.TwoPhaseLearner` with
-    the trainer named in :data:`NEEDS_TRAINING`, which is also the fallback for
-    proposals the main learner cannot make.
+    the learner ``[MLOOP] trainer`` names, which runs the training shots and is
+    also the fallback for proposals the main learner cannot make. Each is built
+    from its own ``[LEARNER.<name>]`` table, so a trainer and a main learner
+    that take the same knob take it separately.
 
     The budget is then measured against the learner that came back, because
     how many proposals it makes at a time is its own to say and no signature
@@ -121,11 +140,11 @@ def build(config, rng: np.random.Generator | None = None):
         rng = np.random.default_rng(config.seed)
 
     name = config.learner
-    main = make_learner(name, config.space, rng, config.options_for(name))
+    options = config.learner_options
+    main = LEARNERS[name](config.space, rng, **options.get(name, {}))
     if name in NEEDS_TRAINING:
-        trainer_name = NEEDS_TRAINING[name]
-        trainer = make_learner(
-            trainer_name, config.space, rng, config.options_for(trainer_name)
+        trainer = LEARNERS[config.trainer](
+            config.space, rng, **options.get(config.trainer, {})
         )
         learner = TwoPhaseLearner(trainer, main, config.num_training_runs)
     else:

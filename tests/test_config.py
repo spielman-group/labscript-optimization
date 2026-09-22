@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from labscript_optimization import config as config_module
@@ -23,9 +24,15 @@ session = "run-a"
 num_buffered_runs = 3
 num_training_runs = 20
 max_num_runs = 400
+learner = "gaussian_process"
+trainer = "directed_random"
+
+[LEARNER.directed_random]
+trust_region = 0.2
+
+[LEARNER.gaussian_process]
 trust_region = 0.05
 cost_has_noise = true
-learner = "gaussian_process"
 
 [MLOOP_PARAMS.CMOT.width]
 global_name = "CMOTCaptureWidth"
@@ -131,18 +138,88 @@ def test_the_uncertainty_column_is_the_cost_column_prefixed(config):
     assert config.uncertainty_key == ('zTOF', 'u_Nb')
 
 
-def test_learner_knobs_in_the_mloop_table_are_shared_defaults(config):
-    options = config.options_for('gaussian_process')
-    assert options['trust_region'] == 0.05
-    assert options['cost_has_noise'] is True
+def test_a_trainer_and_a_main_learner_each_take_their_own_value_of_a_knob(config):
+    """The one knob three learners take, given two values in one session.
+
+    A wide region to train with and a tight one to refine with is the first
+    thing anyone running two live learners wants, and it is exactly what a
+    single table of knobs cannot express.
+    """
+    built = learners.build(config)
+    wide = config.space.absolute_trust_region(0.2)
+    tight = config.space.absolute_trust_region(0.05)
+    assert not np.allclose(wide, tight)
+    np.testing.assert_allclose(built.trainer.trust_region, wide)
+    np.testing.assert_allclose(built.main.trust_region, tight)
 
 
-def test_a_per_learner_table_overrides_the_shared_defaults():
-    config = config_module.loads(
-        FULL + '\n[LEARNER.gaussian_process]\ntrust_region = 0.2\n'
-    )
-    assert config.options_for('gaussian_process')['trust_region'] == 0.2
-    assert config.options_for('directed_random')['trust_region'] == 0.05
+@pytest.mark.parametrize(
+    'knob, tables',
+    [
+        ('cost_has_noise = true', ['[LEARNER.gaussian_process]']),
+        (
+            'trust_region = 0.05',
+            [
+                '[LEARNER.directed_random]',
+                '[LEARNER.differential_evolution]',
+                '[LEARNER.gaussian_process]',
+            ],
+        ),
+    ],
+    ids=['a knob one learner takes', 'the knob three learners take'],
+)
+def test_a_learner_knob_in_the_mloop_table_is_refused_naming_where_it_goes(
+    knob, tables
+):
+    """Not accepted and dropped for the learners that do not take it.
+
+    [MLOOP] is read once for a session that runs two learners, so a knob here
+    has no way of saying which one it meant.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(MINIMAL + f'[MLOOP]\n{knob}\n')
+    message = str(raised.value)
+    assert knob.split(' =')[0] in message
+    for table in tables:
+        assert table in message
+
+
+#: The fifteen knobs ``UPGRADING.md`` §3 tells a lab to move out of ``[MLOOP]``,
+#: written as that document's table has them. Hard-coded rather than derived
+#: from the learners: derived, this would agree with the loader by
+#: construction and say nothing about whether the document is true.
+MOVED_KNOBS = {
+    'trust_region': '0.05',
+    'trust_range': '[0.1, 0.25]',
+    'trust_gaussian': 'true',
+    'explore_fraction': '0.1',
+    'cost_has_noise': 'true',
+    'population_size': '8',
+    'evolution_strategy': '"best1"',
+    'mutation_scale': '0.7',
+    'cross_over_probability': '0.9',
+    'cost_bias': '1.0',
+    'uncer_bias': '1.0',
+    'batch_size': '4',
+    'length_scale_bounds': '[1e-2, 1e2]',
+    'noise_level_bounds': '[1e-5, 1e1]',
+    'minimum_observations': '6',
+}
+
+
+@pytest.mark.parametrize('knob, value', sorted(MOVED_KNOBS.items()))
+def test_every_knob_the_upgrade_document_moves_is_refused_in_mloop(knob, value):
+    """The lab reads that document, not this file.
+
+    A row of it the loader still accepts is a setting the document says has
+    moved and the loader takes where it was, which is the belief the whole
+    schema exists to prevent.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(MINIMAL + f'[MLOOP]\n{knob} = {value}\n')
+    message = str(raised.value)
+    assert knob in message
+    assert '[LEARNER.' in message
 
 
 def test_the_learner_is_named_in_the_mloop_table():
@@ -152,10 +229,67 @@ def test_the_learner_is_named_in_the_mloop_table():
     assert config.learner == 'differential_evolution'
 
 
+# --- the trainer -----------------------------------------------------------
+
+
+def test_the_trainer_is_named_in_the_mloop_table():
+    """Which learner runs the training shots, and stands as the fallback.
+
+    It decides where the first shots of every run land, so it is the lab's to
+    choose rather than this package's to fix.
+    """
+    named = config_module.loads(MINIMAL + '[MLOOP]\ntrainer = "random"\n')
+    assert type(learners.build(named).trainer) is learners.RandomLearner
+    # And what a file naming none gets: the band around middling costs.
+    unnamed = learners.build(config_module.loads(MINIMAL))
+    assert type(unnamed.trainer) is learners.DirectedRandomLearner
+
+
+def test_an_unknown_trainer_is_refused_at_load():
+    """Rather than at worker configure, with the apparatus already running."""
+    with pytest.raises(ValueError, match="unknown trainer 'directed_randon'"):
+        config_module.loads(MINIMAL + '[MLOOP]\ntrainer = "directed_randon"\n')
+
+
+def test_a_trainer_named_for_a_learner_that_needs_none_is_refused():
+    """No trainer is built for such a learner, so the name would name nothing.
+
+    A file that carried it would read as though the first shots came from
+    somewhere they do not.
+    """
+    written = MINIMAL + '[MLOOP]\nlearner = "differential_evolution"\n'
+    with pytest.raises(ValueError, match='trainer is not accepted') as raised:
+        config_module.loads(written + 'trainer = "random"\n')
+    # And the learner it could have been named for.
+    assert 'gaussian_process' in str(raised.value)
+    assert config_module.loads(written).learner == 'differential_evolution'
+
+
+def test_the_learner_m_loop_trained_with_cannot_train_here():
+    """M-LOOP's machine-learning controllers defaulted to differential
+    evolution for the training shots and the fallback both. Here that learner
+    proposes a whole population at a time and only when none of its proposals
+    is outstanding, which a two-phase learner cannot hold a barrier for, so the
+    file is refused rather than silently running the generation in pieces.
+    """
+    with pytest.raises(ValueError, match='whole generations of 8') as raised:
+        config_module.loads(MINIMAL + '[MLOOP]\ntrainer = "differential_evolution"\n')
+    assert 'Name a trainer' in str(raised.value)
+
+
+def test_a_trainer_that_will_not_propose_from_an_empty_history_is_refused():
+    """The trainer proposes the first shot of the run and is the fallback for
+    everything the main learner cannot make, so there is nothing behind it.
+    """
+    with pytest.raises(ValueError, match='will not propose until') as raised:
+        config_module.loads(MINIMAL + '[MLOOP]\ntrainer = "gaussian_process"\n')
+    assert 'begins with none' in str(raised.value)
+
+
 def test_a_setting_left_out_takes_the_value_the_documents_promise():
     """What a lab may leave out on the strength of what it was told.
 
-    UPGRADING §4 promises three buffered runs, the Gaussian process is the
+    UPGRADING §5 promises three buffered runs, the Gaussian process is the
     learner a file naming none gets, and a cost is minimised unless the file
     says otherwise -- the flip nothing downstream would show.
     """
@@ -179,7 +313,6 @@ def test_a_file_that_sets_no_options_gets_exactly_the_dataclass_defaults():
         space=loaded.space,
         globals=loaded.globals,
         cost_key=loaded.cost_key,
-        shared_learner_options=loaded.shared_learner_options,
         learner_options=loaded.learner_options,
     )
     for f in dataclasses.fields(config_module.Config):
@@ -526,7 +659,7 @@ def test_a_per_learner_table_accepts_that_learners_knob():
     config = config_module.loads(
         MINIMAL + '[LEARNER.directed_random]\ntrust_region = 0.2\n'
     )
-    assert config.options_for('directed_random') == {'trust_region': 0.2}
+    assert config.learner_options['directed_random'] == {'trust_region': 0.2}
 
 
 def test_the_example_configuration_loads_and_builds_its_learner():
@@ -541,7 +674,9 @@ def test_the_example_configuration_loads_and_builds_its_learner():
 
 
 def test_batch_size_is_the_gaussian_process_knob():
-    config = config_module.loads(MINIMAL + '[MLOOP]\nbatch_size = 6\n')
+    config = config_module.loads(
+        MINIMAL + '[LEARNER.gaussian_process]\nbatch_size = 6\n'
+    )
     assert learners.build(config).main.batch_size == 6
 
 
@@ -605,29 +740,32 @@ def test_a_generational_learner_behind_a_trainer_is_refused_at_load(monkeypatch)
     so it refuses to wrap one. Building the learner at load is what brings
     that refusal forward to the file that asks for the combination.
     """
-    monkeypatch.setitem(
-        learners.NEEDS_TRAINING, 'differential_evolution', 'directed_random'
+    monkeypatch.setattr(
+        learners, 'NEEDS_TRAINING', frozenset({'differential_evolution'})
     )
     with pytest.raises(ValueError, match='whole generations of 8'):
         config_module.loads(DE)
 
 
 @pytest.mark.parametrize(
-    'written, refused, accepted',
-    [('', 15, 16), ('population_size = 5\n', 9, 10)],
+    'sized, refused, accepted',
+    [
+        ('', 15, 16),
+        ('[LEARNER.differential_evolution]\npopulation_size = 5\n', 9, 10),
+    ],
     ids=['the default population', 'a population the file sizes'],
 )
-def test_a_budget_below_two_whole_generations_is_refused(written, refused, accepted):
+def test_a_budget_below_two_whole_generations_is_refused(sized, refused, accepted):
     """One generation is the population itself; the second is the first to
     evolve it, and a configuration that cannot reach it cannot do what it
     says."""
     with pytest.raises(ValueError, match='max_num_runs') as raised:
-        config_module.loads(DE + written + f'max_num_runs = {refused}\n')
+        config_module.loads(DE + f'max_num_runs = {refused}\n' + sized)
     # Not "nothing evolves below this": between one population and two, a
     # generation cut short does evolve some of its slots.
     assert 'cut short' in str(raised.value)
     assert config_module.loads(
-        DE + written + f'max_num_runs = {accepted}\n'
+        DE + f'max_num_runs = {accepted}\n' + sized
     ).max_num_runs == accepted
 
 
@@ -653,12 +791,13 @@ def test_the_budget_is_measured_against_the_generation_a_learner_declares(monkey
 
     monkeypatch.setitem(learners.LEARNERS, 'doubling', Doubling)
 
-    written = MINIMAL + '[MLOOP]\nlearner = "doubling"\npopulation_size = 4\n'
+    written = MINIMAL + '[MLOOP]\nlearner = "doubling"\n'
+    sized = '[LEARNER.doubling]\npopulation_size = 4\n'
     with pytest.raises(ValueError, match='max_num_runs') as raised:
-        config_module.loads(written + 'max_num_runs = 15\n')
+        config_module.loads(written + 'max_num_runs = 15\n' + sized)
     assert 'cut short' in str(raised.value)
     assert config_module.loads(
-        written + 'max_num_runs = 16\n'
+        written + 'max_num_runs = 16\n' + sized
     ).max_num_runs == 16
 
 

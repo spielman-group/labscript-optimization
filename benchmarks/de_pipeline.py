@@ -162,10 +162,16 @@ def configuration(dimension, budget, learner, population_size, seed, buffered=No
         f'learner = "{learner}"',
         f"max_num_runs = {budget}",
         f"seed = {seed}",
-        f"population_size = {population_size}",
     ]
     if buffered is not None:
         lines.append(f"num_buffered_runs = {buffered}")
+    # The population belongs to the learner that evolves one. The random arm
+    # writes the table too and never reads it: it is the same file with one
+    # learner name changed, which is what makes the two arms comparable.
+    lines += [
+        "[LEARNER.differential_evolution]",
+        f"population_size = {population_size}",
+    ]
     for i in range(dimension):
         lines += [
             f"[MLOOP_PARAMS.G.p{i}]",

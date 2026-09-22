@@ -4,9 +4,11 @@
 # settings that belong to M-LOOP itself are not here, and neither are that
 # package's alternate spellings. Every key must be one this package knows, and
 # a spelling it does not stops the load with a message naming it, rather than
-# being accepted and ignored. Knowing a key is not the same as acting on it:
-# the learner knobs below cover every learner between them, and the learner
-# named in [MLOOP] is built with the ones it takes.
+# being accepted and ignored. [MLOOP] carries the session's own settings; a
+# learner's knobs go in [LEARNER.<name>], the table of the learner that takes
+# them, and a knob written in [MLOOP] is refused with the table it belongs in
+# named. A table written for a learner this file does not build goes unread,
+# so the settings for several learners can sit here and be switched between.
 
 [ANALYSIS]
 # Which (routine, result) column of the lyse dataframe holds the cost. The
@@ -34,7 +36,8 @@ groups = ["CMOT"]
 session = "2026-09-18a"
 
 # random, directed_random, differential_evolution or gaussian_process.
-# gaussian_process runs directed_random for its training shots first.
+# gaussian_process is the one that trains first; "trainer" below says which
+# learner does the training.
 learner = "gaussian_process"
 
 # How many shots to keep in runmanager's queue at once. More than one is
@@ -59,12 +62,23 @@ max_num_runs_without_better_params = 80
 # Set for a reproducible run; omit for a different sequence each time.
 # seed = 12345
 
-# Knobs here apply to whichever learner takes them.
-trust_region = 0.05
-cost_has_noise = true
+# A learner that needs training runs this one for its training shots, and
+# falls back to it for any proposal it cannot make. random, directed_random or
+# gaussian_process; differential_evolution cannot train, because it proposes a
+# whole population at a time. Only for a learner that trains: naming one
+# beside a learner that does not is refused.
+trainer = "directed_random"
 
-# Knobs for one learner only, overriding the above.
+# Every learner knob goes in the table of the learner that takes it. A knob in
+# [MLOOP] would reach the learner and its trainer alike; here each gets its
+# own, which is why trust_region is written twice below with two values.
 [LEARNER.directed_random]
+# How far from the centre point a draw may land, as a fraction of each
+# parameter's range. The trainer's job is to spread points out, so this is the
+# wider of the two.
+trust_region = 0.2
+
+
 # The band of costs, as a fraction of the way from the worst seen towards the
 # best, that a search may be centred on. The default sits away from the best
 # point on purpose: centring on middling results is what makes this learner
@@ -74,6 +88,13 @@ trust_range = [0.1, 0.25]
 explore_fraction = 0.0
 
 [LEARNER.gaussian_process]
+# The same knob as the trainer's, with its own value: once training is over,
+# the search refines around the best point rather than spreading out.
+trust_region = 0.05
+
+# Whether the cost column carries noise, which the kernel is fitted with.
+cost_has_noise = true
+
 # Weight on predicted uncertainty, one step of the exploration schedule.
 # Successive proposals use 0, 1, 2, ... times this and come back round to zero
 # every batch_size of them, so one proposal in each batch is purely greedy and

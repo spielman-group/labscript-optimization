@@ -90,7 +90,7 @@ def test_a_learner_named_in_a_configuration_takes_the_space_first(name, cls):
     """Building one is ``cls(space, rng, **options)``, the options matched by
     name against the signature. A learner spelling the first two the other way
     round constructs happily and searches the wrong thing, and a knob with no
-    default cannot be left out of a shared table that serves every learner.
+    default is one no file may leave out of that learner's table.
     """
     assert issubclass(cls, ParameterSpaceLearner)
     params = list(inspect.signature(cls).parameters.values())
@@ -931,34 +931,30 @@ def test_gaussian_process_uses_per_point_uncertainties(space, rng):
 # --- building from a configuration -----------------------------------------
 
 
-def a_config(space, learner, options):
-    """A configuration whose only interesting part is the shared learner table."""
+def a_config(space, learner, options, **tables):
+    """A configuration whose only interesting part is the learner's own table."""
     return Config(
         space=space,
         globals=(),
         cost_key=('routine', 'cost'),
         learner=learner,
-        shared_learner_options=options,
+        learner_options={learner: options, **tables},
         seed=11,
     )
 
 
-def test_a_learner_is_built_from_a_table_holding_other_learners_knobs(space):
-    """One [MLOOP] table serves every learner.
+def test_a_learner_takes_the_knobs_in_its_own_table_and_no_others(space):
+    """A knob reaches the learner whose table it is written in and no other.
 
-    A lab's knobs are written once and shared, so most of them mean nothing to
-    whichever learner is selected. Building takes the ones this learner accepts
-    and passes over the rest in silence; rejecting them would mean a file that
-    works for one learner breaks the moment another is chosen.
+    That is what lets one file carry the settings for several learners and be
+    switched between them: the tables for the learners this session does not
+    build are simply not read.
     """
     config = a_config(
         space,
         'differential_evolution',
-        {
-            'population_size': 15,
-            'cost_has_noise': False,
-            'length_scale_bounds': (1e-3, 1e3),
-        },
+        {'population_size': 15},
+        gaussian_process={'cost_has_noise': False, 'length_scale_bounds': (1e-3, 1e3)},
     )
     # And population_size is the number of members, not a multiplier on the
     # parameter count: fifteen here, over however many parameters.
@@ -983,15 +979,15 @@ def test_the_default_learner_comes_back_wrapped_in_its_training_phase(space):
     assert learner.num_training == 7
 
 
-def test_a_shared_knob_is_matched_against_arguments_not_constructor_locals(
+def test_a_knob_is_a_constructor_argument_and_not_a_constructor_local(
     space, monkeypatch
 ):
     """What a constructor accepts is its arguments, and nothing else.
 
     A name a constructor happens to use as a scratch variable is not a knob it
-    takes. Matching against anything wider than the signature lets such a key
-    through on the strength of that name, and the TypeError blames the shared
-    table for a collision the user cannot see.
+    takes. Held to anything wider than the signature, such a key is welcomed
+    into the learner's table and then raises a TypeError out of the
+    constructor, blaming the file for a collision the user cannot see.
     """
 
     class Scratch(ParameterSpaceLearner):
@@ -1006,16 +1002,16 @@ def test_a_shared_knob_is_matched_against_arguments_not_constructor_locals(
             return self.space.uniform(self.rng, k)
 
     monkeypatch.setitem(learners.LEARNERS, 'scratch', Scratch)
-    config = a_config(space, 'scratch', {'cost_has_noise': True, 'population_size': 4})
-    assert build(config).population_size == 4
+    with pytest.raises(ValueError, match=r'\[LEARNER\.scratch\].*cost_has_noise'):
+        build(a_config(space, 'scratch', {'cost_has_noise': True}))
+    sized = build(a_config(space, 'scratch', {'population_size': 4}))
+    assert sized.population_size == 4
 
 
 def test_a_learner_that_hides_its_knobs_in_kwargs_is_refused(space, monkeypatch):
-    """Matching against the signature is what makes the filtering silent here.
-
-    ``**kwargs`` names nothing, so every knob in the table is passed over and
-    the learner is built entirely from its defaults, with no error and a
-    search the lab did not configure.
+    """``**kwargs`` names nothing, so a table written for such a learner is
+    refused key by key with nothing saying why -- and were the table empty,
+    the learner would be built from its defaults alone.
     """
 
     class Swallower(ParameterSpaceLearner):
@@ -1161,6 +1157,22 @@ def test_a_generational_learner_cannot_be_the_trainer_either(space, rng):
     trainer = DifferentialEvolutionLearner(space, rng, population_size=4)
     with pytest.raises(ValueError, match='whole generations of 4'):
         TwoPhaseLearner(trainer, RandomLearner(space, rng), num_training=8)
+
+
+def test_a_trainer_that_withholds_its_proposals_is_refused(space, rng):
+    """Nothing stands behind the fallback.
+
+    The trainer proposes the first shot of the run, from an empty history, and
+    answers for everything the main learner cannot make. One that refuses to
+    propose until the history holds points raises out through the session at
+    the first shot, and the wrapper's own ``minimum_observations`` of zero --
+    which a wrapper of this reads to size its own training phase -- is a
+    promise it could not keep.
+    """
+    trainer = GaussianProcessLearner(space, rng)
+    assert trainer.minimum_observations > 0
+    with pytest.raises(ValueError, match='will not propose until'):
+        TwoPhaseLearner(trainer, Ready(), num_training=8)
 
 
 def test_a_learner_that_declares_no_barrier_is_wrapped(space, rng):
