@@ -110,7 +110,8 @@ class Worker(Process):
                 # Sent under this request's number whether it is the reply --
                 # the request itself failed -- or the trailing work behind a
                 # reply already sent. Either way the request is answered, and
-                # the error says which request it came out of.
+                # the error says which request it came out of. A session that
+                # had already stopped keeps the reason it stopped for.
                 if session is not None:
-                    session.stopped = "stopped by an error"
+                    session.stop("stopped by an error")
                 self.to_parent.put(("error", number, traceback.format_exc()))

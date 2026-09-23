@@ -35,7 +35,7 @@ column. `session.py` is touched only for A6.
 - [x] A3: A group listed in `groups` that no table defines is refused
 - [x] A4: Differential evolution redraws its weight once per generation
 - [x] A5: runmanager receives plain Python values
-- [ ] A6: The first stop reason is kept
+- [x] A6: The first stop reason is kept
 
 ---
 
@@ -210,14 +210,21 @@ When trailing work raises, `worker.run` sets `session.stopped` to
 (N)"` or the patience message, so the run's recorded cause is wrong. Keep the
 first reason.
 
+The worker is the other writer of the reason, and it overwrites too: a session
+that ran out of patience and then had its trailing work raise came to read
+`"stopped by an error"`. The same rule covers it, so both writers go through
+one method that sets the reason only when there is none.
+
 ### Acceptance criteria
 
-- [ ] A session stopped by an error still reads `"stopped by an error"` after
+- [x] A session stopped by an error still reads `"stopped by an error"` after
       in-flight shots report enough to reach `max_num_runs`
-- [ ] Likewise after they reach the patience limit
-- [ ] A session stopped by `max_num_runs` is not re-stopped by the patience
-      limit
-- [ ] A running session still stops on either limit
+- [x] Likewise after they reach the patience limit
+- [x] A session stopped by its patience keeps that reason when in-flight shots
+      then reach `max_num_runs`, even with the patience limit no longer holding
+- [x] A session already stopped keeps its reason when trailing work raises
+      afterwards, and the error still reaches the routine
+- [x] A running session still stops on either limit
 
 ### Blocked by
 

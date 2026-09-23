@@ -311,6 +311,33 @@ def test_a_stopped_session_proposes_nothing_further(runmanager):
     assert session.refill() == []
 
 
+def test_a_session_out_of_patience_keeps_that_reason_as_its_last_shots_land(
+    runmanager,
+):
+    """The shots already in flight when a session stops go on reporting, and
+    the budget they reach is not why it stopped. The last of them here is the
+    best cost yet, so the patience limit no longer holds when the budget is
+    reached: the reason kept is the one that stopped the run, not whichever
+    limit happens to hold at the last report.
+    """
+    session = Session(
+        make_config(
+            buffered=3, max_num_runs=3, max_num_runs_without_better_params=1
+        ),
+        runmanager,
+    )
+    first, second, third = session.refill()
+    session.record(first, 1.0, None, False)
+    session.record(second, 2.0, None, False)
+    patience = 'no better parameters in 1 runs (max_num_runs_without_better_params)'
+    assert session.stopped == patience
+
+    session.record(third, 0.5, None, False)
+    assert len(session.results) == 3
+    assert session.runs_since_best() == 0
+    assert session.stopped == patience
+
+
 def test_a_session_gives_up_when_nothing_improves(runmanager):
     session = Session(
         make_config(buffered=1, max_num_runs_without_better_params=3), runmanager

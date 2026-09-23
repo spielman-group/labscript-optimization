@@ -91,14 +91,27 @@ class Session:
         position = [o.shot_id for o in completed].index(best.shot_id)
         return len(completed) - 1 - position
 
+    def stop(self, reason: str) -> None:
+        """Stop proposing, for ``reason``, unless the session has stopped already.
+
+        The first reason is the one kept. A session goes on taking costs after
+        it stops -- the shots already in flight still report, and each report
+        is checked against the limits -- so a later reason would otherwise
+        replace the one that stopped it, and the run's recorded cause would be
+        whichever limit its last shots happened to reach. The worker stops a
+        session through here too, so an error after a session has stopped is
+        reported as an error without becoming the reason.
+        """
+        if self.stopped is None:
+            self.stopped = reason
+
     def check_stop(self) -> None:
         limit = self.config.max_num_runs
         if limit is not None and len(self.results) >= limit:
-            self.stopped = f"reached max_num_runs ({limit})"
-            return
+            self.stop(f"reached max_num_runs ({limit})")
         patience = self.config.max_num_runs_without_better_params
         if patience is not None and self.runs_since_best() >= patience:
-            self.stopped = (
+            self.stop(
                 f"no better parameters in {patience} runs "
                 f"(max_num_runs_without_better_params)"
             )

@@ -374,6 +374,73 @@ def test_a_failure_stops_the_session_proposing(config_file):
     assert status_of(sent[-1])['stopped'] == 'stopped by an error'
 
 
+class FailsOnStatus(FakeInterface):
+    def shot_status(self, shot_ids):
+        raise RuntimeError('runmanager went away')
+
+
+@pytest.mark.parametrize(
+    'limit',
+    ['max_num_runs = 2', 'max_num_runs_without_better_params = 1'],
+    ids=['the budget', 'the patience'],
+)
+def test_a_session_stopped_by_an_error_keeps_that_reason(tmp_path, limit):
+    """The shots in flight when the error stopped the session go on reporting,
+    and between them they reach a limit. The error is still why the run
+    stopped, and the status goes on saying so.
+    """
+    path = tmp_path / 'config.toml'
+    path.write_text(
+        CONFIG.replace('num_buffered_runs = 2', f'num_buffered_runs = 2\n{limit}')
+    )
+    sent = run(
+        [
+            ('configure', str(path)),
+            ('shot', None),
+            ('observe', [('shot-0', 1.0, None, False), ('shot-1', 2.0, None, False)]),
+        ],
+        FailsOnStatus,
+    )
+    assert answers(sent) == [('status', 1), ('status', 2), ('error', 2), ('status', 3)]
+    assert status_of(sent[-1])['completed'] == 2
+    assert status_of(sent[-1])['stopped'] == 'stopped by an error'
+
+
+def test_an_error_after_a_session_has_stopped_leaves_its_reason(tmp_path):
+    """The session ran out of patience first, and the trailing work that failed
+    after it is reported as the error it is -- but it is not why the run
+    stopped.
+    """
+    path = tmp_path / 'config.toml'
+    path.write_text(
+        CONFIG.replace(
+            'num_buffered_runs = 2',
+            'num_buffered_runs = 3\nmax_num_runs_without_better_params = 1',
+        )
+    )
+    sent = run(
+        [
+            ('configure', str(path)),
+            ('observe', [('shot-0', 1.0, None, False), ('shot-1', 2.0, None, False)]),
+            ('shot', None),
+        ],
+        FailsOnStatus,
+    )
+    # The shot still in flight is asked about after every reply, so each
+    # request after the stop fails its trailing work again.
+    assert answers(sent) == [
+        ('status', 1),
+        ('status', 2),
+        ('error', 2),
+        ('status', 3),
+        ('error', 3),
+    ]
+    assert 'runmanager went away' in sent[2][2]
+    assert status_of(sent[3])['stopped'] == (
+        'no better parameters in 1 runs (max_num_runs_without_better_params)'
+    )
+
+
 def test_quit_returns_without_replying(config_file):
     assert run([]) == []
 
