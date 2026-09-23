@@ -22,7 +22,7 @@ House rules that apply to every slice:
   behaviour changes, grep for every sentence that described the old behaviour.
 - No settings accepted for compatibility. A removed key is refused at load,
   naming its replacement.
-- Branch is `Development`. The suite stands at 474 tests. A count quoted inside
+- Branch is `Development`. The suite stands at 463 tests. A count quoted inside
   a slice is the one that slice was written against; recount before relying on
   either.
 
@@ -31,7 +31,7 @@ House rules that apply to every slice:
 - [x] Slice 1: Each shot carries the learner that proposed it
 - [x] Slice 2: Learners pace themselves
 - [x] Slice 3: The Gaussian process runs its own cycle
-- [ ] Slice 4: Test cleanup
+- [x] Slice 4: Test cleanup
 - [x] Slice 5: Re-run the population measurement against the shipped dither
 
 ---
@@ -229,10 +229,10 @@ rewritten form are reviewed here for whether they still say anything.
 
 ### Acceptance criteria
 
-- [ ] Every test the plan's §7 lists is still present and still fails under its
+- [x] Every test the plan's §7 lists is still present and still fails under its
       mutation
-- [ ] No remaining test reaches into a private attribute
-- [ ] Each deleted test is listed in the commit message with the reason
+- [x] No remaining test reaches into a private attribute
+- [x] Each deleted test is listed in the commit message with the reason
 
 ### Blocked by
 
