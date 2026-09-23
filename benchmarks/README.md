@@ -50,9 +50,9 @@ rows exactly. `run` uses every core; `barrier` takes about ten seconds and
 | The whole 4-D table | `run barrier --out benchmarks/results/barrier_4d.csv` then `report barrier benchmarks/results/barrier_4d.csv benchmarks/results/barrier_4d_former.csv` | `benchmarks/results/barrier_4d.csv`, `benchmarks/results/barrier_4d_former.csv` | `24e7d0a`; former arms `9dd3994` |
 | What the barrier costs | as above | as above | as above |
 | Rastrigin against the former walk | as above | as above | as above |
-| Members against parameters | `run dimension --out benchmarks/results/dimension.csv` then `report dimension benchmarks/results/dimension.csv` | `benchmarks/results/dimension.csv` | `24e7d0a` |
-| Which N takes each block | as above | as above | `24e7d0a` |
-| The floor at four members | as above | as above | `24e7d0a` |
+| Members against parameters | `run dimension --out benchmarks/results/dimension.csv` then `report dimension benchmarks/results/dimension.csv` | `benchmarks/results/dimension.csv` | `5d39025` |
+| Which N takes each block | as above | as above | `5d39025` |
+| The floor at four members | as above | as above | `5d39025` |
 | The withdrawn stopping rule | `report truncation benchmarks/results/truncated_4d.csv benchmarks/results/barrier_4d.csv` | `benchmarks/results/truncated_4d.csv` | `24e7d0a`, plus the edit below |
 
 Each file in `results/` repeats its date, commit and command in its own header.
@@ -60,7 +60,11 @@ Each file in `results/` repeats its date, commit and command in its own header.
 ## What the sweep found
 
 This is where `population_size`'s default of **8** comes from, and it is what
-`DifferentialEvolutionLearner`'s docstring and the root `README.md` cite.
+`DifferentialEvolutionLearner`'s docstring and the root `README.md` cite. The
+dimension sweep below was re-run at `5d39025`, after the differential weight
+moved from a per-trial draw to a per-generation one (`2947996`); the block
+winners come out the same — N=8 for the budgets a lab usually runs, N=16 past
+a thousand shots — so the default and the docstring stand unchanged.
 
 **The setting is a member count, not a multiplier on the parameter count.** A
 4-D sweep alone cannot tell "a multiplier of 4 is right" from "about 16 members
@@ -76,59 +80,67 @@ functions:
 
 | D | shots | generational | asynchronous d3 |
 |---|---|---|---|
-| 2 | 240 | N=8 (N=8: 3, N=16: 1) | N=8 and N=16 (N=8: 2, N=16: 2) |
+| 2 | 240 | N=8 (N=8: 3, N=16: 1) | N=8 (N=8: 3, N=16: 1) |
 | 2 | 600 | N=8 and N=16 (N=8: 2, N=16: 2) | N=8 (N=8: 3, N=16: 1) |
-| 4 | 240 | N=8 (N=8: 4) | N=8 (N=8: 4) |
-| 4 | 600 | N=8 (N=8: 3, N=16: 1) | N=8 (N=8: 4) |
+| 4 | 240 | N=8 (N=8: 4) | N=8 (N=4: 1, N=8: 3) |
+| 4 | 600 | N=8 and N=16 (N=8: 2, N=16: 2) | N=8 (N=8: 3, N=16: 1) |
 | 8 | 240 | N=8 (N=8: 4) | N=8 (N=8: 4) |
-| 8 | 600 | N=8 (N=8: 3, N=16: 1) | N=8 and N=16 (N=8: 2, N=16: 2) |
-| 8 | 1200 | N=16 (N=16: 4) | N=8 and N=16 (N=8: 2, N=16: 2) |
+| 8 | 600 | N=8 (N=8: 3, N=16: 1) | N=8 (N=8: 3, N=16: 1) |
+| 8 | 1200 | N=16 (N=8: 1, N=16: 3) | N=16 (N=8: 1, N=16: 3) |
 
-N=8 takes five of the seven blocks outright, ties one with N=16, and loses one
+N=8 takes four of the seven blocks outright, ties two with N=16, and loses one
 — 8-D at 1200 shots, the largest budget in the sweep. **That is where the two
 figures come from: eight members for the budgets a lab usually runs, and
 sixteen once the budget passes a thousand shots.** Counted by single cells
 rather than by blocks, N=8 holds the lowest median in 19 of the 28 (dimension,
-budget, function) cells and N=16 in the other 9; neither N=4 nor N=32 is best
-in a single cell, in either variant, and at 8-D and 240 shots N=32 is the worst
-of the three on every function. The asynchronous variant ranks N the same way,
-so this is a property of the budget rather than of the generation barrier.
+budget, function) cells and N=16 in the other 9; N=32 is never best in a single
+cell, in either variant, and at 8-D and 240 shots it is the worst of the three
+on every function. The asynchronous variant takes the same shape and more
+decisively — N=8 wins six of the seven blocks outright and N=16 the seventh,
+with no ties — except for one single cell, 4-D at 240 shots on rastrigin,
+which goes to N=4. So the block a budget settles on is a property of the
+budget rather than of the generation barrier, even where the finer-grained
+count of individual cells is not perfectly identical between the two.
 
 **The floor is about eight members, and it is a search floor rather than the
 mutation floor.** N=4 satisfies `draws + 1` for `best1`, which is all the
-constructor requires, and all but stalls: given two and a half times the budget
-it improves by under 1% on all eight (dimension, function) cells, where N=8
-improves by 10% to 100% on the same cells. Lifting the barrier partly unsticks
-it, which says the stall is a collapsed population that a generation of
-feedback latency cannot re-spread. Premature convergence is the failure a
-default has to avoid, and it sits at N=4, not at N=8.
+constructor requires, and mostly stalls: given two and a half times the budget
+it improves under 1% on six of the eight (dimension, function) cells and by
+under 8% on the other two — both sphere, whose median is already within a
+thousandth of the true minimum of zero — where N=8 improves by 14% to 100% on
+seven of those same cells. The eighth, 2-D rastrigin, is a cell neither
+population size escapes with more budget: N=4 improves 0.0% and N=8 0.0% as
+well. Lifting the barrier partly unsticks the stall on the other cells, which
+says it is a collapsed population that a generation of feedback latency cannot
+re-spread. Premature convergence is the failure a default has to avoid, and on
+seven of the eight cells it sits at N=4, not at N=8.
 
 | variant | D | function | 240 shots | 600 shots | change |
 |---|---|---|---|---|---|
-| generational, N=4 | 2 | rastrigin | 2.029 | 2.029 | 0.0% |
-| generational, N=4 | 2 | sphere | 0.009 | 0.009 | 0.1% |
-| generational, N=4 | 2 | ackley | 0.356 | 0.356 | 0.0% |
-| generational, N=4 | 2 | rosenbrock | 1.023 | 1.023 | 0.0% |
-| generational, N=4 | 4 | rastrigin | 8.193 | 8.128 | 0.8% |
-| generational, N=4 | 4 | sphere | 0.422 | 0.420 | 0.4% |
-| generational, N=4 | 4 | ackley | 2.885 | 2.881 | 0.1% |
-| generational, N=4 | 4 | rosenbrock | 18.015 | 17.959 | 0.3% |
-| asynchronous, N=4 | 2 | rastrigin | 1.544 | 1.530 | 0.9% |
-| asynchronous, N=4 | 2 | sphere | 0.000 | 0.000 | 36.9% |
-| asynchronous, N=4 | 2 | ackley | 0.244 | 0.096 | 60.8% |
-| asynchronous, N=4 | 2 | rosenbrock | 0.462 | 0.457 | 1.1% |
-| asynchronous, N=4 | 4 | rastrigin | 7.624 | 7.050 | 7.5% |
-| asynchronous, N=4 | 4 | sphere | 0.940 | 0.689 | 26.7% |
-| asynchronous, N=4 | 4 | ackley | 2.711 | 2.685 | 1.0% |
-| asynchronous, N=4 | 4 | rosenbrock | 12.268 | 6.319 | 48.5% |
-| generational, N=8 | 2 | rastrigin | 0.556 | 0.497 | 10.5% |
+| generational, N=4 | 2 | rastrigin | 3.980 | 3.980 | 0.0% |
+| generational, N=4 | 2 | sphere | 0.005 | 0.005 | 7.1% |
+| generational, N=4 | 2 | ackley | 0.267 | 0.265 | 1.0% |
+| generational, N=4 | 2 | rosenbrock | 0.264 | 0.263 | 0.0% |
+| generational, N=4 | 4 | rastrigin | 9.923 | 9.922 | 0.0% |
+| generational, N=4 | 4 | sphere | 1.076 | 1.026 | 4.6% |
+| generational, N=4 | 4 | ackley | 2.610 | 2.609 | 0.0% |
+| generational, N=4 | 4 | rosenbrock | 43.154 | 43.002 | 0.4% |
+| asynchronous, N=4 | 2 | rastrigin | 1.009 | 0.995 | 1.4% |
+| asynchronous, N=4 | 2 | sphere | 0.001 | 0.000 | 99.9% |
+| asynchronous, N=4 | 2 | ackley | 1.035 | 0.069 | 93.4% |
+| asynchronous, N=4 | 2 | rosenbrock | 0.396 | 0.389 | 1.6% |
+| asynchronous, N=4 | 4 | rastrigin | 6.723 | 6.541 | 2.7% |
+| asynchronous, N=4 | 4 | sphere | 0.293 | 0.170 | 42.1% |
+| asynchronous, N=4 | 4 | ackley | 1.928 | 1.841 | 4.5% |
+| asynchronous, N=4 | 4 | rosenbrock | 13.801 | 5.773 | 58.2% |
+| generational, N=8 | 2 | rastrigin | 0.995 | 0.995 | 0.0% |
 | generational, N=8 | 2 | sphere | 0.000 | 0.000 | 100.0% |
 | generational, N=8 | 2 | ackley | 0.001 | 0.000 | 100.0% |
-| generational, N=8 | 2 | rosenbrock | 0.245 | 0.000 | 100.0% |
-| generational, N=8 | 4 | rastrigin | 6.105 | 3.270 | 46.4% |
-| generational, N=8 | 4 | sphere | 0.002 | 0.000 | 100.0% |
-| generational, N=8 | 4 | ackley | 0.095 | 0.000 | 99.8% |
-| generational, N=8 | 4 | rosenbrock | 3.370 | 1.582 | 53.0% |
+| generational, N=8 | 2 | rosenbrock | 0.204 | 0.013 | 93.8% |
+| generational, N=8 | 4 | rastrigin | 8.173 | 4.975 | 39.1% |
+| generational, N=8 | 4 | sphere | 0.001 | 0.000 | 100.0% |
+| generational, N=8 | 4 | ackley | 0.455 | 0.001 | 99.7% |
+| generational, N=8 | 4 | rosenbrock | 3.429 | 2.954 | 13.8% |
 
 **The caveats these numbers carry.** They are four analytic test functions at
 two, four and eight parameters, scored on the median over 12 seeds. A lab
