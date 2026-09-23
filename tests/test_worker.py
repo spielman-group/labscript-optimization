@@ -147,7 +147,9 @@ def test_an_observation_is_answered_before_the_next_shots_are_proposed(config_fi
     assert FakeInterface.instances[0].submitted == ['shot-0', 'shot-1', 'shot-2']
 
 
-def test_an_observation_the_session_proposed_is_answered_as_taken(config_file):
+def test_an_observation_the_session_proposed_is_answered_with_its_source(
+    config_file,
+):
     """The routine writes its results onto a shot on this answer and no other.
 
     runmanager mints a shot id for every queue row it compiles, so a user's own
@@ -159,7 +161,7 @@ def test_an_observation_the_session_proposed_is_answered_as_taken(config_file):
         [('configure', config_file), ('observe', [('shot-0', 1.0, None, False)])]
     )
     _, _, (recorded, _) = sent[-1]
-    assert recorded == (True,)
+    assert recorded == ('main',)
 
 
 def test_an_observation_the_session_never_proposed_is_answered_as_not_taken(
@@ -176,7 +178,7 @@ def test_an_observation_the_session_never_proposed_is_answered_as_not_taken(
         ]
     )
     _, _, (recorded, _) = sent[-1]
-    assert recorded == (False,)
+    assert recorded == (None,)
 
 
 def test_every_observation_in_one_message_is_taken(config_file):
@@ -216,7 +218,34 @@ def test_one_verdict_comes_back_per_observation_in_the_order_sent(config_file):
         ]
     )
     _, _, (recorded, _) = sent[-1]
-    assert recorded == (False, True, False)
+    assert recorded == (None, 'main', None)
+
+
+def test_each_verdict_carries_the_source_of_its_own_shot(tmp_path):
+    """The routine writes a verdict's source onto that shot as its phase, and
+    one request can hand over shots proposed by different things: here the
+    configured start, which the session proposes itself, and a shot from the
+    learner. They are sent in the other order from the one they were proposed
+    in, so a verdict that named the latest proposal, or the first, would land
+    on the wrong shot.
+    """
+    path = tmp_path / 'config.toml'
+    path.write_text(CONFIG.replace('max = 1.0', 'max = 1.0\nstart = 0.5'))
+    sent = run(
+        [
+            ('configure', str(path)),
+            (
+                'observe',
+                [
+                    ('shot-1', 2.0, None, False),
+                    ('someone-elses-shot', 3.0, None, False),
+                    ('shot-0', 1.0, None, False),
+                ],
+            ),
+        ]
+    )
+    _, _, (recorded, _) = sent[-1]
+    assert recorded == ('main', None, 'start')
 
 
 def test_one_message_carrying_several_observations_is_answered_once(config_file):
@@ -224,9 +253,9 @@ def test_one_message_carrying_several_observations_is_answered_once(config_file)
 
     The routine reads the first message carrying a request's number as the
     answer to it, and writes that one status onto every shot of the batch the
-    session took. A verdict per observation in separate messages would leave
-    the routine to collect a batch's answer a piece at a time, with a status
-    apiece to choose between.
+    session took, each beside the phase its own verdict carries. A verdict per
+    observation in separate messages would leave the routine to collect a
+    batch's answer a piece at a time, with a status apiece to choose between.
     """
     sent = run(
         [

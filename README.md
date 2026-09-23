@@ -66,9 +66,12 @@ Adding the routine starts the session; removing it, restarting it, or reaching
 the run budget stops it. Progress is saved onto each shot the session proposed,
 under the results group `labscript_optimization`, so it comes back as
 dataframe columns: `df[('labscript_optimization', 'best_cost')]` is the best
-cost so far, beside the parameters and the shot that produced it, which phase
-the learner is in, and why the session stopped. Anything the session does not
-have yet reads as `NaN`. Shots that are not the optimiser's own — yours, and
+cost so far, beside the parameters and the shot that produced it, and why the
+session stopped. `phase` is the shot's own: what proposed that shot, which is
+the learner's phase for the batch it went out in, or `start` for the
+configured start, however far the run has moved on since. A value the session
+does not have yet is empty — `NaN` for the best cost, an empty string or list
+for the rest. Shots that are not the optimiser's own — yours, and
 runmanager's default shots — are left alone: runmanager mints a shot id for
 every queue row it compiles, so carrying one does not make a shot the
 optimiser's, and the session writes onto an id it proposed and no other.
@@ -138,7 +141,8 @@ for would otherwise sit switched off with nothing said.
 A parameter's `start` is where the run begins. The session proposes that point
 first and once, whichever learner is running: no learner has an opening of its
 own, and every one of them meets the start in the history as an ordinary
-observation. It is one point over every searched parameter, so write it on all
+observation. Its shot reads `start` in the `phase` column, because no learner
+proposed it. It is one point over every searched parameter, so write it on all
 of them or on none — a start on some is refused, naming which have one and
 which do not. A parameter switched off is not searched and needs none.
 
@@ -163,8 +167,8 @@ rather than from the main learner, so a Gaussian process narrowing onto the
 best point it has found goes on being handed points from somewhere else. It is
 unset by default, and a run that leaves it unset never returns to the trainer.
 The proposal it produces is the trainer's own, knobs and all, out of
-`[LEARNER.<trainer>]`, and the session reports the phase as `periodic trainer`
-so the run can be read off the `phase` column.
+`[LEARNER.<trainer>]`, and its shot reads `periodic trainer` in the `phase`
+column, so the run can be read off it.
 
 Which learner proposes is read off the number of usable observations in hand,
 not off a count of proposals: a shot that is dropped or comes back unusable
@@ -242,9 +246,12 @@ for step in range(100):
 
 ### Writing your own
 
-A learner answers `propose` and carries a `last_phase` string and a
-`generation`, which is `None` unless the learner proposes only whole groups of
-a fixed size and only when none of its proposals is outstanding. Those three
+A learner answers `propose` and carries a `last_phase` string, naming which of
+its ways of proposing made the batch it last returned — the session records it
+on every proposal of that batch, and it is what those shots read in the
+`phase` column — and a `generation`, which is `None` unless the learner
+proposes only whole groups of a fixed size and only when none of its
+proposals is outstanding. Those three
 are `Learner`, which everything here inherits — the two-phase wrapper included, so
 a session cannot tell a wrapped learner from a plain one. Your own object is
 driven by those same three members whether or not it inherits anything.

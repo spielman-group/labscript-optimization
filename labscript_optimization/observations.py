@@ -1,10 +1,11 @@
 """The proposal record, and the history helpers learners share.
 
 An :class:`Observation` is one proposal and what became of it: the parameters
-that were requested, the state that proposal is in, and the cost if one has
-come back. Learners are handed every proposal a session has made, in the order
-it made them, so a position spent on a shot that is still running or on one
-that will never report is visible to them as a position spent.
+that were requested, what proposed them, the state that proposal is in, and
+the cost if one has come back. Learners are handed every proposal a session
+has made, in the order it made them, so a position spent on a shot that is
+still running or on one that will never report is visible to them as a
+position spent.
 """
 
 from dataclasses import dataclass
@@ -45,6 +46,12 @@ class Observation:
             has produced nothing -- and two to the session, which counts the
             shots a run has lost, so the record keeps them apart rather than
             leaving the difference to be guessed from a missing cost.
+        source: What proposed this shot, recorded by the session when it
+            submitted it and never changed after: the phase the learner
+            declared for the batch the shot went out in, or the session's own
+            name for the configured start. It is what the routine writes onto
+            the shot as its ``phase``. ``None`` for a record made outside a
+            session, where nothing recorded one.
     """
 
     shot_id: str
@@ -53,6 +60,7 @@ class Observation:
     uncer: float | None = None
     bad: bool = False
     state: str = COMPLETE
+    source: str | None = None
 
     def __post_init__(self) -> None:
         """Refuse a completed shot with no cost.

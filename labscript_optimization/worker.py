@@ -48,10 +48,14 @@ class Worker(Process):
 
         A status payload is ``(recorded, status)``. ``recorded`` holds one
         verdict per observation the request carried, in the order it carried
-        them: whether the session took that observation, which is the only
-        thing that says the shot the routine is holding is one of this
-        session's -- runmanager mints a shot id for every queue row it
-        compiles, so a user's own shots carry one too.
+        them: the source of that shot if the session took it, and ``None`` if
+        it did not. Taking it is the only thing that says the shot the routine
+        is holding is one of this session's -- runmanager mints a shot id for
+        every queue row it compiles, so a user's own shots carry one too --
+        and the source is what the routine writes onto that shot as its
+        ``phase``. It travels with the verdict rather than in the status
+        because it is the shot's own: one request can hand over shots that
+        different learners proposed.
 
         Every request is answered with exactly one status, unless handling it
         raised, in which case the error is its reply. The routine waits on

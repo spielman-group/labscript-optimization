@@ -352,8 +352,10 @@ goes out whole.
 Where the search has got to is written onto each shot the session proposed, so
 it comes back as dataframe columns under `labscript_optimization` —
 `df[('labscript_optimization', 'best_cost')]` and so on. The keys are `phase`,
-`best_cost`, `best_params`, `best_shot_id` and `stopped`. A key the session has
-nothing to report for yet reads as `NaN`.
+`best_cost`, `best_params`, `best_shot_id` and `stopped`. `phase` is the shot's
+own: what proposed that shot, which is `start` for the configured start. A key
+the session has nothing to report for yet is empty — `NaN` for `best_cost`, an
+empty string or list for the rest.
 
 The session's counters — `submitted`, `completed`, `awaiting`, `dropped`,
 `blocked` and `starved` — are one answer for the whole run rather than anything about a shot,

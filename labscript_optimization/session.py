@@ -6,11 +6,13 @@ because a number kept here can only be decremented by a shot coming back --
 and a shot that never comes back would hold its place for ever.
 
 History holds every proposal the session has made, in the order it made them,
-each carrying what became of it: a cost arriving out of order fills the slot
-its shot id names, and a shot that is no longer coming is marked dropped
-rather than taken out. A learner therefore sees a position spent on a shot
-that produced nothing as a position spent, which is what lets one read a role
-off a proposal's position.
+each carrying what proposed it and what became of it: a cost arriving out of
+order fills the slot its shot id names, and a shot that is no longer coming is
+marked dropped rather than taken out. A learner therefore sees a position
+spent on a shot that produced nothing as a position spent, which is what lets
+one read a role off a proposal's position. The shots the session is awaiting
+are the history's pending records, read off it rather than worked out beside
+it.
 """
 
 import numpy as np
@@ -18,6 +20,11 @@ import numpy as np
 from . import learners, observations
 from .observations import COMPLETE, DROPPED, PENDING, Observation
 from .runmanager_interface import BLOCKED_SHOT_STATE, UNKNOWN_SHOT_STATE
+
+#: The source recorded for the configured start. The session proposes it
+#: itself, whichever learner is running, so it carries a name of the session's
+#: rather than a learner's phase.
+START_SOURCE = "start"
 
 
 class Session:
@@ -38,6 +45,7 @@ class Session:
         self.interface = interface
         self.learner = learners.build(config) if learner is None else learner
         self.proposals: dict[str, np.ndarray] = {}
+        self.sources: dict[str, str] = {}
         self.results: dict[str, tuple[float, float | None, bool]] = {}
         self.dropped: set[str] = set()
         self.blocked: set[str] = set()
@@ -57,21 +65,30 @@ class Session:
         """
         records = []
         for shot_id, params in self.proposals.items():
+            source = self.sources[shot_id]
             if shot_id in self.results:
-                records.append(Observation(shot_id, params, *self.results[shot_id]))
+                records.append(
+                    Observation(shot_id, params, *self.results[shot_id], source=source)
+                )
                 continue
             state = DROPPED if shot_id in self.dropped else PENDING
-            records.append(Observation(shot_id, params, None, state=state))
+            records.append(
+                Observation(shot_id, params, None, state=state, source=source)
+            )
         return records
 
     @property
     def awaiting(self) -> list[str]:
-        """Shots submitted that have neither reported a cost nor been dropped."""
-        return [
-            shot_id
-            for shot_id in self.proposals
-            if shot_id not in self.results and shot_id not in self.dropped
-        ]
+        """Shots submitted that have neither reported a cost nor been dropped.
+
+        These are the history's pending records and nothing else, so what the
+        session waits for and what a learner reading states off the history
+        takes to be in flight are one answer. A second account kept beside the
+        history would have to be moved in step with it by every drop, late
+        cost and repeated cost, and would part company with it the first time
+        one was missed.
+        """
+        return [o.shot_id for o in self.history if o.state == PENDING]
 
     @property
     def best(self) -> Observation | None:
@@ -116,8 +133,15 @@ class Session:
                 f"(max_num_runs_without_better_params)"
             )
 
-    def record(self, shot_id: str, cost: float, uncer: float | None, bad: bool) -> bool:
-        """Take the cost for one shot. Returns whether it was taken.
+    def record(
+        self, shot_id: str, cost: float, uncer: float | None, bad: bool
+    ) -> str | None:
+        """Take the cost for one shot. Returns its source if the cost was taken.
+
+        The source is the one recorded when the shot was proposed, and the
+        routine writes it onto the shot as its ``phase``: what proposed that
+        shot, whatever has been proposed since. ``None`` says the cost was not
+        taken.
 
         A shot this session did not submit is ignored, which is how a user's
         own shots and runmanager's defaults pass through harmlessly. So is a
@@ -126,12 +150,12 @@ class Session:
         names a proposal rather than an execution.
         """
         if shot_id not in self.proposals or shot_id in self.results:
-            return False
+            return None
         self.results[shot_id] = (float(cost), uncer, bool(bad))
         self.dropped.discard(shot_id)
         self.blocked.discard(shot_id)
         self.check_stop()
-        return True
+        return self.sources[shot_id]
 
     def reconcile(self) -> list[str]:
         """Ask runmanager what became of the awaited shots, and give some up.
@@ -182,7 +206,11 @@ class Session:
         once nothing of this session's is outstanding; any other learner is
         topped up to ``num_buffered_runs``. The very first proposal of a run
         is the space's configured start, where the parameters carry one, and
-        the learner is asked for the rest of that same batch.
+        the learner is asked for the rest of that same batch. Each proposal is
+        recorded with its source, which nothing changes after:
+        :data:`START_SOURCE` for the start, and for the rest the
+        ``last_phase`` the learner declares for the batch it has just
+        proposed.
 
         ``max_num_runs`` is a ceiling on the whole run rather than on a batch,
         so the last generation is whatever the budget has left for it. A
@@ -236,12 +264,18 @@ class Session:
         # exactly one whole generation queued and still waits for all of it.
         # A generation of its own for the start would be the second route
         # past that barrier.
-        batch = []
+        batch, sources = [], []
         if not self.proposals and self.config.space.start is not None:
             batch.append(self.config.space.start)
+            sources.append(START_SOURCE)
             wanted -= 1
         if wanted:
-            batch.append(np.atleast_2d(self.learner.propose(self.history, wanted)))
+            proposed = np.atleast_2d(self.learner.propose(self.history, wanted))
+            batch.append(proposed)
+            # Read after proposing, because proposing is what settles it: a
+            # learner with more than one way of proposing says which one made
+            # this batch, and by the next refill it may say another.
+            sources += [self.learner.last_phase] * len(proposed)
         proposals = np.vstack(batch)
         shot_ids = self.interface.submit(proposals)
         if len(shot_ids) != len(proposals):
@@ -252,8 +286,9 @@ class Session:
                 f"{len(shot_ids)} shot ids back; the two cannot be paired, "
                 f"and shots may be queued that this session cannot account for"
             )
-        for shot_id, params in zip(shot_ids, proposals):
+        for shot_id, params, source in zip(shot_ids, proposals, sources):
             self.proposals[shot_id] = np.asarray(params, dtype=float)
+            self.sources[shot_id] = source
         return shot_ids
 
     def status(self) -> dict:
@@ -264,6 +299,10 @@ class Session:
         ``best_cost`` is in the units and sign of the lab's own cost column,
         beside a ``best_params`` in real units: under ``maximize`` a
         measurement of 7 is reported as 7.
+
+        A shot's ``phase`` is not here. It belongs to the shot rather than to
+        the session -- it is what proposed that shot -- and :meth:`record`
+        returns it for the shot whose cost it takes.
         """
         best = self.best
         # The routine flips a maximised quantity once on the way in, so that
@@ -274,7 +313,6 @@ class Session:
         if best_cost is not None and self.config.maximize:
             best_cost = -best_cost
         return {
-            "phase": self.learner.last_phase,
             "submitted": len(self.proposals),
             "completed": len(self.results),
             "awaiting": len(self.awaiting),

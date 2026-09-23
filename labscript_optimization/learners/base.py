@@ -58,9 +58,10 @@ class Learner(ABC):
     """
 
     #: Which of the learner's ways of proposing produced the last batch, which
-    #: the session reports. Declared without a value: a learner that grows
-    #: phases and forgets to publish them then fails, rather than being
-    #: reported as the main one for a whole run.
+    #: the session records as the source of every proposal in it. Declared
+    #: without a value: a learner that grows phases and forgets to publish them
+    #: then fails, rather than having every shot of a run recorded as the main
+    #: one's.
     last_phase: str
 
     #: How many proposals this learner is asked for at a time, or ``None`` for

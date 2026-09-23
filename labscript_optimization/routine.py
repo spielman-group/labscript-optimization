@@ -8,7 +8,8 @@ A lab analysis routine is two lines::
 Adding the routine to lyse starts the session; removing it, restarting it, or
 reaching the run budget stops it. :data:`SHOT_RESULTS` is written onto each
 shot the session proposed, as lyse results under :data:`RESULTS_GROUP`, so
-the best cost and where the search has got to are columns of the dataframe.
+the best cost, where the search has got to, and what proposed each shot are
+columns of the dataframe.
 
 The routine itself does almost nothing: it reads the costs of the shots lyse
 has analysed since it last ran, hands them to the worker, and waits for the
@@ -44,11 +45,16 @@ from . import runmanager_interface
 #: lab collides with this only by naming a routine after the package it imports.
 RESULTS_GROUP = "labscript_optimization"
 
-#: The status keys written onto a shot, and so the columns the session
-#: produces: where the search has got to, and whether it has stopped. The rest
-#: of the status is the session's bookkeeping, one answer for the whole run
-#: that would be repeated onto every shot of it; :func:`optimise` returns all
-#: of it.
+#: The keys written onto a shot, and so the columns the session produces: what
+#: proposed the shot, where the search has got to, and whether it has stopped.
+#:
+#: ``phase`` is the shot's own: the source the session recorded when it
+#: proposed that shot, which the worker's verdict on the shot carries. It is
+#: not the phase of whatever was proposed most recently, which is another shot
+#: whenever more than one is in flight. The other four come from the session's
+#: status, whose remaining keys are its bookkeeping, one answer for the whole
+#: run that would be repeated onto every shot of it; :func:`optimise` returns
+#: all of it.
 #:
 #: ``stopped`` is here rather than with the bookkeeping because it is a marker
 #: and not a tally. A counter carries a running total onto every shot and says
@@ -204,7 +210,10 @@ def extract(shot, config):
 
 
 def save_status(filepath, status) -> None:
-    """Write :data:`SHOT_RESULTS` onto one shot, as lyse results.
+    """Write :data:`SHOT_RESULTS` of ``status`` onto one shot, as lyse results.
+
+    ``status`` is what this shot is to carry: the session's status, with the
+    shot's own ``phase`` beside it.
 
     lyse reads the attributes of ``/results/<group>`` back as dataframe
     columns, so each key written becomes ``df[(RESULTS_GROUP, key)]`` against
@@ -337,9 +346,10 @@ def _drain(from_worker, popen, request, pending, timeout=None):
     ``pending`` maps a request number to the shot files that request handed
     over. A status is written onto the files held against its own number, for
     each shot the session took, whichever drain it arrives in, and its number
-    is dropped from ``pending`` once it has been. A status whose number
-    ``pending`` no longer holds -- a request that handed nothing over, or one
-    written to already -- has nothing to write.
+    is dropped from ``pending`` once it has been. Each of those shots is
+    written with its own ``phase``, the source its verdict carries. A status
+    whose number ``pending`` no longer holds -- a request that handed nothing
+    over, or one written to already -- has nothing to write.
 
     An error raises, naming the request it carries. That is the reply to a
     request whose handling failed, and trailing work that failed behind a
@@ -382,14 +392,14 @@ def _drain(from_worker, popen, request, pending, timeout=None):
                 f"\n{payload}"
             )
         recorded, status = payload
-        for filepath, taken in zip(pending.pop(number, ()), recorded):
+        for filepath, source in zip(pending.pop(number, ()), recorded):
             # The session taking a cost is what says the shot is one it
             # proposed: the id alone does not, because runmanager mints one
             # for every queue row it compiles, and writing the status onto a
             # shot the session never proposed would put a column of somebody
             # else's numbers against a user's own shot.
-            if taken:
-                save_status(filepath, status)
+            if source is not None:
+                save_status(filepath, status | {"phase": source})
         if number == request:
             answer = status
 
@@ -408,12 +418,14 @@ def optimise(config_path, storage=None, dataframe=None):
         The whole status the worker sends in answer to this invocation, or
         ``None`` if the worker does not answer within :data:`REPLY_TIMEOUT`.
         For each shot the session took, :func:`save_status` has written
-        :data:`SHOT_RESULTS` of that status onto it. An answer that misses the
-        deadline is not lost: the shots this invocation handed over are
-        remembered against its request number, and a later invocation writes
-        that status onto them when it arrives. Worker configuration is
-        acknowledged before the worker is stored, so the first invocation
-        receives its own answer like every later one.
+        :data:`SHOT_RESULTS` onto it: that shot's own ``phase``, and the rest
+        from that status. The status holds no ``phase`` of its own, because
+        one request can hand over shots that different learners proposed. An
+        answer that misses the deadline is not lost: the shots this
+        invocation handed over are remembered against its request number, and
+        a later invocation writes that status onto them when it arrives.
+        Worker configuration is acknowledged before the worker is stored, so
+        the first invocation receives its own answer like every later one.
     """
     if storage is None:
         import lyse

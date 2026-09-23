@@ -44,6 +44,8 @@ from labscript_optimization import routine as routine_module
 from labscript_optimization import runmanager_interface as interface_module
 from labscript_optimization.routine import extract
 
+from conftest import FakeRunmanager
+
 CONFIG = """
 [ANALYSIS]
 cost_key = ["zTOF", "Nb"]
@@ -813,9 +815,11 @@ def test_an_answer_still_on_its_way_is_left_for_the_next_shot(
 
 
 def status(**overrides):
-    """A status of the shape the session sends, with nothing found yet."""
+    """A status of the shape the session sends, with nothing found yet.
+
+    It holds no phase: that is each shot's own, and travels with the verdict.
+    """
     return {
-        'phase': 'main',
         'submitted': 1,
         'completed': 0,
         'awaiting': 1,
@@ -836,7 +840,7 @@ def test_the_stand_in_status_carries_the_keys_the_session_sends(config):
     """
     from labscript_optimization.session import Session
 
-    session = Session(config, None, learner=types.SimpleNamespace(last_phase='main'))
+    session = Session(config, None, learner=types.SimpleNamespace())
     assert set(status()) == set(session.status())
 
 
@@ -874,7 +878,7 @@ def test_the_status_is_written_onto_the_shot_as_lyse_results(
         (
             'status',
             (
-                (True,),
+                ('training',),
                 status(best_cost=7.0, best_params=[0.25], best_shot_id='row-3'),
             ),
         )
@@ -884,7 +888,7 @@ def test_the_status_is_written_onto_the_shot_as_lyse_results(
     assert written['best_cost'] == 7.0
     assert list(written['best_params']) == [0.25]
     assert written['best_shot_id'] == 'row-3'
-    assert written['phase'] == 'main'
+    assert written['phase'] == 'training'
 
 
 def test_the_sessions_own_counters_are_not_written_onto_every_shot(
@@ -895,7 +899,7 @@ def test_the_sessions_own_counters_are_not_written_onto_every_shot(
     routine that wants them has them: optimise returns the whole status.
     """
     row = shot()
-    session.worker.replies.append(('status', ((True,), status())))
+    session.worker.replies.append(('status', (('main',), status())))
     answer = analysed(row)
     # Spelt out rather than read back from the module that wrote them: these
     # names are the promise, df[('labscript_optimization', 'best_cost')].
@@ -918,7 +922,7 @@ def test_a_value_the_session_does_not_have_yet_is_written_as_its_own_empty(
     float.
     """
     row = shot()
-    session.worker.replies.append(('status', ((True,), status())))
+    session.worker.replies.append(('status', (('main',), status())))
     analysed(row)
     written = results(row)
     assert written['best_shot_id'] == ''
@@ -963,8 +967,9 @@ def lyse_column(shot, results):
 
     def build(empty_shots, reported):
         rows = [shot() for _ in range(empty_shots + 1)]
+        # What a shot carries: the session's status, and its own phase.
         for row in rows[:-1]:
-            routine_module.save_status(row['filepath'], status())
+            routine_module.save_status(row['filepath'], status(phase='main'))
 
         # The shots on disk when the last one is analysed. Its own row is
         # there -- lyse adds a row when the file appears -- and carries
@@ -973,7 +978,9 @@ def lyse_column(shot, results):
 
         lyse_utils.worker.spinning_top = True
         lyse_utils.worker._updated_data = {}
-        routine_module.save_status(rows[-1]['filepath'], status(**reported))
+        routine_module.save_status(
+            rows[-1]['filepath'], status(phase='main', **reported)
+        )
         updated = lyse_utils.worker._updated_data[rows[-1]['filepath']]
 
         depth = frame.columns.nlevels
@@ -1055,7 +1062,7 @@ def test_a_shot_the_session_never_proposed_is_handed_over_and_not_written_to(
     somebody else's shot.
     """
     row = shot(shot_id='someone-elses-shot')
-    session.worker.replies.append(('status', ((False,), status())))
+    session.worker.replies.append(('status', ((None,), status())))
     analysed(row)
     assert ids_sent(session.worker) == [['someone-elses-shot']]
     with h5py.File(row['filepath'], 'r') as f:
@@ -1070,7 +1077,7 @@ def test_the_status_is_written_onto_each_shot_the_session_took(
     One answer for the whole message could only write onto all of them or none.
     """
     ours, theirs = shot(shot_id='row-1'), shot(shot_id='someone-elses-shot')
-    session.worker.replies.append(('status', ((True, False), status())))
+    session.worker.replies.append(('status', (('main', None), status())))
     analysed(ours, theirs)
     assert results(ours)['phase'] == 'main'
     with h5py.File(theirs['filepath'], 'r') as f:
@@ -1097,10 +1104,10 @@ def test_a_status_the_routine_gave_up_waiting_for_is_written_onto_its_own_shots(
     # request it had in hand, an invocation late.
     session.worker.delay = 0.02
     session.worker.send(
-        'status', gave_up_on, ((True,), status(best_shot_id='row-1')), delay=0
+        'status', gave_up_on, (('main',), status(best_shot_id='row-1')), delay=0
     )
     session.worker.replies.append(
-        ('status', ((True,), status(best_shot_id='row-2')))
+        ('status', (('main',), status(best_shot_id='row-2')))
     )
 
     assert analysed(current)['best_shot_id'] == 'row-2'
@@ -1117,7 +1124,7 @@ def test_a_status_that_cannot_be_written_does_not_stop_the_session(
     """
     pytest.importorskip('lyse')
     row = shot()
-    session.worker.replies.append(('status', ((True,), status())))
+    session.worker.replies.append(('status', (('main',), status())))
     sending = session.worker.put
     session.worker.put = lambda item: (os.unlink(row['filepath']), sending(item))
 
@@ -1172,14 +1179,14 @@ class Link:
 def running(monkeypatch, tmp_path):
     """Start a session whose worker is the real message loop, in a thread.
 
-    ``interface`` is what the worker turns the configuration into. The thread
-    stands in for the child process, and the process handle beside it reports
-    a worker that is alive, which is what a slow reply must not be mistaken
-    for.
+    ``interface`` is what the worker turns the configuration into, and
+    ``config`` is the file it reads. The thread stands in for the child
+    process, and the process handle beside it reports a worker that is alive,
+    which is what a slow reply must not be mistaken for.
     """
     started = []
 
-    def start(interface, reply_timeout=0.2):
+    def start(interface, reply_timeout=0.2, config=WORKER_CONFIG):
         from labscript_optimization import worker as worker_module
 
         to_worker, from_worker, child = Link(), Link(), Worker()
@@ -1201,7 +1208,7 @@ def running(monkeypatch, tmp_path):
         # one these tests do not read the workstation's labconfig for.
         monkeypatch.setattr(routine_module, 'configure_timeout', lambda: 5.0)
         path = tmp_path / 'optimisation_config.toml'
-        path.write_text(WORKER_CONFIG)
+        path.write_text(config)
         storage = types.SimpleNamespace()
         started.append((storage, to_worker, thread))
         return types.SimpleNamespace(path=path, storage=storage, child=child)
@@ -1313,6 +1320,33 @@ def test_each_status_reaches_the_shot_that_earned_it_behind_slow_trailing_work(
     assert [results(rows[shot_id])['best_shot_id'] for shot_id in ours] == ours
     with h5py.File(rows['someone-elses']['filepath'], 'r') as f:
         assert 'results' not in f
+
+
+def test_shots_handed_over_together_each_carry_their_own_phase(
+    running, shot, results
+):
+    """One request hands over every shot lyse analysed since the last, and
+    those shots need not have been proposed by the same thing: the first two
+    of this run are the configured start, which the session proposes itself,
+    and a shot from the learner. Each is written with the phase of what
+    proposed it. One phase for the request would put the same answer onto
+    both, and at least one of them would be wrong.
+    """
+    pytest.importorskip('lyse')
+    session = running(
+        lambda config: FakeRunmanager(),
+        reply_timeout=5.0,
+        config=WORKER_CONFIG.replace('max = 1.0', 'max = 1.0\nstart = 0.5'),
+    )
+    sequence = [shot(shot_id='before-this-session')]
+    routine_module.optimise(session.path, session.storage, frame(sequence))
+
+    start, learners = shot(shot_id='shot-0'), shot(shot_id='shot-1')
+    sequence += [start, learners]
+    routine_module.optimise(session.path, session.storage, frame(sequence))
+
+    assert results(start)['phase'] == 'start'
+    assert results(learners)['phase'] == 'main'
 
 
 @pytest.fixture

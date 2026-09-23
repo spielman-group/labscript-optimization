@@ -69,6 +69,24 @@ start = 0.25
 """
 
 
+TRAINED = """
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = ["G"]
+[GENERAL]
+learner = "gaussian_process"
+num_buffered_runs = 5
+num_training_runs = 4
+num_runs_between_trainer_runs = 3
+max_num_runs = 24
+seed = 20260923
+[PARAMETERS.G.x]
+global_name = "gx"
+min = 0.0
+max = 1.0
+"""
+
+
 def make_config(buffered=3, maximize=False, **extra):
     lines = '\n'.join(f'{k} = {v}' for k, v in extra.items())
     return config_module.loads(
@@ -114,7 +132,7 @@ def test_costs_arriving_out_of_order_land_in_proposal_order(session):
 
 def test_a_shot_this_session_did_not_submit_is_ignored(session):
     session.refill()
-    assert session.record('someone-elses-shot', 1.0, None, False) is False
+    assert session.record('someone-elses-shot', 1.0, None, False) is None
     assert [o.shot_id for o in session.history] == ['shot-0', 'shot-1', 'shot-2']
     assert all(o.cost is None for o in session.history)
 
@@ -163,8 +181,8 @@ def test_a_proposal_still_waiting_is_a_position_spent_and_nothing_more(runmanage
 def test_a_second_cost_for_one_shot_is_ignored(session):
     """A row can run twice: a retry, or BLACS re-running a file with data."""
     session.refill()
-    assert session.record('shot-0', 5.0, None, False) is True
-    assert session.record('shot-0', 99.0, None, False) is False
+    assert session.record('shot-0', 5.0, None, False) is not None
+    assert session.record('shot-0', 99.0, None, False) is None
     assert session.best.cost == 5.0
 
 
@@ -217,7 +235,7 @@ def test_a_cost_arriving_after_a_shot_was_dropped_is_still_taken(session, runman
     session.refill()
     runmanager.lose('shot-0')
     session.reconcile()
-    assert session.record('shot-0', 2.0, None, False) is True
+    assert session.record('shot-0', 2.0, None, False) is not None
     assert session.best.shot_id == 'shot-0'
 
 
@@ -264,7 +282,7 @@ def test_a_shot_that_has_only_just_run_is_not_treated_as_lost(session, runmanage
     assert session.reconcile() == []
     assert session.status()['dropped'] == 0
 
-    assert session.record('shot-0', 1.0, None, False) is True
+    assert session.record('shot-0', 1.0, None, False) is not None
     assert session.reconcile() == []
     assert session.status()['dropped'] == 0
 
@@ -290,6 +308,36 @@ def test_a_shot_with_a_reason_is_dropped_at_the_first_reconcile(session, runmana
     session.refill()
     runmanager.lose('shot-0')
     assert session.reconcile() == ['shot-0']
+
+
+def test_what_the_session_awaits_is_the_historys_pending_records(
+    session, runmanager
+):
+    """A learner reads which proposals are in flight off the history, and the
+    session reads the same thing to decide how many to submit, what to ask
+    runmanager about and what to report. An account kept beside the history
+    has to be moved in step with it by every way a shot stops being awaited,
+    and a cost for a shot already given up on, or a second cost for one
+    already taken, is where a count kept by hand moves twice.
+    """
+
+    def pending():
+        return [o.shot_id for o in session.history if o.state == PENDING]
+
+    session.refill()
+    runmanager.lose('shot-0')
+    session.reconcile()
+    assert session.awaiting == pending() == ['shot-1', 'shot-2']
+
+    # A late cost for the shot just dropped, and a repeated one.
+    session.record('shot-0', 1.0, None, False)
+    session.record('shot-1', 2.0, None, False)
+    session.record('shot-1', 3.0, None, False)
+    assert session.awaiting == pending() == ['shot-2']
+    assert session.status()['awaiting'] == 1
+
+    assert session.refill() == ['shot-3', 'shot-4']
+    assert session.awaiting == pending() == ['shot-2', 'shot-3', 'shot-4']
 
 
 # --- stopping ---------------------------------------------------------------
@@ -498,6 +546,57 @@ def test_a_generation_opening_on_the_configured_start_is_still_whole(runmanager)
 
     started = [session.proposals[shot_id][0] for shot_id in opening + second]
     assert started.count(0.25) == 1
+
+
+def test_the_configured_start_carries_a_source_of_its_own(runmanager):
+    """The session proposes the start itself, whichever learner is running, so
+    it is not any learner's phase: the shot it goes out in says ``start``, and
+    the learner's shots beside it say what the learner said of them.
+    """
+    session = Session(config_module.loads(STARTED), runmanager)
+    session.refill()
+    assert [o.source for o in session.history] == ['start', 'main']
+    assert session.record('shot-0', 1.0, None, False) == 'start'
+
+
+# --- what proposed each shot ------------------------------------------------
+
+
+def test_each_shot_carries_the_phase_of_the_learner_that_proposed_it(runmanager):
+    """The routine's order of events, one shot at a time: the oldest shot
+    outstanding reports its cost, the reply carries what is written onto it,
+    and the refill comes after. A trainer hands over part way through the
+    run, comes back every fourth shot after it, and the budget ends the run
+    with five shots in flight.
+
+    What is written onto a shot is the phase of the refill that proposed it.
+    The phase of the latest proposal is another shot's whenever more than one
+    is in flight: across the handover it names the main learner for shots the
+    trainer proposed, and once the budget is spent it stays at whatever was
+    proposed last. The history holds the same answer, fixed when each shot
+    was proposed and unchanged by everything proposed since.
+    """
+    session = Session(config_module.loads(TRAINED), runmanager)
+    proposed_by, latest, written = {}, {}, {}
+
+    def refill():
+        for shot_id in session.refill():
+            proposed_by[shot_id] = session.learner.last_phase
+
+    refill()
+    while session.awaiting:
+        shot_id = session.awaiting[0]
+        cost = float((session.proposals[shot_id][0] - 0.3) ** 2)
+        written[shot_id] = session.record(shot_id, cost, None, False)
+        latest[shot_id] = session.learner.last_phase
+        refill()
+
+    assert len(written) == 24
+    # The run is one where the latest proposal's phase is the wrong answer
+    # for some of its shots; otherwise nothing here tells the two apart.
+    assert latest != proposed_by
+    assert written == proposed_by
+    assert {o.shot_id: o.source for o in session.history} == proposed_by
 
 
 def test_an_empty_queue_at_refill_is_counted(runmanager):
