@@ -677,6 +677,26 @@ def test_the_session_submits_what_its_learner_proposes_and_holds_no_barrier(
     assert len(session.awaiting) == 3
 
 
+def test_the_budget_keeps_the_first_proposals_a_learner_offers(runmanager):
+    """A learner orders what it offers, and the budget cuts from the end.
+
+    Differential evolution computes each trial for the slot its position will
+    give it, so a generation cut short by the budget must keep its first
+    trials: kept from the other end, every surviving trial would land in a
+    slot it was not bred for and compete against the wrong incumbent.
+    """
+
+    class Labelled:
+        generation = None
+
+        def propose(self, history, hint):
+            return [(np.array([x]), 'main') for x in (0.1, 0.2, 0.3, 0.4)]
+
+    session = Session(make_config(max_num_runs=2), runmanager, Labelled())
+    session.refill()
+    assert [p[0] for p in session.proposals.values()] == [0.1, 0.2]
+
+
 def test_a_generational_run_counts_no_starvation(runmanager):
     """A generational learner empties the queue once per generation, by
     design, and a counter that fires by design is noise in the one number the

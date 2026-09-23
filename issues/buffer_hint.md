@@ -22,14 +22,14 @@ House rules that apply to every slice:
   behaviour changes, grep for every sentence that described the old behaviour.
 - No settings accepted for compatibility. A removed key is refused at load,
   naming its replacement.
-- Branch is `Development`. The suite stands at 457 tests. A count quoted inside
+- Branch is `Development`. The suite stands at 463 tests. A count quoted inside
   a slice is the one that slice was written against; recount before relying on
   either.
 
 ## Checklist
 
 - [x] Slice 1: Each shot carries the learner that proposed it
-- [ ] Slice 2: Learners pace themselves
+- [x] Slice 2: Learners pace themselves
 - [ ] Slice 3: The Gaussian process runs its own cycle
 - [ ] Slice 4: Test cleanup
 - [x] Slice 5: Re-run the population measurement against the shipped dither
@@ -114,16 +114,16 @@ what it asserts.
 
 ### Acceptance criteria
 
-- [ ] Learners answer the hint with zero or more proposals, each with its source
-- [ ] Differential evolution proposes a whole generation only when none of its
+- [x] Learners answer the hint with zero or more proposals, each with its source
+- [x] Differential evolution proposes a whole generation only when none of its
       own is pending, and nothing otherwise; ignoring pending states sends a
       second generation out and fails the test
-- [ ] The random learners keep exactly the hint in flight
-- [ ] The budget refusal still fires at `max_num_runs < 2 × population_size`;
+- [x] The random learners keep exactly the hint in flight
+- [x] The budget refusal still fires at `max_num_runs < 2 × population_size`;
       deleting `generation` fails the test
-- [ ] Starvation is not counted for differential evolution and is counted for
+- [x] Starvation is not counted for differential evolution and is counted for
       the random learners
-- [ ] The session has no barrier branch of its own
+- [x] The session has no barrier branch of its own
 
 ### Blocked by
 
