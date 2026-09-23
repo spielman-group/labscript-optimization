@@ -47,6 +47,7 @@ MENTIONS_M_LOOP = {
     'LICENSE': 5,
     'README.md': 11,
     'benchmarks/README.md': 1,
+    'issues/buffer_hint_plan.md': 1,
     'labscript_optimization/config.py': 5,
     'tests/test_config.py': 15,
 }
