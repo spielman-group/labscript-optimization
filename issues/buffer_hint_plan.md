@@ -38,7 +38,7 @@ keep queued — and each learner honours it as far as its method allows.**
 
 ### Random and directed random — unchanged (settled)
 Exactly `num_buffered_runs` of their proposals in flight. Floor 1: below it
-nothing is ever proposed.
+nothing is ever proposed. The default becomes 2 (§3).
 
 ### Differential evolution — unchanged (settled)
 DE ignores `num_buffered_runs` and the explorer entirely. It keeps its
@@ -77,8 +77,8 @@ until C2 lands.
   of it completed or dropped. Explorer shots do not hold it up; their costs
   land whenever they land and join the fit.
 - **`num_buffered_runs = 0` is legal for the GP** and means no buffer beyond
-  `explore_runs`. Exploring is not switched off by it. The GP's default
-  `num_buffered_runs` is 1 (§3).
+  `explore_runs`. Exploring is not switched off by it. The default
+  `num_buffered_runs` is 2 (§3).
 - **`warmup_observations`** replaces both `minimum_observations` and
   `num_training_runs`, and defaults to `max(5, 2 × num_params)` (see §3) — a
   default that scales with the search, because a constant one is what #8 was.
@@ -134,19 +134,16 @@ warmup_observations = 20
 
 ## 3. Decided (Ian)
 
-1. **The GP's default `num_buffered_runs` is 1.** That cycle's ratio — four GP shots, one
-   explorer shot — is the only regime anyone has run; at 3 the rule would make
-   3 of every 7 shots, 43%, explorer draws out of the box. `starved` is the cue
-   to raise it.
-
-   **Open: the random learners' default.** The decision was made for the GP.
-   For `random` and `directed_random`, 1 in flight means BLACS finds the queue
-   empty at almost every shot — the worker replies before it refills, so the
-   replacement is queued after BLACS has asked — which the example
-   configuration already describes as "roughly every second shot is a default
-   one". Either the default is 1 everywhere, or it is a fact the built learner
-   declares (1 for the GP, 3 for the random learners), read off the instance
-   like every other declaration here.
+1. **The default `num_buffered_runs` is 2, for every learner that reads it.**
+   Of the shots in flight, one is always the shot BLACS is running: a shot
+   comes back when lyse has analysed it, after BLACS has already asked for the
+   next. At 1, a random learner therefore never has a shot waiting when BLACS
+   asks, and the apparatus alternates with default shots; at 2, one is always
+   waiting. For the GP the default gives max(1, 2) = 2 explorer shots behind
+   each batch of 4, and a fit a shot of cover. Ian runs at 2 or more in
+   practice, so the default is set to how the package is used rather than to
+   the four-to-one ratio of the cycle in §2, and needs no per-learner
+   declaration.
 2. **`explore_runs = 0` with `num_buffered_runs = 0` is allowed**: a pure GP
    that idles the apparatus during fits. Unwise for most labs, impossible for
    none, and `starved` counts it truthfully.

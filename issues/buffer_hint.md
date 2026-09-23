@@ -165,8 +165,8 @@ The Gaussian process owns its explorer and its warmup, and proposes in batches.
   `directed_random`), `explore_runs` (default 1), `batch_size` (default 4) and
   `warmup_observations` live in `[LEARNER.gaussian_process]`; the explorer's own
   knobs stay in its own table. `num_buffered_runs = 0` is legal for the GP, and
-  the GP's default is 1. The random learners' default follows Ian's answer to
-  the open item in plan §3.1 — settle it before this slice starts.
+  the default `num_buffered_runs` becomes 2 for every learner that reads it
+  (plan §3.1).
 - **Removed**, each refused at load with its replacement named:
   `TwoPhaseLearner`, `[GENERAL] trainer`, `num_training_runs`,
   `num_runs_between_trainer_runs`, `refit_interval`, `minimum_observations`.
@@ -190,6 +190,7 @@ The Gaussian process owns its explorer and its warmup, and proposes in batches.
 - [ ] Warmup ends at `warmup_observations` usable observations; counting shots
       fails the test with NaN costs
 - [ ] `warmup_observations` defaults to `max(5, 2 × num_params)`
+- [ ] `num_buffered_runs` defaults to 2
 - [ ] Each batch walks the exploration schedule from its first weight
 - [ ] The budget cuts explorer shots before any of the batch
 - [ ] A pure GP (`explore_runs = 0`, `num_buffered_runs = 0`) loads, and its
