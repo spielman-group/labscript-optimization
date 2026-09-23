@@ -22,17 +22,17 @@ House rules that apply to every slice:
   behaviour changes, grep for every sentence that described the old behaviour.
 - No settings accepted for compatibility. A removed key is refused at load,
   naming its replacement.
-- Branch is `Development`. The suite stands at 452 tests. A count quoted inside
+- Branch is `Development`. The suite stands at 457 tests. A count quoted inside
   a slice is the one that slice was written against; recount before relying on
   either.
 
 ## Checklist
 
-- [ ] Slice 1: Each shot carries the learner that proposed it
+- [x] Slice 1: Each shot carries the learner that proposed it
 - [ ] Slice 2: Learners pace themselves
 - [ ] Slice 3: The Gaussian process runs its own cycle
 - [ ] Slice 4: Test cleanup
-- [ ] Slice 5: Re-run the population measurement against the shipped dither
+- [x] Slice 5: Re-run the population measurement against the shipped dither
 
 ---
 
@@ -66,15 +66,15 @@ parallel.
 
 ### Acceptance criteria
 
-- [ ] Every observation in the history carries the source recorded when it was
+- [x] Every observation in the history carries the source recorded when it was
       proposed, including the configured start
-- [ ] In the simulated routine run that found 7 of 24 wrong, every shot's
+- [x] In the simulated routine run that found 7 of 24 wrong, every shot's
       `phase` is its own source; writing the latest proposal's phase instead
       fails the test
-- [ ] The session's awaited shots and the history's pending records agree after
+- [x] The session's awaited shots and the history's pending records agree after
       drops, late costs and duplicate costs; a separately kept count fails the
       test
-- [ ] The phase column's documentation says it is the shot's own source
+- [x] The phase column's documentation says it is the shot's own source
 
 ### Blocked by
 
@@ -263,13 +263,13 @@ slices 1–3 changes the algorithm, so this can run alongside them.
 
 ### Acceptance criteria
 
-- [ ] The dimension sweep is re-run at the current commit, with its rows in the
+- [x] The dimension sweep is re-run at the current commit, with its rows in the
       benchmark results and its header naming the commit and command
-- [ ] The benchmark README's tables and figures are the new ones
-- [ ] If the block winners move, the `population_size` default and its
+- [x] The benchmark README's tables and figures are the new ones
+- [x] If the block winners move, the `population_size` default and its
       docstring are changed to match and the change is stated; if they do not,
       that is stated
-- [ ] The benchmark smoke test still passes
+- [x] The benchmark smoke test still passes
 
 ### Blocked by
 
