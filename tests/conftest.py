@@ -92,10 +92,15 @@ def observe(shot_id, params, cost, uncer=None, bad=False, state=COMPLETE):
 
 
 def run_loop(learner, space, cost_function, batches, k, rng, history=None):
-    """Drive a learner in closed loop and return the history it produced."""
+    """Drive a learner in closed loop and return the history it produced.
+
+    Every proposal is measured before the next call, so nothing is in flight
+    when the learner is asked: ``k`` is the hint, which a learner declaring a
+    generation does not read.
+    """
     history = list(history or [])
     for batch in range(batches):
-        for params in np.atleast_2d(learner.propose(history, k)):
+        for params, _ in learner.propose(history, k):
             history.append(
                 observe(f'{batch}-{len(history)}', params, cost_function(params))
             )

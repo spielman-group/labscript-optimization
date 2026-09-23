@@ -6,6 +6,12 @@ thing that works and the reference every other learner is measured against.
 :class:`DirectedRandomLearner` draws near a previously seen point rather than
 near the best one, which biases it towards exploring the space instead of
 refining a single minimum. It is the trainer the Gaussian process runs first.
+
+Both keep exactly the hint of the run's shots in flight: each proposes as many
+as the hint leaves room for beside the history's pending records, whoever
+proposed them, so a configured start the session has placed takes one of
+their places. How a point is drawn is :meth:`RandomLearner.ask`, which is the
+whole of what the two differ in.
 """
 
 from typing import Sequence
@@ -13,7 +19,7 @@ from typing import Sequence
 import numpy as np
 
 from .. import knobs
-from ..observations import Observation, costs_array, params_array, usable
+from ..observations import PENDING, Observation, costs_array, params_array, usable
 from ..space import ParameterSpace
 from .base import ParameterSpaceLearner
 
@@ -26,13 +32,30 @@ class RandomLearner(ParameterSpaceLearner):
         rng: Source of randomness.
     """
 
-    last_phase = "main"
+    def propose(
+        self, history: Sequence[Observation], hint: int
+    ) -> list[tuple[np.ndarray, str]]:
+        """Top the run's shots in flight up to ``hint``, and propose no more.
 
-    def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
+        Every pending record counts, not only this learner's own: the hint is
+        how many shots to keep queued, and a shot is queued whoever proposed
+        it. Below a hint of one nothing is ever proposed.
+        """
+        wanted = hint - sum(o.state == PENDING for o in history)
+        if wanted <= 0:
+            return []
+        return [(params, "main") for params in self.ask(history, wanted)]
+
+    def ask(self, history: Sequence[Observation], k: int) -> np.ndarray:
+        """The next ``k`` points, as a ``(k, num_params)`` array.
+
+        The drawing without the pacing: what :meth:`propose` tops the queue up
+        with, whatever is in flight.
+        """
         return self.space.uniform(self.rng, k)
 
 
-class DirectedRandomLearner(ParameterSpaceLearner):
+class DirectedRandomLearner(RandomLearner):
     """Random draws centred on a previously seen point.
 
     Each proposal is either a pure random draw, with probability
@@ -58,8 +81,6 @@ class DirectedRandomLearner(ParameterSpaceLearner):
         explore_fraction: Share of proposals that ignore the trust region and
             draw from the whole space.
     """
-
-    last_phase = "main"
 
     def __init__(
         self,
@@ -113,7 +134,7 @@ class DirectedRandomLearner(ParameterSpaceLearner):
             return self.space.clip(self.rng.normal(centre, self.trust_region))
         return self.space.uniform(self.rng, 1, centre, self.trust_region)[0]
 
-    def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
+    def ask(self, history: Sequence[Observation], k: int) -> np.ndarray:
         seen = usable(history)
         if not seen or self.trust_region is None:
             return self.space.uniform(self.rng, k)

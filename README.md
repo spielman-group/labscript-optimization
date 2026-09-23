@@ -68,7 +68,7 @@ under the results group `labscript_optimization`, so it comes back as
 dataframe columns: `df[('labscript_optimization', 'best_cost')]` is the best
 cost so far, beside the parameters and the shot that produced it, and why the
 session stopped. `phase` is the shot's own: what proposed that shot, which is
-the learner's phase for the batch it went out in, or `start` for the
+the source the learner gave it when it proposed it, or `start` for the
 configured start, however far the run has moved on since. A value the session
 does not have yet is empty — `NaN` for the best cost, an empty string or list
 for the rest. Shots that are not the optimiser's own — yours, and
@@ -156,7 +156,7 @@ sit side by side and be switched between by changing `[GENERAL] learner`.
 | --- | --- |
 | `random` | Uniform draws. The reference the others are measured against. |
 | `directed_random` | Draws near a previously seen point, chosen from a band of middling costs rather than from the best one, so it explores rather than refines. |
-| `differential_evolution` | Evolves a population, one whole generation at a time: it proposes `population_size` shots together and is not asked again until all of them have been answered for. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds — around eight searches well and a budget over a thousand shots is worth sixteen, measured over four analytic test functions at two to eight parameters (`benchmarks/README.md`, "What the sweep found", has the tables, the caveats and the harness that produced them) — and it is the queue depth too, so `num_buffered_runs` is not accepted beside it. |
+| `differential_evolution` | Evolves a population, one whole generation at a time: it proposes `population_size` shots together and nothing more until all of them have been answered for. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds — around eight searches well and a budget over a thousand shots is worth sixteen, measured over four analytic test functions at two to eight parameters (`benchmarks/README.md`, "What the sweep found", has the tables, the caveats and the harness that produced them) — and it is the queue depth too, so `num_buffered_runs` is not accepted beside it. |
 | `gaussian_process` | Fits a Gaussian process and searches its posterior. The only learner that needs training: it runs the learner `[GENERAL] trainer` names for its training shots. `trainer` defaults to `directed_random`, and cannot be `differential_evolution`, which proposes whole generations that a two-phase learner cannot hold a barrier for. `[GENERAL] num_training_runs` must be at least this learner's `minimum_observations`, which defaults to twice the parameter count; a shorter warmup is refused, because the handover would happen later than the number says. |
 
 ### Going back to the trainer
@@ -217,17 +217,28 @@ that is the peak of a positive quantity has the opposite shape: an atom number
 carries its largest absolute noise exactly at the top, where the search ends
 up.
 
-A learner is a function from the proposal history to `k` proposals:
+### Writing your own
+
+A learner is a function from the proposal history and a hint to whatever its
+method allows it to propose now:
 
 ```python
-def propose(self, history: Sequence[Observation], k: int) -> np.ndarray: ...
+def propose(
+    self, history: Sequence[Observation], hint: int
+) -> list[tuple[np.ndarray, str]]: ...
 ```
 
 It is handed the whole history every time, in the order the proposals were
 made, and holding every one of them: a shot still running and a shot that will
 never report are both in there as a position spent without a usable cost. That
-is what keeps the bookkeeping for shots in flight out of the algorithms, and it
-means a learner can be used on its own against any cost function:
+is what keeps the bookkeeping for shots in flight out of the algorithms. The
+shots in flight are the history's pending records, and the hint is
+`num_buffered_runs`, how many of them to keep. A learner honours it as far as
+its method allows — the random learners keep exactly that many in flight, and
+`differential_evolution` does not read it, proposing a whole generation when
+none of the last is pending and nothing otherwise — and the session submits
+what comes back, cut only to what `max_num_runs` has room for. So a learner
+can be used on its own against any cost function:
 
 ```python
 import numpy as np
@@ -240,32 +251,41 @@ learner = DifferentialEvolutionLearner(space, np.random.default_rng())
 
 history = []
 for step in range(100):
-    for params in learner.propose(history, k=4):
-        history.append(Observation(str(step), params, float(params[0] ** 2)))
+    for params, source in learner.propose(history, hint=4):
+        history.append(
+            Observation(str(len(history)), params, float(params[0] ** 2))
+        )
 ```
 
-### Writing your own
+The learners here also answer `ask(history, k)`: exactly `k` points from the
+same method, with no pacing and no sources.
 
-A learner answers `propose` and carries a `last_phase` string, naming which of
-its ways of proposing made the batch it last returned — the session records it
-on every proposal of that batch, and it is what those shots read in the
-`phase` column — and a `generation`, which is `None` unless the learner
-proposes only whole groups of a fixed size and only when none of its
-proposals is outstanding. Those three
-are `Learner`, which everything here inherits — the two-phase wrapper included, so
-a session cannot tell a wrapped learner from a plain one. Your own object is
-driven by those same three members whether or not it inherits anything.
+Each proposal comes back beside its source, a string naming which of the
+learner's ways of proposing made it. The session records it when it submits
+the shot, and it is what that shot reads in the `phase` column; a learner with
+one way of proposing calls it `main`. Nothing supplies one on a learner's
+behalf, so a proposal returned without one is refused rather than recorded as
+the main learner's. A learner also carries a `generation`, which is `None`
+unless it proposes only whole groups of a fixed size and only when none of the
+last is pending. The session holds no barrier for it — the barrier is the
+learner's own — but leaves the starved refills of such a learner uncounted,
+and loading a configuration reads it to refuse a budget under two generations
+and a `num_buffered_runs` beside one. Those two members are `Learner`, which
+everything here inherits — the two-phase wrapper included, so a session cannot
+tell a wrapped learner from a plain one. Your own object is driven by those
+same two members whether or not it inherits anything.
 
 A learner that wraps another owes an answer for every attribute something
-outside a learner reads off it — `last_phase` and `generation`, which the
-session reads, and `minimum_observations`, which a wrapper reads to decide
+outside a learner reads off it — `generation`, which the session and the
+configuration read, and `minimum_observations`, which a wrapper reads to decide
 whether the handover it was configured for can happen. Three answers are
 honest: answer for itself, where the wrapper's own value is the true one; pass
 the wrapped learner's on, where the wrapper can hold what that value promises;
 or refuse to be built, where it cannot. Leaving one unanswered is none of the
 three — the reader's own default becomes the answer, and the wrapped learner's
-declaration is dropped with nothing said. The two-phase wrapper answers
-`last_phase` for itself, declares a `minimum_observations` of zero because each
+declaration is dropped with nothing said. The two-phase wrapper labels every
+proposal with its own phase rather than the source the wrapped learner gave it,
+declares a `minimum_observations` of zero because each
 of its two phases is held to a learner that can propose throughout it — a
 trainer that withholds proposals is refused, and so is a training phase shorter
 than its main learner's own requirement — and refuses

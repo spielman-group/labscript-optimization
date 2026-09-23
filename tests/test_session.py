@@ -526,8 +526,8 @@ def test_the_configured_start_is_the_first_proposal_and_the_only_one(runmanager)
 def test_a_generation_opening_on_the_configured_start_is_still_whole(runmanager):
     """The start takes the first place in the batch, not a batch of its own.
 
-    A generational learner is asked for a whole generation and only when none
-    of its proposals is outstanding. A start sent out on its own would be a
+    A generational learner proposes a whole generation and only when none of
+    the last is outstanding. A start sent out on its own would be a
     second route past that barrier: one shot, then a generation with the
     queue drained between them, and a population founded a slot short of the
     generation it is bred from.
@@ -546,6 +546,23 @@ def test_a_generation_opening_on_the_configured_start_is_still_whole(runmanager)
 
     started = [session.proposals[shot_id][0] for shot_id in opening + second]
     assert started.count(0.25) == 1
+
+
+def test_a_configured_start_still_out_holds_the_next_generation_back(runmanager):
+    """Once submitted, the start is a founder like the rest of its generation,
+    and the next generation waits for it as it waits for them. Bred without
+    it, the population would be a slot short, and the start's cost would land
+    on a generation that had already gone.
+    """
+    session = Session(config_module.loads(GENERATIONAL_STARTED), runmanager)
+
+    start, *founders = session.refill()
+    for shot_id in founders:
+        session.record(shot_id, 1.0, None, False)
+    assert session.refill() == []
+
+    session.record(start, 1.0, None, False)
+    assert len(session.refill()) == 4
 
 
 def test_the_configured_start_carries_a_source_of_its_own(runmanager):
@@ -569,26 +586,39 @@ def test_each_shot_carries_the_phase_of_the_learner_that_proposed_it(runmanager)
     run, comes back every fourth shot after it, and the budget ends the run
     with five shots in flight.
 
-    What is written onto a shot is the phase of the refill that proposed it.
-    The phase of the latest proposal is another shot's whenever more than one
-    is in flight: across the handover it names the main learner for shots the
-    trainer proposed, and once the budget is spent it stays at whatever was
-    proposed last. The history holds the same answer, fixed when each shot
-    was proposed and unchanged by everything proposed since.
+    What is written onto a shot is the phase the learner gave it when it
+    proposed it. The phase of the latest proposal is another shot's whenever
+    more than one is in flight: across the handover it names the main learner
+    for shots the trainer proposed, and once the budget is spent it stays at
+    whatever was proposed last. The history holds the same answer, fixed when
+    each shot was proposed and unchanged by everything proposed since.
     """
     session = Session(config_module.loads(TRAINED), runmanager)
     proposed_by, latest, written = {}, {}, {}
+    # What the learner says of each proposal, heard as it says it: its answer
+    # to the latest call, and the source of the newest proposal it has made.
+    answer, newest = [], [None]
+    propose = session.learner.propose
+
+    def listen(history, hint):
+        answer[:] = propose(history, hint)
+        if answer:
+            newest[0] = answer[-1][1]
+        return list(answer)
+
+    session.learner.propose = listen
 
     def refill():
-        for shot_id in session.refill():
-            proposed_by[shot_id] = session.learner.last_phase
+        # The session submits the answer in order, cut to the budget's room.
+        for shot_id, (_, source) in zip(session.refill(), answer):
+            proposed_by[shot_id] = source
 
     refill()
     while session.awaiting:
         shot_id = session.awaiting[0]
         cost = float((session.proposals[shot_id][0] - 0.3) ** 2)
         written[shot_id] = session.record(shot_id, cost, None, False)
-        latest[shot_id] = session.learner.last_phase
+        latest[shot_id] = newest[0]
         refill()
 
     assert len(written) == 24
@@ -613,7 +643,7 @@ def test_an_empty_queue_at_refill_is_counted(runmanager):
 
 
 def test_a_generation_goes_out_whole_and_waits_to_be_answered_for(runmanager):
-    """The learner is never asked while any of its proposals is outstanding,
+    """The learner proposes nothing while any of its proposals is outstanding,
     which is what stops a trial being bred against a half-built population.
     """
     session = Session(config_module.loads(GENERATIONAL), runmanager)
@@ -626,6 +656,25 @@ def test_a_generation_goes_out_whole_and_waits_to_be_answered_for(runmanager):
 
     session.record(session.awaiting[0], 1.0, None, False)
     assert len(session.refill()) == 4
+
+
+def test_the_session_submits_what_its_learner_proposes_and_holds_no_barrier(
+    runmanager,
+):
+    """Pacing is the learner's. A learner declaring a generation is still
+    handed the hint on every refill, and whatever it answers goes out, with
+    shots of its own in flight or not.
+    """
+
+    class OneAtATime:
+        generation = 4
+
+        def propose(self, history, hint):
+            return [(np.array([0.5]), 'main')]
+
+    session = Session(make_config(), runmanager, OneAtATime())
+    assert [len(session.refill()) for _ in range(3)] == [1, 1, 1]
+    assert len(session.awaiting) == 3
 
 
 def test_a_generational_run_counts_no_starvation(runmanager):

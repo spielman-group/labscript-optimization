@@ -36,6 +36,7 @@ import numpy as np
 
 from .. import knobs
 from ..observations import (
+    PENDING,
     Observation,
     best,
     costs_array,
@@ -91,8 +92,6 @@ class GaussianProcessLearner(ParameterSpaceLearner):
             many usable observations, so a two-phase wrapper keeps using its
             trainer. Defaults to twice the parameter count.
     """
-
-    last_phase = "main"
 
     def __init__(
         self,
@@ -436,7 +435,24 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         )
         return conditioned
 
-    def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
+    def propose(
+        self, history: Sequence[Observation], hint: int
+    ) -> list[tuple[np.ndarray, str]]:
+        """Top the run's shots in flight up to ``hint``, as the random learners do.
+
+        Every pending record counts against the hint, so nothing is fitted
+        while the queue is full.
+        """
+        wanted = hint - sum(o.state == PENDING for o in history)
+        if wanted <= 0:
+            return []
+        return [(params, "main") for params in self.ask(history, wanted)]
+
+    def ask(self, history: Sequence[Observation], k: int) -> np.ndarray:
+        """The next ``k`` points, each folded into the fit before the next.
+
+        The search without the pacing, as a ``(k, num_params)`` array.
+        """
         if not self.fit(history):
             raise InsufficientData(
                 f"the Gaussian process needs {self.minimum_observations} usable "

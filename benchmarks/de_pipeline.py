@@ -2,23 +2,23 @@
 
 Each run is a real :class:`~labscript_optimization.session.Session`, built by
 the shipped configuration loader from a real configuration file, with a fake
-runmanager standing in for the queue. The generation barrier in ``refill``, the
-position walk in ``replay`` and the history's pending entries are therefore
-exercised as they are in a lab, rather than by a reimplementation written to
-match them.
+runmanager standing in for the queue. The generation barrier in the learner's
+``propose``, the position walk in ``replay`` and the history's pending entries
+are therefore exercised as they are in a lab, rather than by a reimplementation
+written to match them.
 
 Two variants, differing from each other in one thing only:
 
 ``generational``
-    The shipped learner. Its ``generation`` declaration makes the session
-    submit one whole population and ask for nothing until all of it has been
-    answered for.
+    The shipped learner. It proposes one whole population and nothing more
+    until all of it has been answered for.
 
 ``asynchronous``
     The same shipped learner with the barrier lifted and nothing else changed
-    -- a subclass whose only content is ``generation = None`` -- driven by the
-    same session at ``num_buffered_runs`` depth. Same replay, same mutation,
-    same crossover, same bounds handling. It is a reference point for feedback
+    -- a subclass that declares no generation and paces itself as the random
+    learners do, keeping ``num_buffered_runs`` in flight from the shipped
+    ``ask`` -- driven by the same session. Same replay, same mutation, same
+    crossover, same bounds handling. It is a reference point for feedback
     latency, not an alternative on offer, since it also runs the apparatus at a
     shallower queue.
 
@@ -50,7 +50,7 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 
 from labscript_optimization import config as config_module
-from labscript_optimization.learners import DifferentialEvolutionLearner
+from labscript_optimization.learners import DifferentialEvolutionLearner, RandomLearner
 from labscript_optimization.session import Session
 from labscript_optimization.space import Parameter, ParameterSpace
 
@@ -103,10 +103,13 @@ FIELDS = (
 class AsynchronousDifferentialEvolution(DifferentialEvolutionLearner):
     """The shipped learner with the generation barrier lifted, and nothing else.
 
-    A session asks a learner declaring no generation for enough proposals to
-    keep ``num_buffered_runs`` in the queue, whenever there is room. Every
-    other line of the algorithm is the shipped one.
+    Its ``propose`` is the random learners' own, which tops the shots in
+    flight up to ``num_buffered_runs`` from whatever ``ask`` draws, and it
+    declares no generation, so the session counts its starved refills as it
+    does theirs. Every line of the algorithm is the shipped one.
     """
+
+    propose = RandomLearner.propose
 
     @property
     def generation(self):

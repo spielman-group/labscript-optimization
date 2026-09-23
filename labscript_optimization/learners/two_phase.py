@@ -47,30 +47,30 @@ class TwoPhaseLearner(Learner):
     position would be spent and the counter would not know it -- and a learner
     handed the same history twice would answer differently the second time.
 
-    Of the three members a session reads, this answers ``last_phase`` for
-    itself -- the phase is this learner's own, and naming the trainer and the
-    main learner is the whole point of it -- and declares
-    ``minimum_observations`` of zero, which is true at both ends: below
-    ``num_training`` the trainer proposes, and a trainer that withholds
-    proposals of its own is refused, while at ``num_training`` and above the
-    main learner can propose, because a warmup shorter than the main learner's
-    own requirement is refused. ``generation`` it
-    can neither answer for nor pass on, so a learner declaring one is refused
-    here rather than wrapped.
+    It hands the hint on to whichever learner's turn it is and returns what
+    that learner proposes, each proposal labelled with this learner's own
+    phase rather than the source the wrapped learner gave it -- naming the
+    trainer and the main learner is the whole point of it. Of the members read
+    off it, it declares ``minimum_observations`` of zero, which is true at
+    both ends: below ``num_training`` the trainer proposes, and a trainer that
+    withholds proposals of its own is refused, while at ``num_training`` and
+    above the main learner can propose, because a warmup shorter than the main
+    learner's own requirement is refused. ``generation`` it can neither answer
+    for nor pass on, so a learner declaring one is refused here rather than
+    wrapped.
 
     The alternative -- forwarding the main learner's generation -- is wrong on
     three counts. During training the trainer proposes and declares no
     barrier, so a forwarded generation would describe a phase that is not
-    running: the session would drain the queue every ``generation`` shots
-    throughout training, and ``refill`` does not count starvation for a
-    learner declaring a generation, so the default shots runmanager hands
-    BLACS at each of those drains would be missing from the one number a lab
-    is told to watch. The barrier is also not the whole of what a generational
+    running: ``refill`` does not count starvation for a learner declaring a
+    generation, so the default shots runmanager hands BLACS whenever the queue
+    runs dry during training would be missing from the one number a lab is
+    told to watch. The barrier is also not the whole of what a generational
     learner needs: it reads a proposal's role off its position in the history
     it is handed, and behind a trainer that history opens with positions it
     never proposed and results that are not trials of its population -- so
-    forwarding would make the queueing honest and leave the algorithm still
-    not the one it is named after. And the declaration itself would be false
+    whatever the wrapper declared, the algorithm would still not be the one it
+    is named after. And the declaration itself would be false
     of this object, which spends its training phase proposing through a
     learner that makes no such promise.
     Wrapping a generational learner needs the history it is handed to begin
@@ -115,15 +115,16 @@ class TwoPhaseLearner(Learner):
             if generation is not None:
                 raise ValueError(
                     f"the {role} {type(wrapped).__name__} proposes whole "
-                    f"generations of {generation}, and only when none of its "
-                    f"proposals is outstanding. A two-phase learner declares "
-                    f"no generation of its own, so a session would top its "
-                    f"queue up whenever there was room and the generation "
-                    f"would go out in pieces. {instead}."
+                    f"generations of {generation}, and reads each proposal's "
+                    f"role off its position in the history, which behind a "
+                    f"two-phase learner holds positions the other learner "
+                    f"proposed. A two-phase learner declares no generation of "
+                    f"its own either, so the budget and the starvation count "
+                    f"would not know of this one. {instead}."
                 )
 
-        # The trainer proposes the very first shot, from an empty history, and
-        # every periodic run after training. A learner that refuses to propose
+        # The trainer proposes the very first shot, from a history holding no
+        # observations, and every periodic run after training. A learner that refuses to propose
         # without observations can be neither: at the first shot of the run
         # there is nothing behind it, so it would raise out through the
         # session.
@@ -181,16 +182,10 @@ class TwoPhaseLearner(Learner):
                 f"unset for a run that never goes back to the trainer."
             )
 
-        # An instance attribute because this is the learner whose phase
-        # changes, and answered before anything has been proposed because a
-        # session may report its status first.
-        self.last_phase = "training"
-
-    def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
+    def propose(
+        self, history: Sequence[Observation], hint: int
+    ) -> list[tuple[np.ndarray, str]]:
         seen = len(usable(history))
-        if seen < self.num_training:
-            self.last_phase = "training"
-            return self.trainer.propose(history, k)
         period = self.num_runs_between_trainer_runs
         # The turn is taken at the batch boundary: whichever learner the first
         # position of the batch belongs to proposes the whole of it. A batch
@@ -198,11 +193,15 @@ class TwoPhaseLearner(Learner):
         # reached part way through itself, and the only count it could say it
         # from is one proposal per position -- the assumption a counter makes,
         # and wrong for every proposal that is dropped or comes back unusable.
-        # It would also report one phase for a batch made by two learners, and
-        # cut the main learner's batch, which a Gaussian process conditions on
-        # its own earlier points, into pieces.
-        if period is not None and (seen - self.num_training) % (period + 1) == period:
-            self.last_phase = "periodic trainer"
-            return self.trainer.propose(history, k)
-        self.last_phase = "main"
-        return self.main.propose(history, k)
+        # It would also cut the main learner's batch, which a Gaussian process
+        # conditions on its own earlier points, into pieces.
+        if seen < self.num_training:
+            phase, learner = "training", self.trainer
+        elif (
+            period is not None
+            and (seen - self.num_training) % (period + 1) == period
+        ):
+            phase, learner = "periodic trainer", self.trainer
+        else:
+            phase, learner = "main", self.main
+        return [(params, phase) for params, _ in learner.propose(history, hint)]

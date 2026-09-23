@@ -32,7 +32,9 @@ class Observation:
         shot_id: The identifier runmanager minted for this shot's queue row,
             written into the shot file as an attribute and read back by the
             routine. Unique within a session, and the key costs are matched to
-            proposals by.
+            proposals by. ``None`` on a proposal not yet submitted, which a
+            learner meets in one place: the configured start, in the history
+            a session hands it on the call that places the start.
         params: The parameter vector that was requested, in real units, in
             :class:`~labscript_optimization.space.ParameterSpace` order.
         cost: The measured cost, or ``None`` while there is none. Lower is
@@ -47,14 +49,14 @@ class Observation:
             shots a run has lost, so the record keeps them apart rather than
             leaving the difference to be guessed from a missing cost.
         source: What proposed this shot, recorded by the session when it
-            submitted it and never changed after: the phase the learner
-            declared for the batch the shot went out in, or the session's own
-            name for the configured start. It is what the routine writes onto
-            the shot as its ``phase``. ``None`` for a record made outside a
-            session, where nothing recorded one.
+            submitted it and never changed after: the source the learner
+            returned beside the proposal, or the session's own name for the
+            configured start. It is what the routine writes onto the shot as
+            its ``phase``. ``None`` for a record made outside a session, where
+            nothing recorded one.
     """
 
-    shot_id: str
+    shot_id: str | None
     params: np.ndarray
     cost: float | None
     uncer: float | None = None

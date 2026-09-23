@@ -235,11 +235,12 @@ class Config:
     #: what lets a trainer and a main learner be given different values of the
     #: same knob.
     learner_options: dict[str, dict[str, Any]] = field(default_factory=dict)
-    #: How many of this session's shots to keep in runmanager's queue. Read
-    #: for a learner asked for any number of proposals at a time; a learner
-    #: declaring a generation sets its own depth from that declaration, and a
-    #: file writing this beside one is refused rather than left with two
-    #: settings for the same number.
+    #: How many of this session's shots to keep in runmanager's queue: the
+    #: hint every learner is handed, honoured as far as its method allows. The
+    #: random learners keep exactly this many in flight. A learner declaring a
+    #: generation sets its own depth from that declaration, and a file writing
+    #: this beside one is refused rather than left with two settings for the
+    #: same number.
     num_buffered_runs: int = 3
     #: How many usable observations the ``trainer`` gathers before ``learner``
     #: takes over. At least that learner's own ``minimum_observations``, or the

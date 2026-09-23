@@ -271,7 +271,7 @@ def test_the_learner_m_loop_trained_with_cannot_train_here():
     evolution for the training shots and its periodic runs both. Here that learner
     proposes a whole population at a time and only when none of its proposals
     is outstanding, which a two-phase learner cannot hold a barrier for, so the
-    file is refused rather than silently running the generation in pieces.
+    file is refused rather than silently cutting a generation at the handover.
     """
     with pytest.raises(ValueError, match='whole generations of 8') as raised:
         config_module.loads(MINIMAL + '[GENERAL]\ntrainer = "differential_evolution"\n')
@@ -940,7 +940,7 @@ def test_a_generational_learner_will_not_take_a_queue_depth_as_well():
     # numbers that would have disagreed.
     assert 'generation of 8' in str(raised.value)
 
-    # A learner asked for any number of proposals at a time still takes one.
+    # A learner that proposes any number at a time still takes one.
     other = config_module.loads(MINIMAL + '[GENERAL]\nnum_buffered_runs = 3\n')
     assert other.num_buffered_runs == 3
 
@@ -949,22 +949,18 @@ def test_a_generation_a_constructor_assigns_is_refused_a_queue_depth_too(monkeyp
     """Assigning in ``__init__`` is the ordinary way to declare one.
 
     Off the class it is the base class's ``None``, and the depth goes
-    through: the session then runs at a depth the learner never asked for,
-    ``refill`` tops the queue up mid-generation, and the default shots
-    runmanager hands BLACS at each of those drains are missing from the
-    starvation count, which is deliberately not kept for a generational
-    learner.
+    through: a file then carries a queue depth beside a learner that proposes
+    whole generations whatever the depth, a setting read back off the file as
+    one thing and acted on as nothing.
     """
 
     class Ordinary(learners.ParameterSpaceLearner):
-        last_phase = 'main'
-
         def __init__(self, space, rng, population_size=8):
             super().__init__(space, rng)
             self.generation = int(population_size)
 
-        def propose(self, history, k):
-            return self.space.uniform(self.rng, k)
+        def propose(self, history, hint):
+            return [(p, 'main') for p in self.space.uniform(self.rng, hint)]
 
     assert Ordinary.generation is None
     monkeypatch.setitem(learners.LEARNERS, 'ordinary', Ordinary)
@@ -1016,22 +1012,20 @@ def test_a_budget_below_two_whole_generations_is_refused(sized, refused, accepte
 def test_the_budget_is_measured_against_the_generation_a_learner_declares(monkeypatch):
     """A learner is free to derive what it proposes at a time.
 
-    What it derived is what the session will queue and what two generations
-    of it will cost. Predicted from the constructor's default and the file's
-    option, the budget would be measured against a number nobody runs, and
-    the file that cannot reach its second generation would load.
+    What it derived is how many it proposes at a time, and so what two
+    generations of it will cost. Predicted from the constructor's default and
+    the file's option, the budget would be measured against a number nobody
+    runs, and the file that cannot reach its second generation would load.
     """
 
     class Doubling(learners.ParameterSpaceLearner):
-        last_phase = 'main'
-
         def __init__(self, space, rng, population_size=4):
             super().__init__(space, rng)
             # Whatever it is handed, it evolves two members per slot.
             self.generation = 2 * int(population_size)
 
-        def propose(self, history, k):
-            return self.space.uniform(self.rng, k)
+        def propose(self, history, hint):
+            return [(p, 'main') for p in self.space.uniform(self.rng, hint)]
 
     monkeypatch.setitem(learners.LEARNERS, 'doubling', Doubling)
 

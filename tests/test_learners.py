@@ -1,7 +1,11 @@
 """Learner behaviour, against analytic cost functions.
 
-Every learner is exercised through the one method the base class declares, so
-these tests survive any rewrite that keeps the interface.
+How many a learner proposes, and under what source, is exercised through the
+one method the base class declares, ``propose``, so those tests survive any
+rewrite that keeps the interface. What a shipped learner's method makes of a
+history is exercised through its own ``ask``, which proposes a given number of
+points without pacing them, so that a test of the algorithm can ask for the
+points it needs at any history length.
 """
 
 import inspect
@@ -21,6 +25,7 @@ from labscript_optimization.observations import (
     COMPLETE,
     DROPPED,
     PENDING,
+    Observation,
     best,
     usable,
 )
@@ -62,33 +67,42 @@ def every_learner(space, rng):
 
 @pytest.mark.parametrize('k', [1, 3, 7])
 def test_proposals_have_the_requested_shape_and_stay_in_bounds(space, rng, k):
+    """With nothing in flight, the hint is what a learner is asked for -- by
+    every learner but one declaring a generation, which proposes the rest of
+    the block of positions its next proposal falls in, whatever the hint.
+    """
     history = [observe(i, p, sphere(p)) for i, p in enumerate(space.uniform(rng, 20))]
     for learner in every_learner(space, rng):
-        proposals = np.atleast_2d(learner.propose(history, k))
-        assert proposals.shape == (k, space.num_params), type(learner).__name__
+        generation = learner.generation
+        wanted = k if generation is None else generation - len(history) % generation
+        proposals = np.array([params for params, _ in learner.propose(history, k)])
+        assert proposals.shape == (wanted, space.num_params), type(learner).__name__
         assert space.contains(proposals).all(), type(learner).__name__
 
 
 def test_learners_propose_from_an_empty_history(space, rng):
     for learner in every_learner(space, rng):
-        proposals = np.atleast_2d(learner.propose([], 2))
+        proposals = np.array([params for params, _ in learner.propose([], 2)])
         assert space.contains(proposals).all(), type(learner).__name__
 
 
-def test_a_learner_without_phases_of_its_own_still_reports_one(space, rng):
-    """The session reads the phase off whatever learner it was handed.
+def test_a_learner_without_phases_of_its_own_still_names_its_source(space, rng):
+    """Every proposal comes back beside the source the session records for it,
+    and a learner with one way of proposing calls it ``main``.
 
-    Reading it with a default would paper over the opposite case as well: a
-    learner that grows phases and forgets to publish them would be reported
-    as the main one throughout.
+    Nothing supplies a source on a learner's behalf, so a default would paper
+    over the opposite case as well: a learner that grows phases and forgets to
+    say which one proposed would be reported as the main one throughout.
     """
-    for learner in [
-        RandomLearner(space, rng),
-        DirectedRandomLearner(space, rng, trust_region=0.1),
-        DifferentialEvolutionLearner(space, rng, population_size=3),
-        GaussianProcessLearner(space, rng),
+    for learner, history in [
+        (RandomLearner(space, rng), []),
+        (DirectedRandomLearner(space, rng, trust_region=0.1), []),
+        (DifferentialEvolutionLearner(space, rng, population_size=3), []),
+        (GaussianProcessLearner(space, rng), gaussian_process_history(space, 4)),
     ]:
-        assert learner.last_phase == 'main', type(learner).__name__
+        proposed = learner.propose(history, 2)
+        assert proposed, type(learner).__name__
+        assert {source for _, source in proposed} == {'main'}, type(learner).__name__
 
 
 # --- the interface ---------------------------------------------------------
@@ -110,20 +124,18 @@ def test_a_learner_named_in_a_configuration_takes_the_space_first(name, cls):
 
 @pytest.mark.parametrize('name, cls', sorted(learners.LEARNERS.items()))
 def test_a_learner_named_in_a_configuration_declares_what_it_is_read_for(name, cls):
-    """The phase a session reports and the generation it queues to.
+    """The generation the budget and the starvation count are measured by.
 
-    Both are read off an instance, so an instance is where both have to be
-    true, and a learner may declare either however it likes: a class
-    attribute, an assignment in ``__init__``, a property over its own
-    settings. This holds a learner added later to the declaration whichever
-    way it makes it. Built from its defaults over the smallest space there
-    is, because a learner that only declares once it has been configured a
-    particular way has not declared.
+    It is read off an instance, so an instance is where it has to be true,
+    and a learner may declare it however it likes: a class attribute, an
+    assignment in ``__init__``, a property over its own settings. This holds
+    a learner added later to the declaration whichever way it makes it. Built
+    from its defaults over the smallest space there is, because a learner
+    that only declares once it has been configured a particular way has not
+    declared.
     """
     one_parameter = ParameterSpace([Parameter('x', 0.0, 1.0)])
     learner = cls(one_parameter, np.random.default_rng(4))
-
-    assert isinstance(learner.last_phase, str), name
 
     generation = learner.generation
     # Zero is not "any number at a time", it is a session that proposes
@@ -145,10 +157,10 @@ def test_a_learner_that_does_not_propose_cannot_be_built(space, rng):
     """At either level, and when it is built rather than mid-experiment."""
 
     class Forgetful(Learner):
-        last_phase = 'main'
+        pass
 
     class ForgetfulOverASpace(ParameterSpaceLearner):
-        last_phase = 'main'
+        pass
 
     with pytest.raises(TypeError, match='propose'):
         Forgetful()
@@ -156,20 +168,65 @@ def test_a_learner_that_does_not_propose_cannot_be_built(space, rng):
         ForgetfulOverASpace(space, rng)
 
 
-def test_there_is_no_last_phase_to_inherit(space, rng):
-    """The other half of reporting the phase off the learner itself.
+def test_a_proposal_without_a_source_is_refused_rather_than_recorded(space, rng):
+    """The other half of taking the source from the learner itself.
 
-    A learner that grows phases and forgets to publish them has to fail, so
-    the attribute is declared without a value. Read through the deeper class,
-    which finds a default given at either level.
+    A learner that forgets to say where its proposals came from has to fail
+    rather than have its shots recorded under some name nobody gave them.
+    Over two parameters a bare row of proposals unpacks as a pair of numbers,
+    so the refusal cannot be left to the unpacking.
     """
 
     class Silent(ParameterSpaceLearner):
-        def propose(self, history, k):
-            return self.space.uniform(self.rng, k)
+        def propose(self, history, hint):
+            return self.space.uniform(self.rng, hint)
 
-    with pytest.raises(AttributeError, match='last_phase'):
-        Silent(space, rng).last_phase
+    runmanager = FakeRunmanager()
+    session = Session(
+        Config(space=space, globals=(), cost_key=('r', 'c')),
+        runmanager,
+        Silent(space, rng),
+    )
+    with pytest.raises(TypeError, match='rather than a source'):
+        session.refill()
+    assert session.proposals == {}
+    assert runmanager.submitted == []
+
+
+@pytest.mark.parametrize(
+    'learner',
+    [
+        RandomLearner,
+        DirectedRandomLearner,
+        lambda space, rng: GaussianProcessLearner(
+            space, rng, minimum_observations=3
+        ),
+    ],
+    ids=['random', 'directed_random', 'gaussian_process'],
+)
+def test_learners_filling_to_the_hint_keep_exactly_that_many_in_flight(
+    space, rng, learner
+):
+    """Every pending record takes one of the hint's places, whoever proposed
+    it, and a shot that will never report takes none.
+
+    The start going out beside this call's proposals has not been submitted
+    yet and is in flight all the same, so it takes a place too.
+    """
+    learner = learner(space, rng)
+    history = [
+        Observation(None, np.zeros(2), None, state=PENDING, source='start'),
+        observe(1, [1.0, 1.0], 2.0),
+        observe(2, [1.0, -1.0], 3.0),
+        observe(3, [2.0, 2.0], None, state=DROPPED),
+        observe(4, [-1.0, 1.0], None, state=PENDING),
+        observe(5, [-2.0, 2.0], 4.0),
+    ]
+
+    assert len(learner.propose(history, 5)) == 3
+    assert learner.propose(history, 2) == []
+    assert learner.propose(history, 1) == []
+    assert learner.propose(history, 0) == []
 
 
 # --- directed random -------------------------------------------------------
@@ -185,7 +242,7 @@ def test_directed_random_searches_near_points_it_has_seen(space, rng):
     history = [observe(i, p, sphere(p)) for i, p in enumerate(seen)]
 
     learner = DirectedRandomLearner(space, rng, trust_region=0.05)
-    proposals = learner.propose(history, 300)
+    proposals = learner.ask(history, 300)
 
     # 5% of a range of 10 is 0.5 in each direction.
     distances = np.abs(proposals[:, None, :] - seen[None, :, :]).max(axis=2)
@@ -203,7 +260,7 @@ def test_directed_random_is_not_derailed_by_a_bad_run(space, rng):
     history.append(observe('bad', [4.9, 4.9], float('inf')))
 
     learner = DirectedRandomLearner(space, rng, trust_region=0.05)
-    proposals = learner.propose(history, 300)
+    proposals = learner.ask(history, 300)
 
     distances = np.abs(proposals[:, None, :] - seen[None, :, :]).max(axis=2)
     assert (distances.min(axis=1) <= 0.5 + 1e-9).all()
@@ -216,14 +273,14 @@ def test_directed_random_explores_the_whole_space_when_told_to(space, rng):
     learner = DirectedRandomLearner(
         space, rng, trust_region=0.01, explore_fraction=1.0
     )
-    proposals = learner.propose(history, 400)
+    proposals = learner.ask(history, 400)
     assert proposals.min() < -4.0 and proposals.max() > 4.0
 
 
 def test_directed_random_without_a_trust_region_is_a_random_learner(space, rng):
     history = [observe(0, [1.0, 1.0], 1.0), observe(1, [1.1, 1.1], 2.0)]
     learner = DirectedRandomLearner(space, rng, trust_region=None)
-    proposals = learner.propose(history, 400)
+    proposals = learner.ask(history, 400)
     assert proposals.min() < -4.0 and proposals.max() > 4.0
 
 
@@ -240,7 +297,7 @@ def test_directed_random_prefers_mediocre_points_over_the_best_one(space, rng):
     learner = DirectedRandomLearner(
         space, rng, trust_region=0.02, trust_range=(0.1, 0.25)
     )
-    proposals = learner.propose(history, 300)
+    proposals = learner.ask(history, 300)
     nearest = np.abs(proposals[:, None, :] - seen[None, :, :]).max(axis=2).argmin(axis=1)
     # The band runs from 10% to 25% of the way from the worst cost (30) towards
     # the best (0), that is [22.5, 27], which picks out the point costing 25
@@ -262,7 +319,7 @@ def test_directed_random_falls_back_to_the_best_point_when_the_band_is_empty(
     learner = DirectedRandomLearner(
         space, rng, trust_region=0.02, trust_range=(0.1, 0.25)
     )
-    proposals = learner.propose(history, 200)
+    proposals = learner.ask(history, 200)
     nearest = np.abs(proposals[:, None, :] - seen[None, :, :]).max(axis=2).argmin(axis=1)
     assert set(np.unique(nearest)) == {3}
 
@@ -300,7 +357,9 @@ def test_differential_evolution_finds_the_minimum(space, rng, strategy):
     learner = DifferentialEvolutionLearner(
         space, rng, population_size=8, evolution_strategy=strategy
     )
-    history = run_loop(learner, space, sphere, batches=50, k=4, rng=rng)
+    # Twenty-five generations of eight: two hundred shots.
+    history = run_loop(learner, space, sphere, batches=25, k=4, rng=rng)
+    assert len(history) == 200
     assert min(o.cost for o in history) < 0.05
 
 
@@ -432,19 +491,18 @@ def test_a_trial_is_bred_from_the_member_holding_its_own_block_position(rng):
     )
     members = learner.replay(history)[0]
 
-    for slot, proposal in enumerate(learner.propose(history, 4)):
+    for slot, proposal in enumerate(learner.ask(history, 4)):
         shared = int(np.isclose(proposal, members[slot]).sum())
         assert shared == space.num_params - 1, slot
 
     # And from part-way through a block, which is where the position the
     # proposal is made at stops agreeing with its place in the batch asked
-    # for. A session reaches it when the run budget cuts a generation short
-    # and a shot of that short generation is then dropped, freeing room for
-    # fewer proposals than a whole one; a learner driven directly reaches it
-    # by asking at any history length it likes.
+    # for. ``propose`` reaches it after the run budget cuts a generation
+    # short, and finishes the block from there; ``ask`` reaches it at any
+    # history length, for as many as it is asked, across the end of the block.
     part_way = history[:6]
     members = learner.replay(part_way)[0]
-    for offset, proposal in enumerate(learner.propose(part_way, 4)):
+    for offset, proposal in enumerate(learner.ask(part_way, 4)):
         slot = (len(part_way) + offset) % 4
         shared = int(np.isclose(proposal, members[slot]).sum())
         assert shared == space.num_params - 1, offset
@@ -507,7 +565,7 @@ def test_every_proposal_keeps_the_role_its_position_gave_it(rng):
         """The role the learner would give its very next proposal."""
         history = session.history
         members = population(history)
-        check(np.atleast_2d(learner.propose(history, 1))[0], len(history), members)
+        check(learner.ask(history, 1)[0], len(history), members)
 
     late, lost, unusable = [], 0, 0
     for _ in range(12):
@@ -557,13 +615,41 @@ def test_a_slot_whose_founder_produced_nothing_is_drawn_founder_style(rng):
     history = walk_history(space, rng, [None, 10.0, 20.0, 30.0])
     members = learner.replay(history)[0]
 
-    proposals = learner.propose(history, 4)
+    proposals = learner.ask(history, 4)
     assert space.contains(proposals).all()
     for member in members[1:]:
         assert int(np.isclose(proposals[0], member).sum()) < space.num_params - 1
     for slot in (1, 2, 3):
         shared = int(np.isclose(proposals[slot], members[slot]).sum())
         assert shared == space.num_params - 1, slot
+
+
+def test_differential_evolution_proposes_a_generation_only_when_none_is_pending(rng):
+    """A whole generation when nothing submitted is pending, and nothing while
+    anything is, whatever the hint.
+
+    The configured start is waited for like the founder it is, once it has
+    been submitted. On the call that places it, it carries no shot id and goes
+    out beside the rest of its generation, so that call proposes the other
+    slots of the first block around it.
+    """
+    space = walk_space()
+    learner = DifferentialEvolutionLearner(space, rng, population_size=4)
+    founders = walk_history(space, rng, [10.0, 20.0, 30.0, 40.0])
+
+    generation = learner.propose(founders, 1)
+    assert len(generation) == 4
+    assert {source for _, source in generation} == {'main'}
+
+    trials = [observe(f't{slot}', params, 1.0) for slot, (params, _) in enumerate(generation)]
+    trials[3] = dataclasses.replace(trials[3], cost=None, state=PENDING)
+    assert learner.propose(founders + trials, 8) == []
+
+    placing = Observation(None, space.minimum, None, state=PENDING, source='start')
+    assert len(learner.propose([placing], 1)) == 3
+
+    submitted = dataclasses.replace(placing, shot_id='shot-0')
+    assert learner.propose([submitted] + founders[1:], 1) == []
 
 
 def weight_bred_with(trial, best, members, slot):
@@ -611,7 +697,7 @@ def test_every_trial_in_a_generation_shares_one_differential_weight():
 
     generations = []
     for generation in range(3):
-        trials = learner.propose(history, learner.generation)
+        trials = [params for params, _ in learner.propose(history, 1)]
         generations.append(
             [
                 weight_bred_with(trial, founders[0], founders, slot)
@@ -769,9 +855,7 @@ def test_gaussian_process_state_depends_only_on_the_history(
     # own rng streams: that position is the one thing the history does not fix.
     all_session.rng = np.random.default_rng(3)
     fresh.rng = np.random.default_rng(3)
-    np.testing.assert_allclose(
-        all_session.propose(history, 1), fresh.propose(history, 1)
-    )
+    np.testing.assert_allclose(all_session.ask(history, 1), fresh.ask(history, 1))
 
 
 #: The schedule the exploration tests below configure: four weights, the
@@ -793,7 +877,7 @@ def exploring_and_greedy(space, count, uncer_bias=SCHEDULE):
         space, np.random.default_rng(3), uncer_bias=uncer_bias
     )
     return float(
-        np.linalg.norm(explorer.propose(history, 1)[0] - greedy.propose(history, 1)[0])
+        np.linalg.norm(explorer.ask(history, 1)[0] - greedy.ask(history, 1)[0])
     )
 
 
@@ -812,7 +896,7 @@ def test_the_schedule_is_the_list_of_weights_it_was_handed(space, count):
     )
     history = gaussian_process_history(space, 5, count=count)
     away = np.linalg.norm(
-        learner.propose(history, 2) - best(history).params, axis=1
+        learner.ask(history, 2) - best(history).params, axis=1
     )
     # The greedy weight comes first from an even history and second from an
     # odd one, and the exploring proposal is the one that leaves the incumbent.
@@ -877,7 +961,7 @@ def test_a_gaussian_process_batch_does_not_repeat_itself(space, rng):
     """
     learner = GaussianProcessLearner(space, rng)
     history = gaussian_process_history(space, 5)
-    proposals = learner.propose(history, 6)
+    proposals = learner.ask(history, 6)
     # Twelve observations in hand, so the weights run 0, 1, 2, 3, 0, 1 and the
     # sixth pick repeats the weight of the second. Nothing but the fold-in
     # keeps it off that point: without it the two land 4e-6 apart.
@@ -979,7 +1063,7 @@ def test_a_gaussian_process_describes_the_real_data_after_a_proposal_fails(
     learner = GaussianProcessLearner(space, rng)
     history = gaussian_process_history(space, 8)
     # The first pick of a batch, and so where its first invented point lands.
-    probe = learner.propose(history, 1)[0]
+    probe = learner.ask(history, 1)[0]
     before = learner.predict(probe)
 
     searches = []
@@ -1003,8 +1087,8 @@ def test_a_gaussian_process_waits_for_twice_as_many_points_as_parameters(space, 
     history = gaussian_process_history(space, 3, count=2 * space.num_params)
     learner = GaussianProcessLearner(space, rng)
     with pytest.raises(InsufficientData):
-        learner.propose(history[:-1], 1)
-    assert space.contains(learner.propose(history, 1)).all()
+        learner.ask(history[:-1], 1)
+    assert space.contains(learner.ask(history, 1)).all()
 
 
 def test_a_batch_is_proposed_from_a_history_whose_points_carry_uncertainties(
@@ -1016,7 +1100,7 @@ def test_a_batch_is_proposed_from_a_history_whose_points_carry_uncertainties(
     """
     points = space.uniform(np.random.default_rng(7), 12)
     history = [observe(i, p, offset_sphere(p), uncer=0.1) for i, p in enumerate(points)]
-    proposals = GaussianProcessLearner(space, rng).propose(history, 3)
+    proposals = GaussianProcessLearner(space, rng).ask(history, 3)
     assert space.contains(proposals).all()
 
 
@@ -1103,15 +1187,13 @@ def test_a_knob_is_a_constructor_argument_and_not_a_constructor_local(
     """
 
     class Scratch(ParameterSpaceLearner):
-        last_phase = 'main'
-
         def __init__(self, space, rng, population_size=3):
             super().__init__(space, rng)
             cost_has_noise = population_size  # a local, not an argument
             self.population_size = cost_has_noise
 
-        def propose(self, history, k):
-            return self.space.uniform(self.rng, k)
+        def propose(self, history, hint):
+            return [(p, 'main') for p in self.space.uniform(self.rng, hint)]
 
     monkeypatch.setitem(learners.LEARNERS, 'scratch', Scratch)
     with pytest.raises(ValueError, match=r'\[LEARNER\.scratch\].*cost_has_noise'):
@@ -1127,14 +1209,12 @@ def test_a_learner_that_hides_its_knobs_in_kwargs_is_refused(space, monkeypatch)
     """
 
     class Swallower(ParameterSpaceLearner):
-        last_phase = 'main'
-
         def __init__(self, space, rng, **kwargs):
             super().__init__(space, rng)
             self.population_size = kwargs.get('population_size', 3)
 
-        def propose(self, history, k):
-            return self.space.uniform(self.rng, k)
+        def propose(self, history, hint):
+            return [(p, 'main') for p in self.space.uniform(self.rng, hint)]
 
     monkeypatch.setitem(learners.LEARNERS, 'swallower', Swallower)
     with pytest.raises(TypeError, match='kwargs'):
@@ -1145,25 +1225,21 @@ def test_a_learner_that_hides_its_knobs_in_kwargs_is_refused(space, monkeypatch)
 
 
 class Ready(Learner):
-    """A main learner that always proposes.
+    """A main learner that always proposes, as many as it is hinted.
 
     A :class:`Learner`, and so carrying the declarations a wrapper reads off
     what it wraps: a double that answered for fewer of them than the learners
     that ship would let the wrapper read one with a default and still pass.
     """
 
-    last_phase = 'main'
-
-    def propose(self, history, k):
-        return np.zeros((k, 2))
+    def propose(self, history, hint):
+        return [(np.zeros(2), 'main') for _ in range(hint)]
 
 
 class NeverReady(Learner):
     """A main learner that can never propose from the history it is given."""
 
-    last_phase = 'main'
-
-    def propose(self, history, k):
+    def propose(self, history, hint):
         raise InsufficientData('not yet')
 
 
@@ -1172,13 +1248,17 @@ class Marked(Learner):
 
     ``Ready`` proposes the origin, so a batch of sevens came from here and a
     batch of zeros did not: which learner made a batch is then read off the
-    batch rather than off the phase the wrapper reports about itself.
+    batch rather than off the phase the wrapper labels it with.
     """
 
-    last_phase = 'main'
+    def propose(self, history, hint):
+        return [(np.full(2, 7.0), 'main') for _ in range(hint)]
 
-    def propose(self, history, k):
-        return np.full((k, 2), 7.0)
+
+def phase_of(proposed):
+    """The one phase a batch from a two-phase learner is labelled with."""
+    (phase,) = {source for _, source in proposed}
+    return phase
 
 
 def test_two_phase_trains_first_then_hands_over(space, rng):
@@ -1186,9 +1266,9 @@ def test_two_phase_trains_first_then_hands_over(space, rng):
     history = []
     phases = []
     for i in range(6):
-        proposal = learner.propose(history, 1)
-        phases.append(learner.last_phase)
-        history.append(observe(i, proposal[0], float(i)))
+        [(params, phase)] = learner.propose(history, 1)
+        phases.append(phase)
+        history.append(observe(i, params, float(i)))
     assert phases == ['training'] * 3 + ['main'] * 3
 
 
@@ -1214,8 +1294,7 @@ def test_shots_without_a_usable_cost_do_not_count_as_training(space, rng):
         observe('b', [0.0, 0.0], float('inf')),
         observe('c', [0.0, 0.0], float('nan')),
     ]
-    learner.propose(history, 1)
-    assert learner.last_phase == 'training'
+    assert phase_of(learner.propose(history, 1)) == 'training'
 
 
 def test_a_warmup_shorter_than_the_main_learner_needs_is_refused(space, rng):
@@ -1245,12 +1324,6 @@ def test_a_warmup_exactly_as_long_as_the_main_learner_needs_is_accepted(space, r
     assert learner.num_training == 6
 
 
-def test_a_two_phase_learner_reports_a_phase_before_it_has_proposed(space, rng):
-    """A session may report its status before it first refills the queue."""
-    learner = TwoPhaseLearner(RandomLearner(space, rng), Ready(), num_training=3)
-    assert learner.last_phase == 'training'
-
-
 def test_a_two_phase_learner_answers_for_the_observations_it_needs(space, rng):
     """It never refuses to propose -- each of its phases is held to a learner
     that can propose throughout it -- so it absorbs its main learner's
@@ -1268,27 +1341,25 @@ def test_a_learner_that_declares_nothing_is_not_one_that_declares_no_barrier(
     """A wrapper reads the declaration off what it wraps and supplies none.
 
     Filled in with a default here, a learner that had stopped declaring its
-    generation would be wrapped without a word and its barrier lost behind the
-    wrapper, with a session topping the queue up mid-generation and everything
-    still running.
+    generation would be wrapped without a word and its declaration lost behind
+    the wrapper, with the budget refusal and the starvation count taking it
+    for a learner that proposes any number and everything still running.
     """
 
     class Undeclared:
-        last_phase = 'main'
-
-        def propose(self, history, k):
-            return np.zeros((k, 2))
+        def propose(self, history, hint):
+            return [(np.zeros(2), 'main') for _ in range(hint)]
 
     with pytest.raises(AttributeError, match='generation'):
         TwoPhaseLearner(RandomLearner(space, rng), Undeclared(), num_training=3)
 
 
 def test_a_generational_learner_cannot_be_put_behind_a_trainer(space, rng):
-    """Refused at construction, because the wrapper cannot hold the barrier.
+    """Refused at construction, because the wrapper cannot answer for it.
 
-    A two-phase learner declares no generation of its own, so a session tops
-    its queue up whenever there is room: the population would be proposed in
-    pieces and judged before the generation was complete.
+    Behind a trainer the history the learner reads its roles off opens with
+    positions it never proposed, and a two-phase learner declares no
+    generation of its own for the budget and the starvation count to read.
     """
     main = DifferentialEvolutionLearner(space, rng, population_size=4)
     with pytest.raises(ValueError, match='whole generations of 4'):
@@ -1296,8 +1367,8 @@ def test_a_generational_learner_cannot_be_put_behind_a_trainer(space, rng):
 
 
 def test_a_generational_learner_cannot_be_the_trainer_either(space, rng):
-    """The same barrier reaches a session by the same route. Which phase the
-    learner proposes in changes nothing about what its declaration promises.
+    """The same declaration is lost by the same route. Which phase the learner
+    proposes in changes nothing about what its declaration promises.
     """
     trainer = DifferentialEvolutionLearner(space, rng, population_size=4)
     with pytest.raises(ValueError, match='whole generations of 4'):
@@ -1337,8 +1408,7 @@ def phases_over(learner, count, k=1):
     history = []
     phases = []
     for i in range(count):
-        learner.propose(history, k)
-        phases.append(learner.last_phase)
+        phases.append(phase_of(learner.propose(history, k)))
         history.append(observe(i, [0.0, 0.0], float(i)))
     return phases
 
@@ -1376,11 +1446,13 @@ def test_the_periodic_proposal_is_the_trainers_own():
         Marked(), Ready(), num_training=0, num_runs_between_trainer_runs=2
     )
     history = [observe(i, [0.0, 0.0], float(i)) for i in range(2)]
-    assert (learner.propose(history, 1) == 7.0).all()
-    assert learner.last_phase == 'periodic trainer'
+    [(params, phase)] = learner.propose(history, 1)
+    assert (params == 7.0).all()
+    assert phase == 'periodic trainer'
     # And the position before it, which is the main learner's.
-    assert (learner.propose(history[:1], 1) == 0.0).all()
-    assert learner.last_phase == 'main'
+    [(params, phase)] = learner.propose(history[:1], 1)
+    assert (params == 0.0).all()
+    assert phase == 'main'
 
 
 def test_a_position_that_produced_no_observation_does_not_move_the_cycle_on():
@@ -1395,14 +1467,12 @@ def test_a_position_that_produced_no_observation_does_not_move_the_cycle_on():
         Marked(), Ready(), num_training=0, num_runs_between_trainer_runs=2
     )
     seen = [observe(i, [0.0, 0.0], float(i)) for i in range(2)]
-    learner.propose(seen, 1)
-    assert learner.last_phase == 'periodic trainer'
+    assert phase_of(learner.propose(seen, 1)) == 'periodic trainer'
     spent = seen + [observe('gone', [0.0, 0.0], None, state=DROPPED)]
-    learner.propose(spent, 1)
-    assert learner.last_phase == 'periodic trainer'
+    assert phase_of(learner.propose(spent, 1)) == 'periodic trainer'
     # A third usable observation is what moves it on.
-    learner.propose(seen + [observe(2, [0.0, 0.0], 2.0)], 1)
-    assert learner.last_phase == 'main'
+    moved_on = seen + [observe(2, [0.0, 0.0], 2.0)]
+    assert phase_of(learner.propose(moved_on, 1)) == 'main'
 
 
 def test_a_batch_is_made_whole_by_the_learner_whose_turn_it_opens_on():
@@ -1411,18 +1481,21 @@ def test_a_batch_is_made_whole_by_the_learner_whose_turn_it_opens_on():
     A split would have to say which position it had reached part way through a
     batch, and the only count available for that is one observation per
     proposal -- untrue of every shot that is dropped or comes back unusable.
-    It would also report one phase for a batch two learners made.
     """
     learner = TwoPhaseLearner(
         Marked(), Ready(), num_training=0, num_runs_between_trainer_runs=2
     )
     opening_on_the_trainer = [observe(i, [0.0, 0.0], float(i)) for i in range(2)]
-    assert (learner.propose(opening_on_the_trainer, 3) == 7.0).all()
-    assert learner.last_phase == 'periodic trainer'
+    proposed = learner.propose(opening_on_the_trainer, 3)
+    assert len(proposed) == 3
+    assert all((params == 7.0).all() for params, _ in proposed)
+    assert phase_of(proposed) == 'periodic trainer'
     # One position earlier the trainer's turn falls inside the batch, and the
     # main learner still makes the whole of it.
-    assert (learner.propose(opening_on_the_trainer[:1], 3) == 0.0).all()
-    assert learner.last_phase == 'main'
+    proposed = learner.propose(opening_on_the_trainer[:1], 3)
+    assert len(proposed) == 3
+    assert all((params == 0.0).all() for params, _ in proposed)
+    assert phase_of(proposed) == 'main'
 
 
 def test_a_period_leaving_the_main_learner_nothing_to_propose_is_refused():

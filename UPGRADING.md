@@ -178,8 +178,8 @@ own queued. If it keeps climbing, the fit is taking longer than a shot: raise
 `num_buffered_runs`.
 
 **`differential_evolution` refuses the key.** It proposes one whole population
-at a time and is not asked again until every member has been answered for, so
-its queue depth is `population_size`; a second setting for the same number is
+at a time and nothing more until every member has been answered for, so its
+queue depth is `population_size`; a second setting for the same number is
 one that can disagree with it. Delete `num_buffered_runs` from a file that
 names that learner. The queue empties once per generation there, by design,
 and nothing counts a `starved` for it.

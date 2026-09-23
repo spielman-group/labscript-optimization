@@ -23,7 +23,7 @@ from .runmanager_interface import BLOCKED_SHOT_STATE, UNKNOWN_SHOT_STATE
 
 #: The source recorded for the configured start. The session proposes it
 #: itself, whichever learner is running, so it carries a name of the session's
-#: rather than a learner's phase.
+#: rather than a learner's.
 START_SOURCE = "start"
 
 
@@ -36,8 +36,8 @@ class Session:
             and ``shot_status(shot_ids)``. Readiness is the worker's to check
             before a session is built.
         learner: The learner to use, or ``None`` to build the configured one.
-            It answers ``propose(history, k)`` and carries ``last_phase``
-            and ``generation``.
+            It answers ``propose(history, hint)`` with ``(params, source)``
+            pairs and carries ``generation``.
     """
 
     def __init__(self, config, interface, learner=None):
@@ -200,24 +200,29 @@ class Session:
         return gone
 
     def refill(self) -> list[str]:
-        """Submit enough proposals to keep the queue topped up.
+        """Submit what the learner proposes, as far as the budget has room.
 
-        A learner declaring a generation is asked for a whole one, and only
-        once nothing of this session's is outstanding; any other learner is
-        topped up to ``num_buffered_runs``. The very first proposal of a run
-        is the space's configured start, where the parameters carry one, and
-        the learner is asked for the rest of that same batch. Each proposal is
-        recorded with its source, which nothing changes after:
-        :data:`START_SOURCE` for the start, and for the rest the
-        ``last_phase`` the learner declares for the batch it has just
-        proposed.
+        The learner is handed the history and ``num_buffered_runs`` as a hint,
+        and answers with whatever its method allows it to propose now, each
+        proposal beside its source: the random learners top the shots in
+        flight up to the hint, and a learner declaring a generation proposes a
+        whole one when nothing of the last is outstanding and nothing
+        otherwise. The session holds no barrier of its own. It submits what
+        comes back and records each proposal with its source, which nothing
+        changes after; a proposal without one is refused rather than recorded
+        as anyone's.
+
+        The very first proposal of a run is the space's configured start,
+        where the parameters carry one, under :data:`START_SOURCE`, and the
+        learner answers around it; see the comment below.
 
         ``max_num_runs`` is a ceiling on the whole run rather than on a batch,
-        so the last generation is whatever the budget has left for it. A
-        generation cut short is a generation nothing follows: the walk that
-        rebuilds the population reads a proposal's slot off its position, so
-        a short one displaces nothing, and each of its trials competes for its
-        own slot as it would have in a whole one.
+        so what a learner offers past the room the budget has left is cut, and
+        the last generation is whatever that room holds. A generation cut
+        short is a generation nothing follows: the walk that rebuilds the
+        population reads a proposal's slot off its position, so a short one
+        displaces nothing, and each of its trials competes for its own slot as
+        it would have in a whole one.
 
         Returns the shot ids submitted, which is empty once the session has
         stopped. Raises unless the interface answers with one shot id per
@@ -226,57 +231,70 @@ class Session:
         if self.stopped:
             return []
         awaiting = len(self.awaiting)
-        generation = self.learner.generation
-        if generation is not None:
-            # The queue emptying is how one generation ends and the next
-            # begins, so it is not counted as starvation: a counter that fires
+        if awaiting == 0 and self.proposals and self.learner.generation is None:
+            # Nothing of ours was queued when this ran, so runmanager gave
+            # BLACS a default shot instead: the apparatus staying busy rather
+            # than a fault, but a shot the optimiser did not get. A session
+            # that starves wants a larger num_buffered_runs. A learner
+            # declaring a generation is not counted: the queue emptying is how
+            # one generation ends and the next begins, and a counter that fires
             # by design says nothing about the run it is meant to describe.
-            wanted = generation if awaiting == 0 else 0
-        else:
-            if awaiting == 0 and self.proposals:
-                # Nothing of ours was queued when this ran, so runmanager gave
-                # BLACS a default shot instead: the apparatus staying busy
-                # rather than a fault, but a shot the optimiser did not get. A
-                # session that starves wants a larger num_buffered_runs.
-                self.starved += 1
-            wanted = self.config.num_buffered_runs - awaiting
+            self.starved += 1
+        room = None
         if self.config.max_num_runs is not None:
             # Dropped shots are not charged against the budget: they produced
             # nothing, so replacing one is not spending a run.
             room = self.config.max_num_runs - len(self.results) - awaiting
-            wanted = min(wanted, room)
-        if wanted <= 0:
-            return []
+            if room <= 0:
+                return []
 
-        self.interface.check_unchanged()
         # Where a run begins is the session's answer, not a learner's. The
         # start is written on the parameters, beside each one's min and max,
         # and is proposed here: once, at the first position of the run,
         # whichever learner is running and whether or not that learner has any
-        # idea of an opening. Every learner then meets it in the history like
-        # any other observation, so "proposed exactly once" holds because
-        # there is one place that proposes it rather than because a guard
-        # somewhere declines to do it again.
+        # idea of an opening. So "proposed exactly once" holds because there
+        # is one place that proposes it rather than because a guard somewhere
+        # declines to do it again.
         #
-        # It takes the first place in the batch that was going to go out
-        # rather than a batch of its own: the batch is the size ``wanted``
-        # already settled on, so a learner declaring a generation still has
-        # exactly one whole generation queued and still waits for all of it.
-        # A generation of its own for the start would be the second route
-        # past that barrier.
-        batch, sources = [], []
+        # The learner is asked in the same call, from a history in which the
+        # start already holds position 0 as a pending record, so the start
+        # takes a place inside the first batch rather than a batch of its own:
+        # one of a random learner's places, and slot 0 of the first generation,
+        # which then still goes out whole and is still waited for as one. A
+        # start sent out on its own would be the second route past that
+        # barrier. The record's shot id is ``None``, because runmanager has not
+        # minted one, and that is how a learner holding a barrier tells a
+        # start going out beside its proposals from one it must wait for. The
+        # record lives only in this call: what the session keeps is keyed on
+        # the ids ``submit`` returns, and ``history`` is rebuilt from those.
+        history, opening = self.history, []
         if not self.proposals and self.config.space.start is not None:
-            batch.append(self.config.space.start)
-            sources.append(START_SOURCE)
-            wanted -= 1
-        if wanted:
-            proposed = np.atleast_2d(self.learner.propose(self.history, wanted))
-            batch.append(proposed)
-            # Read after proposing, because proposing is what settles it: a
-            # learner with more than one way of proposing says which one made
-            # this batch, and by the next refill it may say another.
-            sources += [self.learner.last_phase] * len(proposed)
-        proposals = np.vstack(batch)
+            start = np.asarray(self.config.space.start, dtype=float)
+            opening.append((start, START_SOURCE))
+            history = [
+                Observation(None, start, None, state=PENDING, source=START_SOURCE)
+            ]
+        proposed = [
+            *opening,
+            *self.learner.propose(history, self.config.num_buffered_runs),
+        ][:room]
+        if not proposed:
+            return []
+        for params, source in proposed:
+            if not isinstance(source, str):
+                raise TypeError(
+                    f"{type(self.learner).__name__} proposed {params!r} beside "
+                    f"{source!r} rather than a source. A learner returns each "
+                    f"proposal as a (params, source) pair, the source naming "
+                    f"which of its ways of proposing made it; it is what that "
+                    f"shot reads in the phase column, and nothing supplies one "
+                    f"on the learner's behalf."
+                )
+
+        # A round trip to runmanager, so made only when there is something to
+        # submit rather than on every refill.
+        self.interface.check_unchanged()
+        proposals = np.array([params for params, _ in proposed], dtype=float)
         shot_ids = self.interface.submit(proposals)
         if len(shot_ids) != len(proposals):
             # Nothing is recorded before the raise: the session is left as it
@@ -286,8 +304,8 @@ class Session:
                 f"{len(shot_ids)} shot ids back; the two cannot be paired, "
                 f"and shots may be queued that this session cannot account for"
             )
-        for shot_id, params, source in zip(shot_ids, proposals, sources):
-            self.proposals[shot_id] = np.asarray(params, dtype=float)
+        for shot_id, params, (_, source) in zip(shot_ids, proposals, proposed):
+            self.proposals[shot_id] = params
             self.sources[shot_id] = source
         return shot_ids
 
