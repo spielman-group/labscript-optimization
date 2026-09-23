@@ -75,17 +75,9 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         trust_region=None,
     ):
         super().__init__(space, rng)
-        # A string first, because the lookup hashes what it is given and a
-        # list written for the strategy would fail on that in Python's words.
-        if (
-            not isinstance(evolution_strategy, str)
-            or evolution_strategy not in STRATEGIES
-        ):
-            raise ValueError(
-                f"evolution_strategy must be one of {tuple(STRATEGIES)}, got "
-                f"{evolution_strategy!r}"
-            )
-        self.evolution_strategy = evolution_strategy
+        self.evolution_strategy = knobs.choice(
+            "evolution_strategy", evolution_strategy, STRATEGIES
+        )
         self.population_size = knobs.integer("population_size", population_size)
         # A mutation draws distinct members from the population minus the slot
         # it is replacing, so it needs one member more than it draws on.

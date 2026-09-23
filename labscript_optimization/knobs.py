@@ -74,6 +74,17 @@ def number(name: str, value) -> float:
     return float(value)
 
 
+def choice(name: str, value, choices) -> str:
+    """``value`` if it is a string naming one of ``choices``, else a refusal.
+
+    A string first, because the lookup hashes what it is given and a list
+    written where a name belongs would fail on that in Python's words.
+    """
+    if not isinstance(value, str) or value not in choices:
+        raise ValueError(f"{name} must be one of {tuple(choices)}, got {value!r}")
+    return value
+
+
 def pair(name: str, value) -> tuple[float, float]:
     """``value`` as a tuple of two floats if it is a pair of numbers, else a refusal.
 
