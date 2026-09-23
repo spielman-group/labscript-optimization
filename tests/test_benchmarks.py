@@ -8,9 +8,9 @@ something that cannot be run at all, and the numbers in
 
 It also holds the harness to the rule the numbers depend on -- every arm runs
 to the same number of *completed* shots, and nothing is left in the queue
-unscored. Counting proposals submitted instead is the defect that invalidated
-every benchmark taken before 2026-09-19, and it is invisible in a sweep's
-output: the rows look ordinary and only the aggregate moves.
+unscored. Counting proposals submitted instead scores the arms on different
+numbers of shots, and that is invisible in a sweep's output: the rows look
+ordinary and only the aggregate moves.
 """
 
 import sys

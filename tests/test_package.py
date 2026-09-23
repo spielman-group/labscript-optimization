@@ -49,7 +49,7 @@ MENTIONS_M_LOOP = {
     'benchmarks/README.md': 1,
     'issues/buffer_hint_plan.md': 1,
     'labscript_optimization/config.py': 5,
-    'tests/test_config.py': 15,
+    'tests/test_config.py': 13,
 }
 
 
@@ -107,9 +107,9 @@ def test_every_annotation_in_the_package_resolves():
 
 def test_the_name_m_loop_appears_only_where_the_subject_is_m_loop():
     """This package replaces M-LOOP and shares none of its code, so its own
-    name is what it should be read under. The word crept back once already, in
-    the configuration surface a lab types every day; nothing noticed, because
-    noticing meant somebody re-running the grep.
+    name is what it should be read under. The word returning anywhere -- the
+    configuration surface a lab types every day among them -- is otherwise
+    noticed only by somebody re-running the grep.
 
     Two tiers, because neither shape guards on its own. A bare list of files
     lets the word multiply inside one already allowed a sentence of it: the

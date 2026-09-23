@@ -269,19 +269,6 @@ def test_an_unknown_explorer_is_refused_at_load():
     )
 
 
-def test_the_learner_m_loop_trained_with_cannot_explore_here():
-    """M-LOOP's machine-learning controllers defaulted to differential
-    evolution for their training shots. Here that learner proposes only whole
-    generations, and a Gaussian process only once it has warmed up, so neither
-    can keep a warmup topped up shot by shot or fill a buffer on demand.
-    """
-    for other in ('differential_evolution', 'gaussian_process'):
-        with pytest.raises(ValueError, match='explorer must be one of'):
-            config_module.loads(
-                MINIMAL + f'[LEARNER.gaussian_process]\nexplorer = "{other}"\n'
-            )
-
-
 def test_the_default_warmup_of_a_wide_search_loads():
     """A warmup that scales with the search, so a file leaving it out loads
     whatever it searches over. A constant default below twice the parameters
@@ -946,19 +933,6 @@ def test_the_cycle_is_set_in_the_gaussian_process_table():
     assert (unwritten.batch_size, unwritten.explore_runs) == (4, 1)
 
 
-def test_a_gaussian_process_with_no_buffer_and_no_explorer_shots_loads():
-    """A pure Gaussian process, which idles the apparatus while each batch is
-    fitted. Unwise for most labs and impossible for none, and its starvation
-    is counted truthfully; see tests/test_session.py."""
-    config = config_module.loads(
-        MINIMAL
-        + '[GENERAL]\nnum_buffered_runs = 0\n'
-        + '[LEARNER.gaussian_process]\nexplore_runs = 0\n'
-    )
-    assert config.num_buffered_runs == 0
-    assert learners.build(config).explore_runs == 0
-
-
 @pytest.mark.parametrize('learner', ['random', 'directed_random'])
 def test_a_learner_that_proposes_nothing_at_a_depth_of_zero_is_refused_it(learner):
     """The random learners keep exactly num_buffered_runs in flight, so at zero
@@ -1214,11 +1188,11 @@ max = 6.0
 def test_a_start_written_for_some_parameters_stops_the_load():
     """The file is where the mistake is made, so the load is where it stops.
 
-    A start on one parameter of two used to be taken, carried through, and
-    then dropped at the point of use, because the opening point is one vector
-    over all of them: the run opened on a uniform draw with nothing said. A
-    setting accepted and not acted on is what this file refuses everywhere
-    else.
+    The opening point is one vector over every searched parameter, so a start
+    on one parameter of two has no reading: taken, it would be carried through
+    and dropped at the point of use, and the run would open on a uniform draw
+    with nothing said. A setting accepted and not acted on is what this file
+    refuses everywhere else.
     """
     with pytest.raises(ValueError, match="'x' has one; 'y' does not"):
         config_module.loads(

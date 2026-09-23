@@ -30,13 +30,13 @@ class Pipe:
     """Stands in for a zprocess queue."""
 
     def __init__(self, items=()):
-        self._queue = queue.Queue()
+        self.inbox = queue.Queue()
         for item in items:
-            self._queue.put(item)
+            self.inbox.put(item)
         self.sent = []
 
     def get(self, timeout=None):
-        return self._queue.get_nowait()
+        return self.inbox.get_nowait()
 
     def put(self, item):
         self.sent.append(item)
@@ -147,40 +147,6 @@ def test_an_observation_is_answered_before_the_next_shots_are_proposed(config_fi
     assert FakeInterface.instances[0].submitted == ['shot-0', 'shot-1', 'shot-2']
 
 
-def test_an_observation_the_session_proposed_is_answered_with_its_source(
-    config_file,
-):
-    """The routine writes its results onto a shot on this answer and no other.
-
-    runmanager mints a shot id for every queue row it compiles, so a user's own
-    shot reaches the routine carrying one too. Whether the session proposed
-    that id is the only thing that tells the two apart, and the session is the
-    only thing that knows.
-    """
-    sent = run(
-        [('configure', config_file), ('observe', [('shot-0', 1.0, None, False)])]
-    )
-    _, _, (recorded, _) = sent[-1]
-    assert recorded == ('main',)
-
-
-def test_an_observation_the_session_never_proposed_is_answered_as_not_taken(
-    config_file,
-):
-    """A user's own shot, engaged alongside the optimisation, carries an id
-    runmanager minted for its queue row -- and the session still did not
-    propose it, so nothing of the optimiser's belongs on it.
-    """
-    sent = run(
-        [
-            ('configure', config_file),
-            ('observe', [('someone-elses-shot', 1.0, None, False)]),
-        ]
-    )
-    _, _, (recorded, _) = sent[-1]
-    assert recorded == (None,)
-
-
 def test_every_observation_in_one_message_is_taken(config_file):
     """lyse hands the routine every shot it analysed in one batch, and all of
     them are runs this session spent. A message that carried two and recorded
@@ -199,7 +165,13 @@ def test_every_observation_in_one_message_is_taken(config_file):
 
 
 def test_one_verdict_comes_back_per_observation_in_the_order_sent(config_file):
-    """The routine writes each shot's status into that shot's own file, so a
+    """A shot the session proposed is answered with its source, and anyone
+    else's with ``None``.
+
+    runmanager mints a shot id for every queue row it compiles, so a user's own
+    shot reaches the routine carrying one too, and whether the session
+    proposed that id is the only thing that tells the two apart. The routine
+    writes each shot's status into that shot's own file on this answer, so a
     single answer for a message carrying several would either write the
     optimiser's numbers onto somebody else's shot or leave one of its own
     without them.

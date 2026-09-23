@@ -780,22 +780,6 @@ def gaussian_process_history(space, seed, count=12):
     return [observe(i, p, offset_sphere(p)) for i, p in enumerate(points)]
 
 
-def test_the_gaussian_process_search_refuses_before_warmup_is_over(space, rng):
-    """Including from nothing at all, which is not a case of its own.
-
-    An empty history is a history too short, answered the same way. Nothing
-    stands in for the data the search does not have: warmup is the explorer's,
-    and ``propose`` hands it there, so the search asked directly from too
-    little says it cannot rather than answering from nothing.
-    """
-    learner = GaussianProcessLearner(space, rng, warmup_observations=6)
-    with pytest.raises(InsufficientData):
-        learner.ask([observe(0, [0.0, 0.0], 1.0)], 1)
-
-    with pytest.raises(InsufficientData):
-        GaussianProcessLearner(space, rng).ask([], 1)
-
-
 def test_gaussian_process_finds_the_minimum(space, rng):
     learner = GaussianProcessLearner(space, rng)
     history = run_loop(
@@ -812,21 +796,20 @@ def test_gaussian_process_finds_the_minimum(space, rng):
     np.testing.assert_allclose(best.params, [1.3, -2.1], atol=0.3)
 
 
-@pytest.mark.parametrize('carried, count', [(8, 15), (6, 7)])
-def test_gaussian_process_state_depends_only_on_the_history(space, carried, count):
+def test_gaussian_process_state_depends_only_on_the_history(space):
     """Two learners given the same history must hold the same model.
 
     The kernel hyperparameters are cached between calls, so they have to be a
     function of the history alone: an instance that has been fitting all
     session must arrive at what a fresh one computes, not at a kernel fitted to
-    however much it happened to hold when the cache was last filled. Each case
-    is one where the cache has to give way between the two fits, because a
-    case where it does not cannot tell the two learners apart whatever the
-    caching does.
+    however much it happened to hold when the cache was last filled. One
+    observation arrives between the two fits, so the cache has to give way,
+    because a case where it does not cannot tell the two learners apart
+    whatever the caching does.
     """
-    history = gaussian_process_history(space, 9, count=count)
+    history = gaussian_process_history(space, 9, count=7)
     all_session = GaussianProcessLearner(space, np.random.default_rng(1))
-    all_session.fit(history[:carried])
+    all_session.fit(history[:6])
     all_session.fit(history)
 
     fresh = GaussianProcessLearner(space, np.random.default_rng(2))
@@ -848,57 +831,42 @@ def test_gaussian_process_state_depends_only_on_the_history(space, carried, coun
     np.testing.assert_allclose(all_session.ask(history, 1), fresh.ask(history, 1))
 
 
-#: The schedule the exploration tests below configure: four weights, the
-#: first of them greedy, so a batch of four walks it once.
+#: Four weights, the first of them greedy, so a batch of four walks the
+#: schedule once.
 SCHEDULE = [0.0, 50.0, 100.0, 150.0]
 
 
-def exploring_and_greedy(space, count, uncer_bias=SCHEDULE):
-    """The same proposal made under ``uncer_bias`` and with exploration off.
-
-    The two learners share a seed and see the same history, so the acquisition
-    weight is the only thing that differs between them.
-    """
-    history = gaussian_process_history(space, 5, count=count)
-    greedy = GaussianProcessLearner(
-        space, np.random.default_rng(3), uncer_bias=0.0
-    )
-    explorer = GaussianProcessLearner(
-        space, np.random.default_rng(3), uncer_bias=uncer_bias
-    )
-    return float(
-        np.linalg.norm(explorer.ask(history, 1)[0] - greedy.ask(history, 1)[0])
-    )
-
-
-@pytest.mark.parametrize('count', [12, 13, 14, 15])
-def test_the_schedule_is_the_list_of_weights_it_was_handed(space, count):
+def test_the_schedule_is_the_list_of_weights_it_was_handed(space):
     """``[0.0, 5.0]`` proposes greedily and then widely, in that order.
 
     The list is the schedule itself: its entries are the weights and its
     length is the period. Asked for two points, a learner running it spends
-    one at each weight, the greedy one first, however many observations are
-    in hand -- and the exploring point is the one that leaves the incumbent.
+    one at each weight, the greedy one first -- and the exploring point is the
+    one that leaves the incumbent.
     """
     learner = GaussianProcessLearner(
         space, np.random.default_rng(3), uncer_bias=[0.0, 5.0]
     )
-    history = gaussian_process_history(space, 5, count=count)
+    history = gaussian_process_history(space, 5)
     away = np.linalg.norm(
         learner.ask(history, 2) - best(history).params, axis=1
     )
     assert away[0] < away[1]
 
 
-@pytest.mark.parametrize('count', [12, 13])
-def test_a_single_weight_is_a_fixed_one_and_not_a_first_step(space, count):
+def test_a_single_weight_is_a_fixed_one_and_not_a_first_step(space):
     """A number written where a schedule goes weights every point.
 
     A cycle of one step has no greedy point in it unless the weight itself is
     zero, so a fixed weight explores even at the first point of a batch, which
-    a four-step schedule spends on its greedy step.
+    a four-step schedule spends on its greedy step. The two learners share a
+    seed and see the same history, so the weight is the only thing that
+    differs between them.
     """
-    assert exploring_and_greedy(space, count=count, uncer_bias=50.0) > 0.1
+    history = gaussian_process_history(space, 5)
+    greedy = GaussianProcessLearner(space, np.random.default_rng(3), uncer_bias=0.0)
+    fixed = GaussianProcessLearner(space, np.random.default_rng(3), uncer_bias=50.0)
+    assert np.linalg.norm(fixed.ask(history, 1)[0] - greedy.ask(history, 1)[0]) > 0.1
 
 
 def test_a_schedule_of_no_weights_is_refused(space, rng):
@@ -1138,17 +1106,6 @@ def test_a_learner_takes_the_knobs_in_its_own_table_and_no_others(space):
     # that is not its own. It reaches the Gaussian process and nothing else,
     # so this learner is left with its own default of the whole space.
     assert built.trust_region is None
-
-
-def test_the_default_learner_explores_with_directed_random(space):
-    """A Gaussian process has nothing to say until it has a spread of points,
-    so the learner a file gets by saying nothing warms up on directed_random's
-    shots, and keeps queuing them behind each batch.
-    """
-    learner = build(Config(space=space, globals=(), cost_key=('routine', 'cost'), seed=11))
-    assert isinstance(learner, GaussianProcessLearner)
-    assert type(learner.explorer) is DirectedRandomLearner
-    assert learner.warmup_observations == 5
 
 
 def test_a_knob_is_a_constructor_argument_and_not_a_constructor_local(

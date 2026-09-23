@@ -76,12 +76,12 @@ def test_containment_is_answered_once_per_row(space):
 
 
 def test_a_start_on_some_parameters_but_not_all_is_refused():
-    """A start written for three of five used to be dropped for all five.
+    """A start written for some parameters and not the rest is refused.
 
     It is one point over every searched parameter, so a partial one has no
-    reading: the run opened on a uniform draw and nothing said that the
-    starts the file named had been ignored. The message names both sides,
-    because which parameters are missing one is the whole of the fix.
+    reading: dropped, the run would open on a uniform draw with nothing said
+    that the starts the file named had been ignored. The message names both
+    sides, because which parameters are missing one is the whole of the fix.
     """
     both = ParameterSpace(
         [
