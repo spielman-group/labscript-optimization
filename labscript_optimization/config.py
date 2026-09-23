@@ -22,14 +22,15 @@ Every key must be one this package knows: a spelling it does not is refused
 rather than accepted and ignored, so a stale file has to be cut down to the
 keys named here before it will load.
 
-``[GENERAL]`` carries the session's own settings -- which learner runs, which
-learner trains it, how deep the queue is, what stops the run -- and a learner's
-knobs are written in ``[LEARNER.<name>]``, the table of the learner that takes
-them. A named table is held to that learner's constructor, so every key in it
-is a knob that learner takes and every value is of the kind that knob takes,
-and a knob found in ``[GENERAL]`` is refused with the tables it belongs in
-named. Two learners run whenever the one selected has a trainer, so a knob both
-take is written twice, once in each table, and each gets its own value.
+``[GENERAL]`` carries the session's own settings -- which learner runs, how
+deep the queue is, what stops the run -- and a learner's knobs are written in
+``[LEARNER.<name>]``, the table of the learner that takes them. A named table
+is held to that learner's constructor, so every key in it is a knob that
+learner takes and every value is of the kind that knob takes, and a knob found
+in ``[GENERAL]`` is refused with the tables it belongs in named. The Gaussian
+process runs an explorer beside itself, so two learners run whenever it is the
+one selected, and a knob both take is written twice, once in each table, and
+each gets its own value.
 
 Known is not the same as acted on: a table written for a learner no session
 builds goes unread, which is what lets one file carry the settings for several
@@ -67,6 +68,21 @@ TOP_LEVEL_TABLES = frozenset(
 #: running.
 RENAMED_TABLES = {"MLOOP": "GENERAL", "MLOOP_PARAMS": "PARAMETERS"}
 
+#: Settings of an older file that the Gaussian process's own knobs replace,
+#: and the knob of ``[LEARNER.gaussian_process]`` replacing each. They are
+#: refused by name, in ``[GENERAL]`` or in that table, rather than aliased: an
+#: old file would go on loading with its settings read as something they do
+#: not say. ``num_runs_between_trainer_runs`` is a period between one
+#: explorer shot and the next, for one, where ``explore_runs`` counts the
+#: explorer shots behind each batch.
+RENAMED_KEYS = {
+    "trainer": "explorer",
+    "num_training_runs": "warmup_observations",
+    "num_runs_between_trainer_runs": "explore_runs",
+    "refit_interval": "batch_size",
+    "minimum_observations": "warmup_observations",
+}
+
 #: The settings ``[ANALYSIS]`` carries.
 ANALYSIS_KEYS = frozenset({"cost_key", "groups", "maximize"})
 
@@ -80,10 +96,7 @@ GENERAL_KEYS = frozenset(
         "max_num_runs",
         "max_num_runs_without_better_params",
         "num_buffered_runs",
-        "num_runs_between_trainer_runs",
-        "num_training_runs",
         "seed",
-        "trainer",
     }
 )
 
@@ -94,14 +107,7 @@ GENERAL_KEYS = frozenset(
 #: because ``check_stop`` is reached only from ``record`` and nothing is ever
 #: recorded to reach it with.
 INTEGER_SETTINGS = {
-    "num_buffered_runs": (1, "a queue holding none of our shots is never refilled"),
-    "num_training_runs": (0, "a negative number of training shots is not a number"),
-    "num_runs_between_trainer_runs": (
-        1,
-        "no runs between one trainer run and the next is every run a trainer "
-        "run, and the learner the file names never proposing at all; leave it "
-        "out for a run that never goes back to the trainer",
-    ),
+    "num_buffered_runs": (0, "a queue cannot hold fewer than none of our shots"),
     "seed": (0, "numpy's generator is seeded from a non-negative integer"),
     "max_num_runs": (
         1,
@@ -119,7 +125,6 @@ OPTIONAL_INTEGER_SETTINGS = frozenset(
     {
         "max_num_runs",
         "max_num_runs_without_better_params",
-        "num_runs_between_trainer_runs",
         "seed",
     }
 )
@@ -225,35 +230,22 @@ class Config:
     cost_key: tuple[str, str]
     maximize: bool = False
     learner: str = "gaussian_process"
-    #: The learner that runs the training shots for a ``learner`` that needs
-    #: them, and the periodic runs after them. Read only for such a learner: a
-    #: file naming it beside one that trains itself is refused rather than left
-    #: with a setting nothing acts on.
-    trainer: str = "directed_random"
     #: One table of knobs per learner, by learner name. A knob is written in
     #: the table of the learner that takes it and reaches no other, which is
-    #: what lets a trainer and a main learner be given different values of the
-    #: same knob.
+    #: what lets the Gaussian process and its explorer be given different
+    #: values of the same knob.
     learner_options: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: How many of this session's shots to keep in runmanager's queue: the
-    #: hint every learner is handed, honoured as far as its method allows. The
-    #: random learners keep exactly this many in flight. A learner declaring a
-    #: generation sets its own depth from that declaration, and a file writing
-    #: this beside one is refused rather than left with two settings for the
-    #: same number.
-    num_buffered_runs: int = 3
-    #: How many usable observations the ``trainer`` gathers before ``learner``
-    #: takes over. At least that learner's own ``minimum_observations``, or the
-    #: handover could not happen where this says it does and the file is
-    #: refused.
-    num_training_runs: int = 5
-    #: How many consecutive proposals come from ``learner`` between one
-    #: proposal from ``trainer`` and the next, once training is over. Unset,
-    #: the run never goes back to the trainer after the handover; set, one
-    #: proposal in every cycle of this many plus one is the trainer's, which
-    #: goes on widening the history under a learner that is narrowing onto the
-    #: best point it has found. Read only for a ``learner`` that trains.
-    num_runs_between_trainer_runs: int | None = None
+    #: hint every learner is handed, honoured as far as its method allows. One
+    #: of the shots in flight is always the one BLACS is running, so at two one
+    #: is waiting whenever BLACS asks for the next. The random learners keep
+    #: exactly this many in flight, and so propose nothing at zero, which is
+    #: refused beside them. The Gaussian process queues max(``explore_runs``,
+    #: this) explorer shots behind each batch, so zero there is no buffer
+    #: beyond ``explore_runs``. A learner declaring a generation sets its own
+    #: depth from that declaration, and a file writing this beside one is
+    #: refused rather than left with two settings for the same number.
+    num_buffered_runs: int = 2
     max_num_runs: int | None = None
     #: Stop after this many completed shots without a better cost. Every
     #: completed shot counts, including one whose cost was not usable: it is
@@ -289,10 +281,10 @@ class Config:
                 f"maximize must be written as true or false, unquoted, not "
                 f"{self.maximize!r}."
             )
-        for key in ("learner", "trainer"):
-            value = getattr(self, key)
-            if not isinstance(value, str):
-                raise ValueError(f"{key} must be written as a string, got {value!r}.")
+        if not isinstance(self.learner, str):
+            raise ValueError(
+                f"learner must be written as a string, got {self.learner!r}."
+            )
 
         named = all(isinstance(key, str) for key in self.cost_key)
         if len(self.cost_key) != 2 or not named:
@@ -415,10 +407,10 @@ def reject_misplaced_knobs(general: dict) -> None:
     """Fail on a learner's knob written in ``[GENERAL]``, naming where it goes.
 
     ``[GENERAL]`` is read once for the whole session, and a session runs two
-    learners whenever the one it names has a trainer. A knob written here would
-    reach both of them with no way to tell them apart, so a trust region wide
-    enough to train with and one tight enough to refine with cannot both be
-    asked for; and it would be dropped in silence for every learner whose
+    learners whenever the one it names runs an explorer. A knob written here
+    would reach both of them with no way to tell them apart, so a trust region
+    wide enough to explore with and one tight enough to refine with cannot both
+    be asked for; and it would be dropped in silence for every learner whose
     constructor does not take it.
 
     Which keys those are is read from the constructors, so a learner that gains
@@ -440,7 +432,7 @@ def reject_misplaced_knobs(general: dict) -> None:
         raise ValueError(
             f"[GENERAL] carries the session's own settings and no learner's "
             f"knobs, so write {where}. A knob here reaches a learner and its "
-            f"trainer alike, with no way to give them different values, and "
+            f"explorer alike, with no way to give them different values, and "
             f"goes unread by any learner that does not take it."
         )
 
@@ -463,7 +455,9 @@ def check_keys(raw: dict) -> None:
 
     A table this package has renamed is refused ahead of both, naming its
     replacement, because the spelling check would call it a typo and leave the
-    reader to guess which of the tables it lists was meant.
+    reader to guess which of the tables it lists was meant. So is a setting in
+    :data:`RENAMED_KEYS`, wherever it was accepted, and every one a file
+    carries is named at once.
     """
     renamed = [
         f"[{table}] is now [{RENAMED_TABLES[table]}]"
@@ -479,6 +473,26 @@ def check_keys(raw: dict) -> None:
         )
     reject_unknown(raw, TOP_LEVEL_TABLES, "the top level of the configuration")
     reject_unknown(raw.get("ANALYSIS", {}), ANALYSIS_KEYS, "[ANALYSIS]")
+    replaced = [
+        f"{key} in {where} is replaced by {RENAMED_KEYS[key]} in "
+        f"[LEARNER.gaussian_process]"
+        for where, table in (
+            ("[GENERAL]", raw.get("GENERAL", {})),
+            (
+                "[LEARNER.gaussian_process]",
+                raw.get("LEARNER", {}).get("gaussian_process", {}),
+            ),
+        )
+        for key in sorted(table)
+        if key in RENAMED_KEYS
+    ]
+    if replaced:
+        raise ValueError(
+            f"{'; '.join(replaced)}. The Gaussian process runs its warmup and "
+            f"its explorer itself, so what replaces each is a knob of its own "
+            f"table, and nothing is read under an old name; UPGRADING.md says "
+            f"what each one became."
+        )
     reject_misplaced_knobs(raw.get("GENERAL", {}))
     reject_unknown(raw.get("GENERAL", {}), GENERAL_KEYS, "[GENERAL]")
     for table, allowed, required in (
@@ -640,31 +654,14 @@ def from_dict(raw: dict) -> Config:
     )
     # Learner constructors are the authoritative schema for their named
     # tables. Import lazily so importing this module alone stays lightweight.
-    from .learners import NEEDS_TRAINING, build
-
-    # Both settings describe the trainer's part in the run, so both go unread
-    # for a learner that has no trainer. Named together because a file usually
-    # carries both and would otherwise be refused twice over.
-    idle = [
-        key
-        for key in ("num_runs_between_trainer_runs", "trainer")
-        if key in general
-    ]
-    if idle and config.learner not in NEEDS_TRAINING:
-        raise ValueError(
-            f"{' and '.join(idle)} {'are' if len(idle) > 1 else 'is'} not "
-            f"accepted with learner {config.learner!r}, which proposes from "
-            f"the first shot and so runs no training phase: no trainer is "
-            f"built, and what is written here would be a setting nothing acts "
-            f"on. Delete it, or name a learner that trains: "
-            f"{sorted(NEEDS_TRAINING)}."
-        )
+    from .learners import build
 
     # Build the selected learner and ask it, rather than predicting from its
     # class or its constructor what an instance would say. How many proposals
     # a learner makes at a time is a fact about the object, and nothing here
-    # knows how it arrives at one. Construction is all this costs: no learner
-    # fits anything until it is asked to propose, and the built learner is
+    # knows how it arrives at one. Construction, and the one proposal below
+    # from an empty history, are all this costs: no learner fits anything
+    # before its history holds observations, and the built learner is
     # discarded -- a session builds its own, from this same configuration.
     learner = build(config)
     if "num_buffered_runs" in general and learner.generation is not None:
@@ -675,5 +672,19 @@ def from_dict(raw: dict) -> Config:
             f"queue depth is therefore that generation, and a second setting "
             f"for the same number is one that can disagree with it: delete "
             f"num_buffered_runs."
+        )
+    # Asked of the learner rather than predicted from its class: a learner
+    # that proposes nothing at the opening of a run is handed the same empty
+    # queue on every refill after it, and never proposes at all. A random
+    # learner at a depth of zero is one; the Gaussian process, whose warmup
+    # keeps one shot in flight whatever the depth, is not. The session places
+    # a configured start itself, so a start is no way out of it either: the
+    # learner meets the start as a shot in flight and still proposes nothing.
+    if not learner.propose([], config.num_buffered_runs):
+        raise ValueError(
+            f"num_buffered_runs is {config.num_buffered_runs}, and learner "
+            f"{config.learner!r} proposes nothing at that depth when a run "
+            f"opens, so the session would never submit a shot of its own. Set "
+            f"num_buffered_runs to at least 1."
         )
     return config

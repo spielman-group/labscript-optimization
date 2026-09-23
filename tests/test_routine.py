@@ -878,7 +878,7 @@ def test_the_status_is_written_onto_the_shot_as_lyse_results(
         (
             'status',
             (
-                ('training',),
+                ('warmup',),
                 status(best_cost=7.0, best_params=[0.25], best_shot_id='row-3'),
             ),
         )
@@ -888,7 +888,7 @@ def test_the_status_is_written_onto_the_shot_as_lyse_results(
     assert written['best_cost'] == 7.0
     assert list(written['best_params']) == [0.25]
     assert written['best_shot_id'] == 'row-3'
-    assert written['phase'] == 'training'
+    assert written['phase'] == 'warmup'
 
 
 def test_the_sessions_own_counters_are_not_written_onto_every_shot(

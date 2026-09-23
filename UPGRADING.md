@@ -71,35 +71,50 @@ Delete these from your configuration:
 | `[GENERAL]`, `[LEARNER.differential_evolution]` | `restart_tolerance` | The population is not re-seeded when its costs converge. That decision was taken at a generation boundary from the costs resolved by then, so a cost arriving afterwards could change it and turn a block generated as trials into founders of a new epoch; and within a lab's budget it re-seeded populations that had converged to within a fraction of their initial spread but not to the minimum. `max_num_runs_without_better_params` is the stop to use instead. |
 | whole table | `[COMPILATION]` | Its only key was `mock`, which selected a dry-run interface that has been removed. |
 
-And rename two keys:
+And rename these, each into `[LEARNER.gaussian_process]`, the table of the
+Gaussian process, which runs its warmup and its explorer itself:
 
 | Table | Rename | To |
 | --- | --- | --- |
-| `[GENERAL]` | `controller_type` | `learner` |
-| `[GENERAL]`, `[LEARNER.gaussian_process]` | `generation_size` | `refit_interval` |
+| `[GENERAL]` | `controller_type` | `learner`, staying in `[GENERAL]` |
+| `[GENERAL]`, `[LEARNER.gaussian_process]` | `generation_size` | `batch_size` |
+| `[GENERAL]` | `num_training_runs` | `warmup_observations` |
+| `[GENERAL]` | `trainer` | `explorer` |
+| `[GENERAL]` | `num_runs_between_trainer_runs` | `explore_runs`, a different number: see below |
+| `[GENERAL]`, `[LEARNER.gaussian_process]` | `refit_interval` | `batch_size` |
+| `[GENERAL]`, `[LEARNER.gaussian_process]` | `minimum_observations` | `warmup_observations` |
+
+The last four appear only in a file already written for this package; an
+analysislib-mloop file carries none of them. The last five are each
+**refused** naming the key that replaces it and the table it goes in, and none
+is read as its replacement: `explore_runs`, for one, counts the explorer shots
+behind each batch, where `num_runs_between_trainer_runs` was a period between
+one of them and the next. *What changed in the algorithms*, below, says what
+each knob does.
 
 `generation_size` set two things at once: how often the Gaussian process
 refits its kernel hyperparameters, and the period of its exploration schedule.
-The schedule is now written out as `uncer_bias`, a list of weights whose
-length is its own period, so the key has one job left and is named for it:
-`refit_interval` is how many new observations arrive between one refit of the
-kernel and the next. The word `generation` belongs to differential evolution,
-where it names the population's step from one whole set of members to the
-next, and one document cannot hold two senses of it.
+The schedule is written out as `uncer_bias`, a list of weights whose length is
+its own period, and `batch_size` is how many points the Gaussian process
+proposes at a time, refitting its hyperparameters once per batch and walking
+the schedule from its first weight at every batch. The word `generation`
+belongs to differential evolution, where it names the population's step from
+one whole set of members to the next, and one document cannot hold two senses
+of it.
 
-`uncer_bias` takes the schedule the two of them used to imply. Under
+`uncer_bias` takes the schedule the two of them implied. Under
 `generation_size = 4` and `uncer_bias = 1.0`, successive proposals weighted
 the predicted uncertainty by 0, 1, 2 and 3 and then began again; write that as
 
 ```toml
 [LEARNER.gaussian_process]
 uncer_bias = [0.0, 1.0, 2.0, 3.0]
-refit_interval = 4
+batch_size = 4
 ```
 
 which is the default, so a file that wants it need write neither. A single
 number is still accepted and is a cycle of one step -- `uncer_bias = 1.0`
-alone is a weight of 1.0 on every proposal, with no greedy one among them.
+alone is a weight of 1.0 on every point, with no greedy one among them.
 
 Archive paths, `archive_type` and the other M-LOOP pass-through keys go the
 same way if you have them. There is no archive: if the worker dies, the
@@ -128,20 +143,20 @@ more.
 | --- | --- |
 | `trust_range`, `trust_gaussian`, `explore_fraction` | `[LEARNER.directed_random]` |
 | `population_size`, `evolution_strategy`, `mutation_scale`, `cross_over_probability` | `[LEARNER.differential_evolution]` |
-| `cost_has_noise`, `cost_bias`, `uncer_bias`, `refit_interval`, `length_scale_bounds`, `noise_level_bounds`, `minimum_observations` | `[LEARNER.gaussian_process]` |
+| `cost_has_noise`, `cost_bias`, `uncer_bias`, `batch_size`, `length_scale_bounds`, `noise_level_bounds`, `warmup_observations`, `explorer`, `explore_runs` | `[LEARNER.gaussian_process]` |
 | `trust_region` | all three of those tables take it — write it in each one you want it in, with the value you want there |
 
-That split is the reason for the change. Of the fifteen keys the session table
-used to accept as shared learner knobs, fourteen are taken by exactly one
-learner. The sharing served a single knob, `trust_region`, and for the other
-fourteen it put a setting where it read as though it might apply to any learner
-and then dropped it in silence for the ones that do not take it.
+That split is the reason for the change. Every one of those knobs but
+`trust_region` is taken by exactly one learner, so a shared table put each of
+them where it read as though it might apply to any learner and then dropped it
+in silence for the ones that do not take it.
 
-The selectable trainer, under *What changed in the algorithms* below, is
-what forces it. A session that trains runs two learners at once, and a knob in
-`[GENERAL]` reaches both with no way to say which was meant — so a wide trust
-region to train with and a tight one to refine with could not both be asked
-for. In each learner's own table they can:
+The Gaussian process's explorer, under *What changed in the algorithms* below,
+is what forces it. A Gaussian process runs its explorer beside itself, two
+learners at once, and a knob in `[GENERAL]` reaches both with no way to say
+which was meant — so a wide trust region to explore with and a tight one to
+refine with could not both be asked for. In each learner's own table they
+can:
 
 ```toml
 [LEARNER.directed_random]
@@ -165,17 +180,24 @@ nothing for you to create and nothing to keep in step.
 
 ## 5. Check `num_buffered_runs`
 
-It now defaults to 3 rather than 1, and more than one is usually what you
-want. BLACS asks for its next shot as soon as it finishes the last, which is
-before the optimiser has seen the cost and proposed a replacement — so a queue
-holding only one of its shots is empty at precisely that moment and runmanager
-gives BLACS a default shot instead. At one buffered run roughly every second
-shot is a default one. Those shots go to BLACS already compiled, so runmanager
-never writes a shot id into them.
+It defaults to 2, because one of the shots in flight is always the one BLACS
+is running. BLACS asks for its next shot as soon as it finishes
+the last, which is before the optimiser has seen the cost and proposed a
+replacement — so a queue holding only one of its shots is empty at precisely
+that moment and runmanager gives BLACS a default shot instead. At one buffered
+run roughly every second shot is a default one. Those shots go to BLACS
+already compiled, so runmanager never writes a shot id into them.
 
 The status counts a `starved` for each time the routine found nothing of its
 own queued. If it keeps climbing, the fit is taking longer than a shot: raise
 `num_buffered_runs`.
+
+**Under `gaussian_process` it is the explorer shots behind each batch.** The
+number queued behind a batch is the larger of `num_buffered_runs` and
+`explore_runs`, so raising it to cover a slow fit also raises the share of
+explorer shots. Zero is accepted there and queues `explore_runs` alone. The
+random learners keep exactly `num_buffered_runs` in flight and so refuse zero,
+which would be a run that never proposes.
 
 **`differential_evolution` refuses the key.** It proposes one whole population
 at a time and nothing more until every member has been answered for, so its
@@ -238,9 +260,8 @@ goes out whole.
   as that column.
 - You still compute the cost yourself, in your own lyse routine. This package
   never computes one.
-- `num_training_runs`, `max_num_runs` and `max_num_runs_without_better_params`
-  mean what they meant. `num_training_runs` gains a rule — see *A warmup has to
-  be long enough* below — but not a new meaning.
+- `max_num_runs` and `max_num_runs_without_better_params` mean what they
+  meant.
 - Adding the routine to lyse starts a session; removing or restarting it, or
   reaching the run budget, stops it.
 
@@ -248,72 +269,50 @@ goes out whole.
 
 - **The learners are named** `random`, `directed_random`,
   `differential_evolution` and `gaussian_process`, in `[GENERAL] learner`.
-- **The trainer is chosen**, in `[GENERAL] trainer`, and defaults to
-  `directed_random`. `gaussian_process` is the only learner that needs one: it
-  runs the trainer for its training shots, and for the periodic shots
-  `num_runs_between_trainer_runs` asks for. A name that is not a learner is
-  refused, and so is a trainer named beside a learner that needs none, which
-  would be a setting nothing acts on — `num_runs_between_trainer_runs` is
-  refused there for the same reason, and the two are named in one message.
+- **The Gaussian process runs its own cycle**, set in
+  `[LEARNER.gaussian_process]`. Its `explorer` — `random` or
+  `directed_random`, and `directed_random` by default — proposes a warmup of
+  `warmup_observations` usable observations, which defaults to twice the
+  number of searched parameters and never fewer than five. After that the
+  Gaussian process proposes `batch_size` points at a time, 4 by default, each
+  conditioned on the ones before it, and behind each batch go
+  max(`explore_runs`, `num_buffered_runs`) explorer shots; `explore_runs`
+  defaults to 1. The next batch goes out when every point of the last is back
+  or given up on, and the explorer shots never hold it up. Warmup counts
+  observations a fit can use, not shots, and ends at the count: explorer shots
+  already queued then still run. The `phase` column reads `warmup`, `main` or
+  `explore` for the three kinds of shot.
 
-  **The default is not what M-LOOP did.** Its machine-learning controllers took
-  `training_type`, defaulting to `differential_evolution`
-  (`mloop/controllers.py`), and used that learner for the training shots, for
-  the periodic training runs among them, and for any point the machine-learning
-  learner was too slow to supply — so all of them
+  With `num_buffered_runs = 1` those defaults are M-LOOP's own cycle: its
+  machine-learning controller ran `generation_num` machine-learner runs, fixed
+  at 4, at the four exploration weights `[0, 1, 2, 3]` that are `uncer_bias`
+  here, and then one run from its training source, round and round
+  (`mloop/controllers.py`, `mloop/learners.py`). At the default of 2, two
+  explorer shots follow each batch rather than one. The other half of M-LOOP's
+  condition — take a training point whenever the machine learner has none
+  ready — was `no_delay`, which step 2 above deletes: the explorer shots queued
+  behind each batch are what keep the apparatus busy while it is fitted.
+
+  **The explorer's default is not what M-LOOP trained with.** Its
+  machine-learning controllers took `training_type`, defaulting to
+  `differential_evolution` (`mloop/controllers.py`), and used that learner for
+  the training shots, for the periodic training runs among them, and for any
+  point the machine-learning learner was too slow to supply — so all of them
   came from a population clustered around the best points seen. This package's
   `directed_random` centres its draws on a band of *middling* costs instead,
-  which is what makes it explore rather than refine, so the training shots, and
-  the periodic ones if you ask for them, range much wider and produce stretches
-  of poor shots that M-LOOP never
-  showed. That is what a run against the dummy apparatus looks like.
+  which is what makes it explore rather than refine, so the warmup and the
+  explorer shots range much wider and produce stretches of poor shots that
+  M-LOOP never showed. That is what a run against the dummy apparatus looks
+  like.
 
-  `differential_evolution` cannot be the trainer here: it proposes a whole
-  population at a time and only when none of its proposals is outstanding, and
-  a two-phase learner cannot hold that barrier across a handover, so a file
-  naming it is refused rather than run in pieces. To train nearer the best
-  points, narrow the trainer's own band — `trust_range = [0.9, 1.0]` in
+  `differential_evolution` cannot be the explorer: it proposes a whole
+  population at a time and only when none of its proposals is outstanding, so
+  it can neither open a warmup shot by shot nor fill the buffer behind a
+  batch, and a file naming it is refused. To explore nearer the best points,
+  narrow the explorer's own band — `trust_range = [0.9, 1.0]` in
   `[LEARNER.directed_random]` centres on the best point rather than on
-  middling ones, and `[1, 1]` is the best point alone. `trainer = "random"` is
-  the plain uniform spread over the whole space.
-- **A warmup has to be long enough.** `num_training_runs` below the main
-  learner's own `minimum_observations` is **refused**, naming both numbers.
-  With a warmup of 5 in front of a Gaussian process that will not fit below
-  10, `num_training_runs = 5` meant 10: shots 5 to 9 came from the trainer
-  anyway, and the setting was read back off the file as one thing and acted on
-  as another. Most files leave `minimum_observations` unset, where it is twice
-  the number of searched parameters — five parameters therefore want at least
-  ten training shots. Raise `num_training_runs`, or lower
-  `minimum_observations` in `[LEARNER.gaussian_process]` to the warmup you
-  want.
-- **The trainer can come back after the handover**, under `[GENERAL]
-  num_runs_between_trainer_runs`. It is how many consecutive proposals come
-  from the main learner between one proposal from the trainer and the next, so
-  the cycle is one longer than the number: at 4, four shots from the Gaussian
-  process and then one from the trainer, over and over. The shot is the
-  trainer's own, knobs and all, out of `[LEARNER.<trainer>]`, and the routine
-  reports `periodic trainer` in the `phase` column for it.
-
-  M-LOOP did this with no setting for it. Its machine-learning controller ran
-  `generation_num` machine-learner runs and then one training run, round and
-  round (`mloop/controllers.py`), and `generation_num` was fixed at 4 — the
-  length of the Gaussian process's exploration-weight cycle, the same
-  `[0, 1, 2, 3]` that is `uncer_bias` here (`mloop/learners.py`). This package
-  took the weight cycle and left the periodic training run behind; this is it
-  back, as something a file asks for. The other half of M-LOOP's condition —
-  take a training point whenever the machine learner has none ready — was
-  `no_delay`, which step 2 above deletes: the learner here runs in a worker
-  process that never holds the routine up, so there is no delay to avoid.
-
-  **It is off unless a file asks for it.** On by default it would change what
-  every run already configured proposes, with nothing in the file that
-  configured it changed to say so. Which learner proposes is read off the
-  usable observations in hand rather than a count of proposals, so a shot that
-  is dropped or comes back unusable does not move the cycle on, exactly as it
-  does not move the handover. The turn is taken at the batch boundary —
-  whichever learner the first proposal of a batch belongs to makes the whole
-  batch — so at a deep `num_buffered_runs` the trainer's turn is a batch rather
-  than a single shot.
+  middling ones, and `[1, 1]` is the best point alone. `explorer = "random"`
+  is the plain uniform spread over the whole space.
 - **Nelder-Mead and the neural network are gone.** Nelder-Mead may return;
   the neural network will not.
 - **The directed random learner's trust region now works.** Its guard sent
@@ -353,7 +352,8 @@ Where the search has got to is written onto each shot the session proposed, so
 it comes back as dataframe columns under `labscript_optimization` —
 `df[('labscript_optimization', 'best_cost')]` and so on. The keys are `phase`,
 `best_cost`, `best_params`, `best_shot_id` and `stopped`. `phase` is the shot's
-own: what proposed that shot, which is `start` for the configured start. A key
+own: what proposed that shot, which is `start` for the configured start and,
+under `gaussian_process`, `warmup`, `main` or `explore`. A key
 the session has nothing to report for yet is empty — `NaN` for `best_cost`, an
 empty string or list for the rest.
 

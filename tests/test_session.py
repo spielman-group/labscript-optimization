@@ -69,22 +69,44 @@ start = 0.25
 """
 
 
-TRAINED = """
+CYCLED = """
 [ANALYSIS]
 cost_key = ["r", "c"]
 groups = ["G"]
 [GENERAL]
 learner = "gaussian_process"
 num_buffered_runs = 5
-num_training_runs = 4
-num_runs_between_trainer_runs = 3
 max_num_runs = 24
 seed = 20260923
+[LEARNER.gaussian_process]
+warmup_observations = 4
+batch_size = 3
 [PARAMETERS.G.x]
 global_name = "gx"
 min = 0.0
 max = 1.0
 """
+
+
+def gaussian_process_config(general='', table=''):
+    """A one-parameter Gaussian process, with whatever else a test writes into
+    ``[GENERAL]`` and its own table."""
+    return config_module.loads(
+        f"""
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = ["G"]
+[GENERAL]
+seed = 20260923
+{general}
+[LEARNER.gaussian_process]
+{table}
+[PARAMETERS.G.x]
+global_name = "gx"
+min = 0.0
+max = 1.0
+"""
+    )
 
 
 def make_config(buffered=3, maximize=False, **extra):
@@ -582,18 +604,19 @@ def test_the_configured_start_carries_a_source_of_its_own(runmanager):
 def test_each_shot_carries_the_phase_of_the_learner_that_proposed_it(runmanager):
     """The routine's order of events, one shot at a time: the oldest shot
     outstanding reports its cost, the reply carries what is written onto it,
-    and the refill comes after. A trainer hands over part way through the
-    run, comes back every fourth shot after it, and the budget ends the run
-    with five shots in flight.
+    and the refill comes after. Warmup hands over to the Gaussian process part
+    way through the run, each batch goes out with explorer shots behind it,
+    and the budget ends the run with shots in flight.
 
     What is written onto a shot is the phase the learner gave it when it
     proposed it. The phase of the latest proposal is another shot's whenever
-    more than one is in flight: across the handover it names the main learner
-    for shots the trainer proposed, and once the budget is spent it stays at
-    whatever was proposed last. The history holds the same answer, fixed when
-    each shot was proposed and unchanged by everything proposed since.
+    more than one is in flight: it names the explorer for the batch's own
+    shots queued ahead of it, the Gaussian process for warmup shots still
+    queued at the handover, and once the budget is spent it stays at whatever
+    was proposed last. The history holds the same answer, fixed when each shot
+    was proposed and unchanged by everything proposed since.
     """
-    session = Session(config_module.loads(TRAINED), runmanager)
+    session = Session(config_module.loads(CYCLED), runmanager)
     proposed_by, latest, written = {}, {}, {}
     # What the learner says of each proposal, heard as it says it: its answer
     # to the latest call, and the source of the newest proposal it has made.
@@ -622,6 +645,8 @@ def test_each_shot_carries_the_phase_of_the_learner_that_proposed_it(runmanager)
         refill()
 
     assert len(written) == 24
+    # All three of the Gaussian process's sources reach the phase column.
+    assert set(written.values()) == {'warmup', 'main', 'explore'}
     # The run is one where the latest proposal's phase is the wrong answer
     # for some of its shots; otherwise nothing here tells the two apart.
     assert latest != proposed_by
@@ -695,6 +720,58 @@ def test_the_budget_keeps_the_first_proposals_a_learner_offers(runmanager):
     session = Session(make_config(max_num_runs=2), runmanager, Labelled())
     session.refill()
     assert [p[0] for p in session.proposals.values()] == [0.1, 0.2]
+
+
+def test_the_budget_cuts_explorer_shots_before_any_of_the_batch(runmanager):
+    """The Gaussian process offers its batch first and the explorer shots
+    behind it, and the budget cuts from the end, so a budget with room for
+    less than both spends it on the batch.
+
+    Offered the other way round, the budget would cut into the batch, and the
+    points the Gaussian process chose each conditioned on the ones before it
+    would go out without the ones they were chosen beside.
+    """
+    session = Session(
+        gaussian_process_config('max_num_runs = 9', 'warmup_observations = 3'),
+        runmanager,
+    )
+    # Warmup at the default depth of two, until three usable observations are
+    # in hand with one warmup shot still queued.
+    for shot_id in session.refill():
+        session.record(shot_id, 1.0, None, False)
+    first, _ = session.refill()
+    session.record(first, 2.0, None, False)
+    # Three completed and one awaited leave room for five of the six offered:
+    # a batch of four and two explorer shots behind it.
+    submitted = session.refill()
+    assert [session.sources[shot_id] for shot_id in submitted] == (
+        ['main'] * 4 + ['explore']
+    )
+
+
+def test_a_gaussian_process_with_no_buffer_counts_its_starvation(runmanager):
+    """A pure Gaussian process -- no buffer and no explorer shots -- leaves the
+    queue empty while it waits for a shot, and while each batch is fitted, and
+    every refill that finds it so is counted. It declares no generation, so
+    nothing exempts it: the queue running dry is a cost of the settings, not
+    of the method, and ``starved`` is how a lab sees it.
+    """
+    session = Session(
+        gaussian_process_config('num_buffered_runs = 0', 'explore_runs = 0'),
+        runmanager,
+    )
+    assert session.learner.generation is None
+    sizes = []
+    for _ in range(7):
+        submitted = session.refill()
+        sizes.append(len(submitted))
+        for shot_id in submitted:
+            session.record(shot_id, float(len(runmanager.submitted)), None, False)
+    # Warmup one shot at a time until its five, then batches of four with
+    # nothing behind them.
+    assert sizes == [1, 1, 1, 1, 1, 4, 4]
+    # Every refill but the first found nothing of ours queued.
+    assert session.status()['starved'] == 6
 
 
 def test_a_generational_run_counts_no_starvation(runmanager):

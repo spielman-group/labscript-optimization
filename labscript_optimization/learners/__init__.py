@@ -4,11 +4,11 @@ import inspect
 
 import numpy as np
 
+from .. import knobs
 from .base import InsufficientData, Learner, ParameterSpaceLearner
 from .differential_evolution import DifferentialEvolutionLearner
-from .gaussian_process import GaussianProcessLearner
+from .gaussian_process import EXPLORERS, GaussianProcessLearner
 from .random import DirectedRandomLearner, RandomLearner
-from .two_phase import TwoPhaseLearner
 
 __all__ = [
     "DifferentialEvolutionLearner",
@@ -18,7 +18,6 @@ __all__ = [
     "Learner",
     "ParameterSpaceLearner",
     "RandomLearner",
-    "TwoPhaseLearner",
     "build",
     "knobs_by_learner",
     "validate_options",
@@ -27,22 +26,17 @@ __all__ = [
 
 #: Learners that can be named in a configuration. Every class here is
 #: resolved whenever a configuration is loaded, because its constructor is the
-#: schema for its own table, and the selected one is built there as well,
-#: because what it proposes at a time is a fact about an instance. So none of
-#: them may import the scientific stack either to be imported or to be built;
-#: see :mod:`labscript_optimization.learners.gaussian_process`.
+#: schema for its own table, and the selected one is built there as well and
+#: asked what it proposes as a run opens, because what it proposes at a time
+#: is a fact about an instance. So none of them may import the scientific
+#: stack to be imported, to be built, or to open a run; see
+#: :mod:`labscript_optimization.learners.gaussian_process`.
 LEARNERS = {
     "random": RandomLearner,
     "directed_random": DirectedRandomLearner,
     "differential_evolution": DifferentialEvolutionLearner,
     "gaussian_process": GaussianProcessLearner,
 }
-
-#: Learners whose proposals mean nothing until the history holds a spread of
-#: points, so a configuration naming one runs a trainer first. Which learner
-#: trains is the file's to say, in ``[GENERAL] trainer``; this only says who
-#: needs one.
-NEEDS_TRAINING = frozenset({"gaussian_process"})
 
 
 def _constructor_parameters(name: str):
@@ -69,6 +63,26 @@ def _option_names(name: str) -> set[str]:
     return set(_constructor_parameters(name)) - {"space", "rng"}
 
 
+def _explorer_name(config) -> str | None:
+    """The learner the selected one explores with, by name, or ``None``.
+
+    A learner whose constructor takes an ``explorer`` runs one beside itself:
+    the one its own table names, or the knob's default where the table names
+    none. The default is read off the constructor because the constructor is
+    the schema for the table, and a second copy of it here could drift. The
+    name is held to :data:`~labscript_optimization.learners.gaussian_process.EXPLORERS`
+    in the words the constructor uses, because it is looked up to build the
+    explorer before the constructor ever sees it.
+    """
+    accepted = _constructor_parameters(config.learner)
+    if "explorer" not in accepted:
+        return None
+    named = config.learner_options.get(config.learner, {}).get(
+        "explorer", accepted["explorer"].default
+    )
+    return knobs.choice("explorer", named, EXPLORERS)
+
+
 def knobs_by_learner() -> dict[str, tuple[str, ...]]:
     """Every knob any learner takes, and the learners that take it.
 
@@ -86,29 +100,29 @@ def knobs_by_learner() -> dict[str, tuple[str, ...]]:
 def validate_options(config) -> None:
     """Hold a configuration to the learners it names.
 
-    The learner and the trainer each have to be one of :data:`LEARNERS`, or the
-    misspelling is found at ``build()`` -- which is worker configure, with the
-    session already starting. A ``[LEARNER.<name>]`` table has one constructor
-    that defines its keys, so anything else in it is a knob that learner
-    ignores.
+    The learner has to be one of :data:`LEARNERS`, and the explorer it runs,
+    if it runs one, one of the explorers; otherwise the misspelling is found
+    at ``build()`` -- which is worker configure, with the session already
+    starting. A ``[LEARNER.<name>]`` table has one constructor that defines
+    its keys, so anything else in it is a knob that learner ignores.
 
-    The learners that will be built are read for their signatures whether or
-    not a table names them, because a learner collecting its knobs in
-    ``**kwargs`` leaves its table without a schema: every key written in it
-    would be refused, and the learner built from its defaults alone.
+    The learners that will be built -- the selected one and its explorer --
+    are read for their signatures whether or not a table names them, because
+    a learner collecting its knobs in ``**kwargs`` leaves its table without a
+    schema: every key written in it would be refused, and the learner built
+    from its defaults alone.
 
     Everything here is answered by a name and a table, before any learner
     exists. What only a learner can answer is checked in :func:`build`.
     """
-    for role in ("learner", "trainer"):
-        name = getattr(config, role)
-        if name not in LEARNERS:
-            raise ValueError(
-                f"unknown {role} {name!r}; choose one of {sorted(LEARNERS)}"
-            )
+    if config.learner not in LEARNERS:
+        raise ValueError(
+            f"unknown learner {config.learner!r}; choose one of {sorted(LEARNERS)}"
+        )
     built = [config.learner]
-    if config.learner in NEEDS_TRAINING:
-        built.append(config.trainer)
+    explorer = _explorer_name(config)
+    if explorer is not None:
+        built.append(explorer)
     for name in dict.fromkeys([*built, *config.learner_options]):
         accepted = _option_names(name)
         unknown = sorted(set(config.learner_options.get(name, {})) - accepted)
@@ -131,13 +145,10 @@ def validate_options(config) -> None:
 def build(config, rng: np.random.Generator | None = None):
     """Build the learner a configuration asks for, and hold it to the budget.
 
-    A learner in :data:`NEEDS_TRAINING` is wrapped in a
-    :class:`~labscript_optimization.learners.two_phase.TwoPhaseLearner` with
-    the learner ``[GENERAL] trainer`` names, which runs the training shots and,
-    where ``[GENERAL] num_runs_between_trainer_runs`` asks for them, the
-    periodic runs after them. Each is built
-    from its own ``[LEARNER.<name>]`` table, so a trainer and a main learner
-    that take the same knob take it separately.
+    A learner that runs an explorer -- the Gaussian process -- is handed it
+    built: the learner its ``explorer`` knob names, from that learner's own
+    ``[LEARNER.<name>]`` table, so an explorer and the learner running it that
+    take the same knob take it separately.
 
     The budget is then measured against the learner that came back, because
     how many proposals it makes at a time is its own to say and no signature
@@ -149,20 +160,13 @@ def build(config, rng: np.random.Generator | None = None):
         rng = np.random.default_rng(config.seed)
 
     name = config.learner
-    options = config.learner_options
-    main = LEARNERS[name](config.space, rng, **options.get(name, {}))
-    if name in NEEDS_TRAINING:
-        trainer = LEARNERS[config.trainer](
-            config.space, rng, **options.get(config.trainer, {})
+    options = dict(config.learner_options.get(name, {}))
+    explorer = _explorer_name(config)
+    if explorer is not None:
+        options["explorer"] = EXPLORERS[explorer](
+            config.space, rng, **config.learner_options.get(explorer, {})
         )
-        learner = TwoPhaseLearner(
-            trainer,
-            main,
-            config.num_training_runs,
-            config.num_runs_between_trainer_runs,
-        )
-    else:
-        learner = main
+    learner = LEARNERS[name](config.space, rng, **options)
 
     generation = learner.generation
     if (

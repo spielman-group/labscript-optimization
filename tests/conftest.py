@@ -80,14 +80,15 @@ def rng():
     return np.random.default_rng(20260918)
 
 
-def observe(shot_id, params, cost, uncer=None, bad=False, state=COMPLETE):
+def observe(shot_id, params, cost, uncer=None, bad=False, state=COMPLETE, source=None):
     """Build an Observation without ceremony.
 
     A cost of ``None`` with a state of PENDING or DROPPED is a proposal that
-    has produced nothing: a position the session spent.
+    has produced nothing: a position the session spent. ``source`` is what a
+    session would have recorded as proposing it.
     """
     return Observation(
-        str(shot_id), np.asarray(params, dtype=float), cost, uncer, bad, state
+        str(shot_id), np.asarray(params, dtype=float), cost, uncer, bad, state, source
     )
 
 

@@ -36,9 +36,7 @@ class Learner(ABC):
 
     A wrapper owes an answer for every attribute something outside a learner
     reads off it: ``generation`` here, read by the session and by the
-    configuration, and ``minimum_observations``, read by a wrapper deciding
-    how long to train and so carried only by the learners that refuse to
-    propose without one. Three answers are honest -- answer for itself, where
+    configuration. Three answers are honest -- answer for itself, where
     the wrapper's own value is the true one; pass the wrapped learner's on,
     where the wrapper can hold what that value promises; or refuse to be
     built, where it cannot. Leaving one unanswered is none of the three: the
@@ -126,12 +124,11 @@ class ParameterSpaceLearner(Learner):
 
 
 class InsufficientData(RuntimeError):
-    """A learner cannot propose from the history it has been given.
+    """A learner's search cannot propose from the history it has been given.
 
     Raised rather than quietly proposing on some other basis, so that a caller
-    given a proposal knows which learner made it. Nothing here catches it: a
-    learner is only ever asked to propose from a history long enough for it,
-    and the two-phase wrapper is refused at construction unless its training
-    phase covers what its main learner needs. Reaching this state is therefore
-    a configuration error.
+    given a proposal knows which learner made it. Nothing here catches it: the
+    Gaussian process raises it from ``ask`` short of its warmup, and its own
+    ``propose`` hands warmup to its explorer and never asks the search until
+    warmup is over, so a session does not reach it.
     """

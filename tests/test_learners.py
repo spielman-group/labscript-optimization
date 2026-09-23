@@ -38,7 +38,6 @@ from labscript_optimization.learners import (
     Learner,
     ParameterSpaceLearner,
     RandomLearner,
-    TwoPhaseLearner,
     build,
 )
 from labscript_optimization.space import Parameter, ParameterSpace
@@ -61,7 +60,6 @@ def every_learner(space, rng):
         RandomLearner(space, rng),
         DirectedRandomLearner(space, rng, trust_region=0.1),
         DifferentialEvolutionLearner(space, rng, population_size=3),
-        TwoPhaseLearner(RandomLearner(space, rng), RandomLearner(space, rng), 3),
     ]
 
 
@@ -98,7 +96,6 @@ def test_a_learner_without_phases_of_its_own_still_names_its_source(space, rng):
         (RandomLearner(space, rng), []),
         (DirectedRandomLearner(space, rng, trust_region=0.1), []),
         (DifferentialEvolutionLearner(space, rng, population_size=3), []),
-        (GaussianProcessLearner(space, rng), gaussian_process_history(space, 4)),
     ]:
         proposed = learner.propose(history, 2)
         assert proposed, type(learner).__name__
@@ -199,10 +196,10 @@ def test_a_proposal_without_a_source_is_refused_rather_than_recorded(space, rng)
         RandomLearner,
         DirectedRandomLearner,
         lambda space, rng: GaussianProcessLearner(
-            space, rng, minimum_observations=3
+            space, rng, warmup_observations=10, explore_runs=0
         ),
     ],
-    ids=['random', 'directed_random', 'gaussian_process'],
+    ids=['random', 'directed_random', 'gaussian_process warming up'],
 )
 def test_learners_filling_to_the_hint_keep_exactly_that_many_in_flight(
     space, rng, learner
@@ -211,7 +208,10 @@ def test_learners_filling_to_the_hint_keep_exactly_that_many_in_flight(
     it, and a shot that will never report takes none.
 
     The start going out beside this call's proposals has not been submitted
-    yet and is in flight all the same, so it takes a place too.
+    yet and is in flight all the same, so it takes a place too. A Gaussian
+    process short of its warmup fills to the hint the same way, through its
+    explorer; the floor of one shot it keeps in flight is under the two
+    pending here, so at a hint of zero it proposes nothing either.
     """
     learner = learner(space, rng)
     history = [
@@ -780,20 +780,20 @@ def gaussian_process_history(space, seed, count=12):
     return [observe(i, p, offset_sphere(p)) for i, p in enumerate(points)]
 
 
-def test_gaussian_process_refuses_before_it_has_enough_data(space, rng):
+def test_the_gaussian_process_search_refuses_before_warmup_is_over(space, rng):
     """Including from nothing at all, which is not a case of its own.
 
     An empty history is a history too short, answered the same way. Nothing
-    stands in for the data this learner does not have: where a run begins is
-    the session's to propose, so a learner asked from nothing says it cannot
-    rather than answering from nothing.
+    stands in for the data the search does not have: warmup is the explorer's,
+    and ``propose`` hands it there, so the search asked directly from too
+    little says it cannot rather than answering from nothing.
     """
-    learner = GaussianProcessLearner(space, rng, minimum_observations=6)
+    learner = GaussianProcessLearner(space, rng, warmup_observations=6)
     with pytest.raises(InsufficientData):
-        learner.propose([observe(0, [0.0, 0.0], 1.0)], 1)
+        learner.ask([observe(0, [0.0, 0.0], 1.0)], 1)
 
     with pytest.raises(InsufficientData):
-        GaussianProcessLearner(space, rng).propose([], 1)
+        GaussianProcessLearner(space, rng).ask([], 1)
 
 
 def test_gaussian_process_finds_the_minimum(space, rng):
@@ -803,7 +803,7 @@ def test_gaussian_process_finds_the_minimum(space, rng):
         space,
         offset_sphere,
         batches=12,
-        k=4,
+        k=1,
         rng=rng,
         history=gaussian_process_history(space, 4),
     )
@@ -812,34 +812,24 @@ def test_gaussian_process_finds_the_minimum(space, rng):
     np.testing.assert_allclose(best.params, [1.3, -2.1], atol=0.3)
 
 
-@pytest.mark.parametrize('refit_interval, carried, count', [(4, 8, 15), (8, 6, 7)])
-def test_gaussian_process_state_depends_only_on_the_history(
-    space, refit_interval, carried, count
-):
+@pytest.mark.parametrize('carried, count', [(8, 15), (6, 7)])
+def test_gaussian_process_state_depends_only_on_the_history(space, carried, count):
     """Two learners given the same history must hold the same model.
 
     The kernel hyperparameters are cached between calls, so they have to be a
     function of the history alone: an instance that has been fitting all
     session must arrive at what a fresh one computes, not at a kernel fitted to
-    however much it happened to hold when the cache was last filled.
-
-    Both cases are ones where the cache has to give way between the two fits,
-    because a case where it does not cannot tell the two learners apart
-    whatever the caching does. The first crosses a refit boundary -- the kernel
-    is owed to eight observations and then to twelve -- and the second is a
-    history short of one whole interval, where there is no whole interval to
-    fit to and the cache gives way on every arrival.
+    however much it happened to hold when the cache was last filled. Each case
+    is one where the cache has to give way between the two fits, because a
+    case where it does not cannot tell the two learners apart whatever the
+    caching does.
     """
     history = gaussian_process_history(space, 9, count=count)
-    all_session = GaussianProcessLearner(
-        space, np.random.default_rng(1), refit_interval=refit_interval
-    )
+    all_session = GaussianProcessLearner(space, np.random.default_rng(1))
     all_session.fit(history[:carried])
     all_session.fit(history)
 
-    fresh = GaussianProcessLearner(
-        space, np.random.default_rng(2), refit_interval=refit_interval
-    )
+    fresh = GaussianProcessLearner(space, np.random.default_rng(2))
     fresh.fit(history)
 
     # The cache is observable through the posterior it produces: two learners
@@ -859,7 +849,7 @@ def test_gaussian_process_state_depends_only_on_the_history(
 
 
 #: The schedule the exploration tests below configure: four weights, the
-#: first of them greedy, so it takes four proposals to come back round.
+#: first of them greedy, so a batch of four walks it once.
 SCHEDULE = [0.0, 50.0, 100.0, 150.0]
 
 
@@ -883,13 +873,12 @@ def exploring_and_greedy(space, count, uncer_bias=SCHEDULE):
 
 @pytest.mark.parametrize('count', [12, 13, 14, 15])
 def test_the_schedule_is_the_list_of_weights_it_was_handed(space, count):
-    """``[0.0, 5.0]`` proposes greedily and then widely, by turns.
+    """``[0.0, 5.0]`` proposes greedily and then widely, in that order.
 
     The list is the schedule itself: its entries are the weights and its
-    length is the period. Asked for two proposals, a learner running it spends
-    one of them at each weight, and which one explores is decided by the
-    parity of the history -- so the wider of the two picks changes places as
-    the session goes on.
+    length is the period. Asked for two points, a learner running it spends
+    one at each weight, the greedy one first, however many observations are
+    in hand -- and the exploring point is the one that leaves the incumbent.
     """
     learner = GaussianProcessLearner(
         space, np.random.default_rng(3), uncer_bias=[0.0, 5.0]
@@ -898,18 +887,16 @@ def test_the_schedule_is_the_list_of_weights_it_was_handed(space, count):
     away = np.linalg.norm(
         learner.ask(history, 2) - best(history).params, axis=1
     )
-    # The greedy weight comes first from an even history and second from an
-    # odd one, and the exploring proposal is the one that leaves the incumbent.
-    assert (away[0] < away[1]) == (count % 2 == 0)
+    assert away[0] < away[1]
 
 
-@pytest.mark.parametrize('count', [12, 13, 14, 15])
+@pytest.mark.parametrize('count', [12, 13])
 def test_a_single_weight_is_a_fixed_one_and_not_a_first_step(space, count):
-    """A number written where a schedule goes weights every proposal.
+    """A number written where a schedule goes weights every point.
 
-    A cycle of one step has no greedy proposal in it unless the weight itself
-    is zero, so a fixed weight explores at every count -- including the ones a
-    four-step schedule spends on its greedy step.
+    A cycle of one step has no greedy point in it unless the weight itself is
+    zero, so a fixed weight explores even at the first point of a batch, which
+    a four-step schedule spends on its greedy step.
     """
     assert exploring_and_greedy(space, count=count, uncer_bias=50.0) > 0.1
 
@@ -920,32 +907,28 @@ def test_a_schedule_of_no_weights_is_refused(space, rng):
         GaussianProcessLearner(space, rng, uncer_bias=[])
 
 
-def test_the_exploration_weight_reaches_a_proposal_asked_for_on_its_own(space):
-    """A session running one shot at a time still has to explore.
+@pytest.mark.parametrize('count', [12, 13, 14, 15])
+def test_each_batch_walks_the_exploration_schedule_from_its_first_weight(
+    space, count
+):
+    """The weight is the point's position in the batch, whatever the count.
 
-    It asks for several points once and then for a single point per completed
-    shot, so a schedule that advanced with the position within the group asked
-    for would stand at its first weight for the whole run and every other
-    weight in the list would go unused.
+    The first weight of this schedule is zero, so the first point of every
+    batch is the greedy learner's own, and the rest look progressively further
+    afield. Indexed by the observations in hand instead, a batch opening on a
+    count that is not a multiple of four would start part way through the
+    list, and its greedy point would fall wherever the count put it or not at
+    all.
     """
-    assert exploring_and_greedy(space, count=13) > 0.1
-
-
-@pytest.mark.parametrize('count', [12, 13, 14, 15, 16])
-def test_the_exploration_schedule_advances_as_observations_arrive(space, count):
-    """The weight moves on once per proposal and cycles over the list.
-
-    The first weight of this schedule is zero, so one proposal in four is
-    purely greedy and the rest look progressively further afield. Reading the
-    position off the history rather than a counter is what keeps a learner
-    handed the same history proposing the same thing.
-    """
-    apart = exploring_and_greedy(space, count=count)
-    if count % len(SCHEDULE):
-        assert apart > 0.1
-    else:
-        # A weight of zero times anything is the greedy proposal itself.
-        assert apart == 0.0
+    history = gaussian_process_history(space, 5, count=count)
+    greedy = GaussianProcessLearner(space, np.random.default_rng(3), uncer_bias=0.0)
+    walking = GaussianProcessLearner(
+        space, np.random.default_rng(3), uncer_bias=SCHEDULE
+    )
+    apart = np.linalg.norm(walking.ask(history, 4) - greedy.ask(history, 4), axis=1)
+    # A weight of zero times anything is the greedy proposal itself.
+    assert apart[0] == 0.0
+    assert (apart[1:] > 0.1).all()
 
 
 def test_a_gaussian_process_batch_does_not_repeat_itself(space, rng):
@@ -962,9 +945,9 @@ def test_a_gaussian_process_batch_does_not_repeat_itself(space, rng):
     learner = GaussianProcessLearner(space, rng)
     history = gaussian_process_history(space, 5)
     proposals = learner.ask(history, 6)
-    # Twelve observations in hand, so the weights run 0, 1, 2, 3, 0, 1 and the
-    # sixth pick repeats the weight of the second. Nothing but the fold-in
-    # keeps it off that point: without it the two land 4e-6 apart.
+    # The weights run 0, 1, 2, 3, 0, 1 by position, so the sixth pick repeats
+    # the weight of the second. Nothing but the fold-in keeps it off that
+    # point: without it the two land 4e-6 apart.
     assert np.linalg.norm(proposals[5] - proposals[1]) > 1e-3
 
 
@@ -994,7 +977,7 @@ def test_a_length_scale_at_a_bound_is_reported_when_the_set_of_them_changes(
     """
     from sklearn.exceptions import ConvergenceWarning
 
-    learner = GaussianProcessLearner(space, rng, refit_interval=1)
+    learner = GaussianProcessLearner(space, rng)
 
     with pytest.warns(ConvergenceWarning, match='y at the upper end') as first:
         learner.fit(flat_in_y_history(space, 12))
@@ -1032,7 +1015,7 @@ def test_the_rest_of_what_a_refit_warns_about_still_reaches_the_lab(space, rng):
     """
     from sklearn.exceptions import ConvergenceWarning
 
-    learner = GaussianProcessLearner(space, rng, refit_interval=1)
+    learner = GaussianProcessLearner(space, rng)
     with pytest.warns(ConvergenceWarning, match='noise_level'):
         learner.fit(flat_in_y_history(space, 12))
 
@@ -1082,9 +1065,9 @@ def test_a_gaussian_process_describes_the_real_data_after_a_proposal_fails(
     np.testing.assert_allclose(learner.predict(probe), before)
 
 
-def test_a_gaussian_process_waits_for_twice_as_many_points_as_parameters(space, rng):
-    """Its default patience, and what a two-phase wrapper trains through."""
-    history = gaussian_process_history(space, 3, count=2 * space.num_params)
+def test_the_search_waits_for_the_warmup_it_defaults_to(space, rng):
+    """Five usable observations over two parameters, the floor of the default."""
+    history = gaussian_process_history(space, 3, count=5)
     learner = GaussianProcessLearner(space, rng)
     with pytest.raises(InsufficientData):
         learner.ask(history[:-1], 1)
@@ -1157,22 +1140,15 @@ def test_a_learner_takes_the_knobs_in_its_own_table_and_no_others(space):
     assert built.trust_region is None
 
 
-def test_the_default_learner_comes_back_wrapped_in_its_training_phase(space):
+def test_the_default_learner_explores_with_directed_random(space):
     """A Gaussian process has nothing to say until it has a spread of points,
-    so the learner a file gets by saying nothing runs directed_random first.
+    so the learner a file gets by saying nothing warms up on directed_random's
+    shots, and keeps queuing them behind each batch.
     """
-    config = Config(
-        space=space,
-        globals=(),
-        cost_key=('routine', 'cost'),
-        num_training_runs=7,
-        seed=11,
-    )
-    learner = build(config)
-    assert isinstance(learner, TwoPhaseLearner)
-    assert isinstance(learner.trainer, DirectedRandomLearner)
-    assert isinstance(learner.main, GaussianProcessLearner)
-    assert learner.num_training == 7
+    learner = build(Config(space=space, globals=(), cost_key=('routine', 'cost'), seed=11))
+    assert isinstance(learner, GaussianProcessLearner)
+    assert type(learner.explorer) is DirectedRandomLearner
+    assert learner.warmup_observations == 5
 
 
 def test_a_knob_is_a_constructor_argument_and_not_a_constructor_local(
@@ -1221,309 +1197,281 @@ def test_a_learner_that_hides_its_knobs_in_kwargs_is_refused(space, monkeypatch)
         build(a_config(space, 'swallower', {'population_size': 4}))
 
 
-# --- two phase -------------------------------------------------------------
+# --- the Gaussian process's cycle ------------------------------------------
 
 
-class Ready(Learner):
-    """A main learner that always proposes, as many as it is hinted.
-
-    A :class:`Learner`, and so carrying the declarations a wrapper reads off
-    what it wraps: a double that answered for fewer of them than the learners
-    that ship would let the wrapper read one with a default and still pass.
-    """
-
-    def propose(self, history, hint):
-        return [(np.zeros(2), 'main') for _ in range(hint)]
+def sources_of(proposed):
+    """The source of each proposal, in the order they are to be run."""
+    return [source for _, source in proposed]
 
 
-class NeverReady(Learner):
-    """A main learner that can never propose from the history it is given."""
-
-    def propose(self, history, hint):
-        raise InsufficientData('not yet')
-
-
-class Marked(Learner):
-    """A trainer whose proposals cannot be mistaken for the main learner's.
-
-    ``Ready`` proposes the origin, so a batch of sevens came from here and a
-    batch of zeros did not: which learner made a batch is then read off the
-    batch rather than off the phase the wrapper labels it with.
-    """
-
-    def propose(self, history, hint):
-        return [(np.full(2, 7.0), 'main') for _ in range(hint)]
-
-
-def phase_of(proposed):
-    """The one phase a batch from a two-phase learner is labelled with."""
-    (phase,) = {source for _, source in proposed}
-    return phase
-
-
-def test_two_phase_trains_first_then_hands_over(space, rng):
-    learner = TwoPhaseLearner(RandomLearner(space, rng), Ready(), num_training=3)
-    history = []
-    phases = []
-    for i in range(6):
-        [(params, phase)] = learner.propose(history, 1)
-        phases.append(phase)
-        history.append(observe(i, params, float(i)))
-    assert phases == ['training'] * 3 + ['main'] * 3
-
-
-def test_a_main_learner_that_cannot_propose_is_not_caught(space, rng):
-    """There is nothing left to catch it.
-
-    The wrapper used to fall back to the trainer here. It cannot be reached
-    from a configuration any more -- the training phase is refused unless it
-    covers what the main learner needs -- so a main learner refusing to
-    propose after that is a broken learner, and the run stops with that
-    learner's own message rather than going on under a phase reading "main".
-    """
-    learner = TwoPhaseLearner(RandomLearner(space, rng), NeverReady(), num_training=1)
-    history = [observe(i, [0.0, 0.0], float(i)) for i in range(5)]
-    with pytest.raises(InsufficientData, match='not yet'):
-        learner.propose(history, 2)
-
-
-def test_shots_without_a_usable_cost_do_not_count_as_training(space, rng):
-    learner = TwoPhaseLearner(RandomLearner(space, rng), Ready(), num_training=2)
-    history = [
-        observe('a', [0.0, 0.0], 1.0, bad=True),
-        observe('b', [0.0, 0.0], float('inf')),
-        observe('c', [0.0, 0.0], float('nan')),
+def sent_out(history, proposed, source=None):
+    """``proposed`` added to ``history`` as shots in flight, as a session keeps
+    them: pending, each under the source it came with unless one is given."""
+    return history + [
+        observe(f'{len(history) + i}', params, None, state=PENDING, source=source or given)
+        for i, (params, given) in enumerate(proposed)
     ]
-    assert phase_of(learner.propose(history, 1)) == 'training'
 
 
-def test_a_warmup_shorter_than_the_main_learner_needs_is_refused(space, rng):
-    """A number that does not mean what it says.
+def come_back(history, **states):
+    """``history`` with the shots named brought back: completed at a cost, or
+    dropped where the state given is ``DROPPED``."""
+    back = []
+    for record in history:
+        state = states.get(record.shot_id)
+        if state == COMPLETE:
+            record = dataclasses.replace(
+                record, cost=offset_sphere(record.params), state=COMPLETE
+            )
+        elif state == DROPPED:
+            record = dataclasses.replace(record, state=DROPPED)
+        back.append(record)
+    return back
 
-    With a warmup of five in front of a learner that will not fit below six,
-    the handover happens at six: the sixth shot comes from the trainer under a
-    setting that says the fifth was the last of them. Both numbers are named,
-    because a message giving one leaves the reader to go and find the other.
+
+def test_a_batch_is_batch_size_points_and_nothing_while_one_of_them_is_out(space, rng):
+    """No second batch while any point of the first is pending, however many
+    of it have come back, and the next one as soon as the last is back.
+
+    Ignoring the states sends a second batch out behind the first, each point
+    of it computed without the costs the first is about to return; holding the
+    batch on every record of its source, whatever its state, stalls the run
+    for good after the first one.
     """
-    main = GaussianProcessLearner(space, rng, minimum_observations=6)
-    with pytest.raises(ValueError) as raised:
-        TwoPhaseLearner(RandomLearner(space, rng), main, num_training=5)
-    assert 'num_training_runs is 5' in str(raised.value)
-    assert 'holds 6 usable observations' in str(raised.value)
+    learner = GaussianProcessLearner(space, rng, batch_size=3, explore_runs=0)
+    history = gaussian_process_history(space, 4)
+
+    batch = learner.propose(history, 0)
+    assert sources_of(batch) == ['main'] * 3
+    out = sent_out(history, batch)
+    first, second, third = (o.shot_id for o in out[-3:])
+    assert learner.propose(out, 0) == []
+    assert learner.propose(come_back(out, **{first: COMPLETE, second: COMPLETE}), 0) == []
+
+    back = come_back(out, **{first: COMPLETE, second: COMPLETE, third: COMPLETE})
+    assert sources_of(learner.propose(back, 0)) == ['main'] * 3
 
 
-def test_a_warmup_exactly_as_long_as_the_main_learner_needs_is_accepted(space, rng):
-    """The other arm of the comparison, and the one that matters.
+def test_a_dropped_point_of_the_batch_releases_it(space, rng):
+    """A shot that will never report is as back as it will ever be.
 
-    At six the main learner can propose on the very shot the handover is
-    configured for, so this is the shortest warmup that means what it says --
-    and a refusal written one number wide would take it too.
+    Waiting for it to complete instead stalls the cycle for good on the first
+    shot an operator deletes.
     """
-    main = GaussianProcessLearner(space, rng, minimum_observations=6)
-    learner = TwoPhaseLearner(RandomLearner(space, rng), main, num_training=6)
-    assert learner.num_training == 6
+    learner = GaussianProcessLearner(space, rng, batch_size=3, explore_runs=0)
+    history = gaussian_process_history(space, 4)
+    out = sent_out(history, learner.propose(history, 0))
+    first, second, third = (o.shot_id for o in out[-3:])
+
+    back = come_back(out, **{first: COMPLETE, second: COMPLETE, third: DROPPED})
+    assert sources_of(learner.propose(back, 0)) == ['main'] * 3
 
 
-def test_a_two_phase_learner_answers_for_the_observations_it_needs(space, rng):
-    """It never refuses to propose -- each of its phases is held to a learner
-    that can propose throughout it -- so it absorbs its main learner's
-    requirement rather than passing it on. Declared, because an attribute read
-    off a learner with a default is the reader's answer and not the learner's.
+def test_explorer_shots_in_flight_never_hold_the_next_batch_back(space, rng):
+    """Explorer shots queued behind a batch, and warmup shots still queued at
+    its handover, keep the apparatus busy while the batch is fitted; they are
+    not waited for. Holding the batch on every pending record would leave the
+    Gaussian process waiting on its own buffer.
     """
-    main = GaussianProcessLearner(space, rng, minimum_observations=6)
-    learner = TwoPhaseLearner(RandomLearner(space, rng), main, num_training=6)
-    assert learner.minimum_observations == 0
+    learner = GaussianProcessLearner(space, rng, batch_size=2, explore_runs=0)
+    history = gaussian_process_history(space, 4)
+    points = space.uniform(np.random.default_rng(9), 3)
+    queued = sent_out(history, [(points[0], 'warmup'), (points[1], 'explore')])
+    queued = sent_out(queued, [(points[2], 'explore')])
+    assert sources_of(learner.propose(queued, 0)) == ['main'] * 2
 
 
-def test_a_learner_that_declares_nothing_is_not_one_that_declares_no_barrier(
-    space, rng
+@pytest.mark.parametrize(
+    'explore_runs, hint, behind',
+    [(2, 0, 2), (2, 1, 2), (2, 2, 2), (2, 5, 5), (1, 0, 1), (0, 0, 0), (0, 3, 3)],
+)
+def test_the_explorer_shots_behind_a_batch_are_the_larger_of_the_two_settings(
+    space, rng, explore_runs, hint, behind
 ):
-    """A wrapper reads the declaration off what it wraps and supplies none.
+    """max(``explore_runs``, ``num_buffered_runs``), behind the batch.
 
-    Filled in with a default here, a learner that had stopped declaring its
-    generation would be wrapped without a word and its declaration lost behind
-    the wrapper, with the budget refusal and the starvation count taking it
-    for a learner that proposes any number and everything still running.
+    ``explore_runs`` is the exploring the Gaussian process does regardless and
+    the buffer only ever adds to it, so a hint of zero leaves ``explore_runs``
+    as it is -- and both at zero is a batch with nothing behind it.
     """
-
-    class Undeclared:
-        def propose(self, history, hint):
-            return [(np.zeros(2), 'main') for _ in range(hint)]
-
-    with pytest.raises(AttributeError, match='generation'):
-        TwoPhaseLearner(RandomLearner(space, rng), Undeclared(), num_training=3)
-
-
-def test_a_generational_learner_cannot_be_put_behind_a_trainer(space, rng):
-    """Refused at construction, because the wrapper cannot answer for it.
-
-    Behind a trainer the history the learner reads its roles off opens with
-    positions it never proposed, and a two-phase learner declares no
-    generation of its own for the budget and the starvation count to read.
-    """
-    main = DifferentialEvolutionLearner(space, rng, population_size=4)
-    with pytest.raises(ValueError, match='whole generations of 4'):
-        TwoPhaseLearner(RandomLearner(space, rng), main, num_training=8)
-
-
-def test_a_generational_learner_cannot_be_the_trainer_either(space, rng):
-    """The same declaration is lost by the same route. Which phase the learner
-    proposes in changes nothing about what its declaration promises.
-    """
-    trainer = DifferentialEvolutionLearner(space, rng, population_size=4)
-    with pytest.raises(ValueError, match='whole generations of 4'):
-        TwoPhaseLearner(trainer, RandomLearner(space, rng), num_training=8)
-
-
-def test_a_trainer_that_withholds_its_proposals_is_refused(space, rng):
-    """Nothing stands behind the trainer.
-
-    It proposes the first shot of the run, from an empty history, and every
-    periodic run after training. One that refuses to propose until the history
-    holds points raises out through the session at the first shot, and the
-    wrapper's own ``minimum_observations`` of zero -- which a wrapper of this
-    reads to size its own training phase -- is a promise it could not keep.
-    """
-    trainer = GaussianProcessLearner(space, rng)
-    assert trainer.minimum_observations > 0
-    with pytest.raises(ValueError, match='will not propose until'):
-        TwoPhaseLearner(trainer, Ready(), num_training=8)
-
-
-def test_a_learner_that_declares_no_barrier_is_wrapped(space, rng):
-    """What is refused is a barrier the wrapper cannot hold, not wrapping. The
-    wrapper's own ``generation`` is true of it because of that refusal.
-    """
-    learner = TwoPhaseLearner(
-        DirectedRandomLearner(space, rng), GaussianProcessLearner(space, rng), 8
+    learner = GaussianProcessLearner(
+        space, rng, batch_size=2, explore_runs=explore_runs
     )
-    assert learner.generation is None
+    proposed = learner.propose(gaussian_process_history(space, 4), hint)
+    assert sources_of(proposed) == ['main'] * 2 + ['explore'] * behind
 
 
-# --- the trainer's periodic return -----------------------------------------
-
-
-def phases_over(learner, count, k=1):
-    """Drive ``learner`` one batch at a time and collect the phase of each."""
-    history = []
-    phases = []
-    for i in range(count):
-        phases.append(phase_of(learner.propose(history, k)))
-        history.append(observe(i, [0.0, 0.0], float(i)))
-    return phases
-
-
-def test_the_trainer_does_not_come_back_unless_a_period_is_asked_for():
-    """The default leaves every existing file proposing what it proposed.
-
-    Switching this on by default would change the shots of every run already
-    configured, with the file that configured it unchanged and saying nothing.
+def test_warmup_ends_at_a_count_of_usable_observations_and_not_of_shots(space, rng):
+    """A shot whose cost is NaN, a bad one and a dropped one each spend a
+    position and give the fit nothing, so none moves warmup on. Counted as
+    shots, the seven below would end a warmup of five with four usable
+    observations to fit to.
     """
-    learner = TwoPhaseLearner(Marked(), Ready(), num_training=2)
-    assert learner.num_runs_between_trainer_runs is None
-    assert phases_over(learner, 10) == ['training'] * 2 + ['main'] * 8
+    learner = GaussianProcessLearner(space, rng, warmup_observations=5)
+    points = space.uniform(np.random.default_rng(8), 8)
+    history = [observe(i, p, offset_sphere(p)) for i, p in enumerate(points[:4])]
+    history += [
+        observe('nan', points[4], float('nan')),
+        observe('bad', points[5], 1.0, bad=True),
+        observe('gone', points[6], None, state=DROPPED),
+    ]
+    assert sources_of(learner.propose(history, 2)) == ['warmup'] * 2
+
+    history.append(observe(4, points[7], offset_sphere(points[7])))
+    assert sources_of(learner.propose(history, 2)) == ['main'] * 4 + ['explore'] * 2
 
 
-def test_the_trainer_takes_one_proposal_in_every_cycle():
-    """Three from the main learner, then one from the trainer, and round again.
+@pytest.mark.parametrize(
+    'explore_runs, hint, in_flight, proposed',
+    [
+        (0, 0, 0, 1),
+        (2, 0, 0, 2),
+        (0, 3, 0, 3),
+        (2, 3, 0, 3),
+        (2, 3, 2, 1),
+        (0, 0, 2, 0),
+    ],
+)
+def test_warmup_keeps_the_larger_setting_or_one_shot_in_flight(
+    space, rng, explore_runs, hint, in_flight, proposed
+):
+    """max(``explore_runs``, ``num_buffered_runs``, 1), counting every shot in
+    flight, the configured start among them.
 
-    The period is how many come from the main learner between one of the
-    trainer's and the next, so the cycle is one longer than the number.
+    The floor of one is what starts a Gaussian process at both settings zero:
+    without it such a run would never propose its first shot.
     """
-    learner = TwoPhaseLearner(
-        Marked(), Ready(), num_training=2, num_runs_between_trainer_runs=3
+    learner = GaussianProcessLearner(space, rng, explore_runs=explore_runs)
+    history = [
+        Observation(None, np.zeros(2), None, state=PENDING, source='start'),
+        observe('warm', [1.0, 1.0], None, state=PENDING, source='warmup'),
+    ][:in_flight]
+    assert sources_of(learner.propose(history, hint)) == ['warmup'] * proposed
+
+
+@pytest.mark.parametrize('num_params, warmup', [(1, 5), (2, 5), (3, 6), (5, 10)])
+def test_the_warmup_scales_with_the_search_above_a_floor_of_five(num_params, warmup):
+    """max(5, 2 × num_params): a constant is too short for a wide search, and
+    twice the parameters alone fits a one-parameter search on two points."""
+    space = ParameterSpace([Parameter(f'p{i}', 0.0, 1.0) for i in range(num_params)])
+    learner = GaussianProcessLearner(space, np.random.default_rng(1))
+    assert learner.warmup_observations == warmup
+
+
+def test_the_explorer_proposes_the_warmup_and_the_shots_behind_each_batch(space, rng):
+    """The routing, not only the source the shots are given."""
+
+    class Marked(RandomLearner):
+        """An explorer whose draws cannot be mistaken for anything else's."""
+
+        def ask(self, history, k):
+            return np.full((k, self.space.num_params), 4.5)
+
+    learner = GaussianProcessLearner(
+        space, rng, explorer=Marked(space, rng), explore_runs=2
     )
-    assert phases_over(learner, 12) == (
-        ['training'] * 2
-        + ['main', 'main', 'main', 'periodic trainer'] * 2
-        + ['main', 'main']
-    )
+    warmup = learner.propose([], 2)
+    assert sources_of(warmup) == ['warmup'] * 2
+    assert all((params == 4.5).all() for params, _ in warmup)
+
+    cycle = learner.propose(gaussian_process_history(space, 4), 0)
+    assert sources_of(cycle) == ['main'] * 4 + ['explore'] * 2
+    assert not any((params == 4.5).all() for params, _ in cycle[:4])
+    assert all((params == 4.5).all() for params, _ in cycle[4:])
 
 
-def test_the_periodic_proposal_is_the_trainers_own():
-    """The routing, not only the label the wrapper puts on it."""
-    learner = TwoPhaseLearner(
-        Marked(), Ready(), num_training=0, num_runs_between_trainer_runs=2
-    )
-    history = [observe(i, [0.0, 0.0], float(i)) for i in range(2)]
-    [(params, phase)] = learner.propose(history, 1)
-    assert (params == 7.0).all()
-    assert phase == 'periodic trainer'
-    # And the position before it, which is the main learner's.
-    [(params, phase)] = learner.propose(history[:1], 1)
-    assert (params == 0.0).all()
-    assert phase == 'main'
-
-
-def test_a_position_that_produced_no_observation_does_not_move_the_cycle_on():
-    """Read off the history like the handover, and not off a count of calls.
-
-    A dropped shot spends a position and produces nothing, so a learner
-    counting its own proposals would take the trainer's turn a shot early and
-    stay a shot out for the rest of the run. Handed the same usable
-    observations, this answers the same thing.
+def test_a_batch_does_not_condition_on_the_explorer_shots_in_flight(space):
+    """A random draw is a weaker thing to fold in as a fantasy than a point of
+    the Gaussian process's own, and conditioning on pending points is measured
+    to make the answer worse, so shots in flight change nothing about the
+    batch.
     """
-    learner = TwoPhaseLearner(
-        Marked(), Ready(), num_training=0, num_runs_between_trainer_runs=2
+    history = gaussian_process_history(space, 5)
+    in_flight = sent_out(
+        history,
+        [(p, 'explore') for p in space.uniform(np.random.default_rng(9), 3)],
     )
-    seen = [observe(i, [0.0, 0.0], float(i)) for i in range(2)]
-    assert phase_of(learner.propose(seen, 1)) == 'periodic trainer'
-    spent = seen + [observe('gone', [0.0, 0.0], None, state=DROPPED)]
-    assert phase_of(learner.propose(spent, 1)) == 'periodic trainer'
-    # A third usable observation is what moves it on.
-    moved_on = seen + [observe(2, [0.0, 0.0], 2.0)]
-    assert phase_of(learner.propose(moved_on, 1)) == 'main'
-
-
-def test_a_batch_is_made_whole_by_the_learner_whose_turn_it_opens_on():
-    """The turn is taken at the batch boundary rather than splitting the batch.
-
-    A split would have to say which position it had reached part way through a
-    batch, and the only count available for that is one observation per
-    proposal -- untrue of every shot that is dropped or comes back unusable.
-    """
-    learner = TwoPhaseLearner(
-        Marked(), Ready(), num_training=0, num_runs_between_trainer_runs=2
-    )
-    opening_on_the_trainer = [observe(i, [0.0, 0.0], float(i)) for i in range(2)]
-    proposed = learner.propose(opening_on_the_trainer, 3)
-    assert len(proposed) == 3
-    assert all((params == 7.0).all() for params, _ in proposed)
-    assert phase_of(proposed) == 'periodic trainer'
-    # One position earlier the trainer's turn falls inside the batch, and the
-    # main learner still makes the whole of it.
-    proposed = learner.propose(opening_on_the_trainer[:1], 3)
-    assert len(proposed) == 3
-    assert all((params == 0.0).all() for params, _ in proposed)
-    assert phase_of(proposed) == 'main'
-
-
-def test_a_period_leaving_the_main_learner_nothing_to_propose_is_refused():
-    """Zero is every proposal the trainer's, which is the named learner never
-    running at all. Leaving the setting out is how it is switched off.
-    """
-    with pytest.raises(ValueError, match='at least 1'):
-        TwoPhaseLearner(
-            Marked(), Ready(), num_training=0, num_runs_between_trainer_runs=0
+    batches = [
+        GaussianProcessLearner(space, np.random.default_rng(3), explore_runs=0).propose(
+            seen, 0
         )
-    # And the floor itself, which alternates the two.
-    learner = TwoPhaseLearner(
-        Marked(), Ready(), num_training=0, num_runs_between_trainer_runs=1
+        for seen in (history, in_flight)
+    ]
+    np.testing.assert_array_equal(
+        [params for params, _ in batches[0]], [params for params, _ in batches[1]]
     )
-    assert phases_over(learner, 4) == ['main', 'periodic trainer'] * 2
+
+
+def test_the_cycle_is_warmup_then_batches_with_explorer_shots_behind_them(space):
+    """The whole cycle, driven as a session drives it: whatever is proposed
+    goes out, and the oldest shot in flight comes back before each refill.
+
+    Warmup ends at five usable observations with one warmup shot still
+    queued, and that shot runs: a sixth, by design. Every batch after it goes
+    out as soon as its last point is back, with the two explorer shots of the
+    one before still in flight.
+    """
+    learner = GaussianProcessLearner(space, np.random.default_rng(3))
+    history, sources = [], []
+    for _ in range(20):
+        proposed = learner.propose(history, 2)
+        sources += sources_of(proposed)
+        history = sent_out(history, proposed)
+        oldest = next((o.shot_id for o in history if o.state == PENDING), None)
+        history = come_back(history, **{oldest: COMPLETE})
+    assert sources[:24] == ['warmup'] * 6 + (['main'] * 4 + ['explore'] * 2) * 3
+
+
+def test_the_explorer_is_one_of_the_learners_that_draw_without_fitting(space, rng):
+    """By name, built from its defaults, or handed over built.
+
+    Differential evolution proposes only whole generations and a Gaussian
+    process only once it has warmed up, so neither can keep a warmup topped up
+    shot by shot or fill a buffer on demand.
+    """
+    assert type(GaussianProcessLearner(space, rng).explorer) is DirectedRandomLearner
+    assert type(GaussianProcessLearner(space, rng, explorer='random').explorer) is (
+        RandomLearner
+    )
+    mine = DirectedRandomLearner(space, rng, trust_region=0.3)
+    assert GaussianProcessLearner(space, rng, explorer=mine).explorer is mine
+
+    for other in (
+        DifferentialEvolutionLearner(space, rng, population_size=4),
+        GaussianProcessLearner(space, rng),
+        'differential_evolution',
+        'gaussian_process',
+    ):
+        with pytest.raises(ValueError, match='explorer must be one of'):
+            GaussianProcessLearner(space, rng, explorer=other)
 
 
 def test_a_gaussian_process_that_would_fit_nothing_is_refused(space, rng):
     """At zero the guard in ``fit`` passes on an empty history and the refusal
     a file gets comes from inside a scikit-learn scaler.
     """
-    with pytest.raises(ValueError, match='minimum_observations.*at least 1'):
-        GaussianProcessLearner(space, rng, minimum_observations=0)
+    with pytest.raises(ValueError, match='warmup_observations.*at least 1'):
+        GaussianProcessLearner(space, rng, warmup_observations=0)
+    assert GaussianProcessLearner(space, rng, warmup_observations=1).warmup_observations == 1
 
 
-def test_a_gaussian_process_needing_one_observation_is_accepted(space, rng):
-    learner = GaussianProcessLearner(space, rng, minimum_observations=1)
-    assert learner.minimum_observations == 1
+def test_a_batch_of_nothing_is_refused_and_one_point_is_accepted(space, rng):
+    """A batch of none would leave the Gaussian process proposing nothing once
+    warmup is over, and the run idling for good behind its explorer."""
+    with pytest.raises(ValueError, match='batch_size.*at least 1'):
+        GaussianProcessLearner(space, rng, batch_size=0)
+    assert GaussianProcessLearner(space, rng, batch_size=1).batch_size == 1
+
+
+def test_no_explorer_shots_beyond_the_buffer_is_accepted_and_fewer_is_refused(
+    space, rng
+):
+    """Zero is a Gaussian process exploring only as far as
+    ``num_buffered_runs`` asks it to, which is a run a lab may want."""
+    with pytest.raises(ValueError, match='explore_runs.*cannot be negative'):
+        GaussianProcessLearner(space, rng, explore_runs=-1)
+    assert GaussianProcessLearner(space, rng, explore_runs=0).explore_runs == 0
 
 
 def test_an_acquisition_that_is_never_finite_says_so(space, rng):
@@ -1552,7 +1500,7 @@ def test_an_exact_cost_beside_one_with_no_uncertainty_is_refused(space, rng):
     zero with no white-noise term anywhere, and the fit is singular.
     """
     learner = GaussianProcessLearner(
-        space, rng, cost_has_noise=False, minimum_observations=2
+        space, rng, cost_has_noise=False, warmup_observations=2
     )
     history = [
         observe('a', space.minimum, 1.0, uncer=0.1),
@@ -1564,7 +1512,7 @@ def test_an_exact_cost_beside_one_with_no_uncertainty_is_refused(space, rng):
 
 def test_costs_that_all_carry_an_uncertainty_fit_without_noise(space, rng):
     learner = GaussianProcessLearner(
-        space, rng, cost_has_noise=False, minimum_observations=2
+        space, rng, cost_has_noise=False, warmup_observations=2
     )
     history = [
         observe('a', space.minimum, 1.0, uncer=0.1),
@@ -1575,7 +1523,7 @@ def test_costs_that_all_carry_an_uncertainty_fit_without_noise(space, rng):
 
 def test_costs_that_carry_no_uncertainty_at_all_fit_without_noise(space, rng):
     learner = GaussianProcessLearner(
-        space, rng, cost_has_noise=False, minimum_observations=2
+        space, rng, cost_has_noise=False, warmup_observations=2
     )
     history = [
         observe('a', space.minimum, 1.0),
@@ -1587,7 +1535,7 @@ def test_costs_that_carry_no_uncertainty_at_all_fit_without_noise(space, rng):
 def test_a_mixed_history_still_fits_when_the_cost_has_noise(space, rng):
     """The ordinary case: a lab whose uncertainty fit fails on some shots."""
     learner = GaussianProcessLearner(
-        space, rng, cost_has_noise=True, minimum_observations=2
+        space, rng, cost_has_noise=True, warmup_observations=2
     )
     history = [
         observe('a', space.minimum, 1.0, uncer=0.1),
@@ -1596,34 +1544,38 @@ def test_a_mixed_history_still_fits_when_the_cost_has_noise(space, rng):
     assert learner.fit(history)
 
 
-def test_a_late_cost_refits_a_prefix_of_unchanged_length(space):
+def test_a_late_cost_refits_a_set_of_unchanged_size(space):
     """The hyperparameter cache is keyed on *which* observations it was fitted
     to, not on how many.
 
     Costs arrive out of order and ``usable`` returns them in proposal order, so
     a cost that turns up late is inserted in the middle rather than appended.
-    With nine proposals and one of them still pending, the prefix a refit uses
-    is eight long; when that pending cost lands the prefix is eight long still,
-    and holds a different eight. Keyed on a count, the cache would answer with
-    the kernel it fitted to the other set.
+    Of nine proposals, a history still waiting on the third and one still
+    waiting on the last each hold eight usable observations, and a different
+    eight. Within one session the usable observations only accumulate, so a
+    count keeps pace with them there; but a cache must hold what a fresh
+    instance handed the same history computes, whatever history it saw
+    before, and keyed on a count it would answer the second of these with the
+    kernel it fitted to the first.
     """
     history = gaussian_process_history(space, 11, count=9)
-    waiting = list(history)
-    waiting[2] = dataclasses.replace(
-        waiting[2], cost=None, uncer=None, state=PENDING
-    )
+
+    def waiting_on(position):
+        waiting = list(history)
+        waiting[position] = dataclasses.replace(
+            waiting[position], cost=None, uncer=None, state=PENDING
+        )
+        return waiting
 
     carried = GaussianProcessLearner(
-        space, np.random.default_rng(1), refit_interval=4, minimum_observations=4
+        space, np.random.default_rng(1), warmup_observations=4
     )
-    carried.fit(waiting)
-    assert len(usable(waiting)) == 8
-    carried.fit(history)
+    carried.fit(waiting_on(2))
+    assert len(usable(waiting_on(2))) == len(usable(waiting_on(8))) == 8
+    carried.fit(waiting_on(8))
 
-    fresh = GaussianProcessLearner(
-        space, np.random.default_rng(1), refit_interval=4, minimum_observations=4
-    )
-    fresh.fit(history)
+    fresh = GaussianProcessLearner(space, np.random.default_rng(1), warmup_observations=4)
+    fresh.fit(waiting_on(8))
 
     grid = space.uniform(np.random.default_rng(5), 5)
     np.testing.assert_allclose(carried.predict(grid)[0], fresh.predict(grid)[0])
@@ -1677,27 +1629,52 @@ MISWRITTEN = [
     ),
     (
         'gaussian_process',
-        'refit_interval',
+        'batch_size',
         True,
-        "refit_interval must be written as a whole number, got True.",
+        "batch_size must be written as a whole number, got True.",
     ),
     (
         'gaussian_process',
-        'refit_interval',
+        'batch_size',
         4.5,
-        "refit_interval must be written as a whole number, got 4.5.",
+        "batch_size must be written as a whole number, got 4.5.",
     ),
     (
         'gaussian_process',
-        'minimum_observations',
+        'warmup_observations',
         6.5,
-        "minimum_observations must be written as a whole number, got 6.5.",
+        "warmup_observations must be written as a whole number, got 6.5.",
     ),
     (
         'gaussian_process',
-        'minimum_observations',
+        'warmup_observations',
         True,
-        "minimum_observations must be written as a whole number, got True.",
+        "warmup_observations must be written as a whole number, got True.",
+    ),
+    (
+        'gaussian_process',
+        'explore_runs',
+        1.5,
+        "explore_runs must be written as a whole number, got 1.5.",
+    ),
+    (
+        'gaussian_process',
+        'explore_runs',
+        True,
+        "explore_runs must be written as a whole number, got True.",
+    ),
+    (
+        'gaussian_process',
+        'explorer',
+        'differential_evolution',
+        "explorer must be one of ('random', 'directed_random'), got "
+        "'differential_evolution'",
+    ),
+    (
+        'gaussian_process',
+        'explorer',
+        ['random'],
+        "explorer must be one of ('random', 'directed_random'), got ['random']",
     ),
     (
         'directed_random',
@@ -1919,8 +1896,10 @@ def test_a_knob_takes_the_kinds_python_and_numpy_hand_it(space, rng):
         noise_level_bounds=(1e-5, 10),
         cost_bias=np.int64(2),
         uncer_bias=np.array([0.0, 1.5]),
-        refit_interval=np.int64(3),
-        minimum_observations=np.int64(4),
+        batch_size=np.int64(3),
+        warmup_observations=np.int64(4),
+        explore_runs=np.int64(2),
+        explorer='random',
         trust_region=[1, 2],
     )
     assert fitting.cost_has_noise is False
@@ -1928,6 +1907,8 @@ def test_a_knob_takes_the_kinds_python_and_numpy_hand_it(space, rng):
     assert fitting.noise_level_bounds == (1e-5, 10.0)
     assert fitting.cost_bias == 2.0
     assert fitting.uncer_bias == (0.0, 1.5)
-    assert fitting.refit_interval == 3
-    assert fitting.minimum_observations == 4
+    assert fitting.batch_size == 3
+    assert fitting.warmup_observations == 4
+    assert fitting.explore_runs == 2
+    assert type(fitting.explorer) is RandomLearner
     np.testing.assert_array_equal(fitting.trust_region, [1.0, 2.0])

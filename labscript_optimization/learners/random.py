@@ -5,7 +5,8 @@ thing that works and the reference every other learner is measured against.
 
 :class:`DirectedRandomLearner` draws near a previously seen point rather than
 near the best one, which biases it towards exploring the space instead of
-refining a single minimum. It is the trainer the Gaussian process runs first.
+refining a single minimum. It is the explorer the Gaussian process runs unless
+told otherwise.
 
 Both keep exactly the hint of the run's shots in flight: each proposes as many
 as the hint leaves room for beside the history's pending records, whoever

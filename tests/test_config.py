@@ -21,10 +21,8 @@ groups = ["CMOT", "SHIMS"]
 
 [GENERAL]
 num_buffered_runs = 3
-num_training_runs = 20
 max_num_runs = 400
 learner = "gaussian_process"
-trainer = "directed_random"
 
 [LEARNER.directed_random]
 trust_region = 0.2
@@ -139,19 +137,22 @@ def test_the_uncertainty_column_is_the_cost_column_prefixed(config):
     assert config.uncertainty_key == ('zTOF', 'u_Nb')
 
 
-def test_a_trainer_and_a_main_learner_each_take_their_own_value_of_a_knob(config):
+def test_an_explorer_and_its_gaussian_process_each_take_their_own_value_of_a_knob(
+    config,
+):
     """The one knob three learners take, given two values in one session.
 
-    A wide region to train with and a tight one to refine with is the first
+    A wide region to explore with and a tight one to refine with is the first
     thing anyone running two live learners wants, and it is exactly what a
-    single table of knobs cannot express.
+    single table of knobs cannot express. The file names no explorer, so this
+    is also the default one reading its own table.
     """
     built = learners.build(config)
     wide = config.space.absolute_trust_region(0.2)
     tight = config.space.absolute_trust_region(0.05)
     assert not np.allclose(wide, tight)
-    np.testing.assert_allclose(built.trainer.trust_region, wide)
-    np.testing.assert_allclose(built.main.trust_region, tight)
+    np.testing.assert_allclose(built.explorer.trust_region, wide)
+    np.testing.assert_allclose(built.trust_region, tight)
 
 
 @pytest.mark.parametrize(
@@ -185,7 +186,7 @@ def test_a_learner_knob_in_the_general_table_is_refused_naming_where_it_goes(
         assert table in message
 
 
-#: The fifteen knobs ``UPGRADING.md`` §3 tells a lab to move out of ``[GENERAL]``,
+#: The knobs ``UPGRADING.md`` §3 tells a lab to move out of ``[GENERAL]``,
 #: written as that document's table has them. Hard-coded rather than derived
 #: from the learners: derived, this would agree with the loader by
 #: construction and say nothing about whether the document is true.
@@ -201,10 +202,12 @@ MOVED_KNOBS = {
     'cross_over_probability': '0.9',
     'cost_bias': '1.0',
     'uncer_bias': '1.0',
-    'refit_interval': '4',
+    'batch_size': '4',
     'length_scale_bounds': '[1e-2, 1e2]',
     'noise_level_bounds': '[1e-5, 1e1]',
-    'minimum_observations': '6',
+    'warmup_observations': '6',
+    'explorer': '"random"',
+    'explore_runs': '1',
 }
 
 
@@ -230,123 +233,149 @@ def test_the_learner_is_named_in_the_general_table():
     assert config.learner == 'differential_evolution'
 
 
-# --- the trainer -----------------------------------------------------------
+# --- the explorer ----------------------------------------------------------
 
 
-def test_the_trainer_is_named_in_the_general_table():
-    """Which learner runs the training shots, and the periodic ones after them.
+def test_the_explorer_is_named_in_the_gaussian_process_table():
+    """Which learner runs the warmup and the shots behind each batch.
 
     It decides where the first shots of every run land, so it is the lab's to
-    choose rather than this package's to fix.
-    """
-    named = config_module.loads(MINIMAL + '[GENERAL]\ntrainer = "random"\n')
-    assert type(learners.build(named).trainer) is learners.RandomLearner
-    # And what a file naming none gets: the band around middling costs.
-    unnamed = learners.build(config_module.loads(MINIMAL))
-    assert type(unnamed.trainer) is learners.DirectedRandomLearner
-
-
-def test_an_unknown_trainer_is_refused_at_load():
-    """Rather than at worker configure, with the apparatus already running."""
-    with pytest.raises(ValueError, match="unknown trainer 'directed_randon'"):
-        config_module.loads(MINIMAL + '[GENERAL]\ntrainer = "directed_randon"\n')
-
-
-def test_a_trainer_named_for_a_learner_that_needs_none_is_refused():
-    """No trainer is built for such a learner, so the name would name nothing.
-
-    A file that carried it would read as though the first shots came from
-    somewhere they do not.
-    """
-    written = MINIMAL + '[GENERAL]\nlearner = "differential_evolution"\n'
-    with pytest.raises(ValueError, match='trainer is not accepted') as raised:
-        config_module.loads(written + 'trainer = "random"\n')
-    # And the learner it could have been named for.
-    assert 'gaussian_process' in str(raised.value)
-    assert config_module.loads(written).learner == 'differential_evolution'
-
-
-def test_the_learner_m_loop_trained_with_cannot_train_here():
-    """M-LOOP's machine-learning controllers defaulted to differential
-    evolution for the training shots and its periodic runs both. Here that learner
-    proposes a whole population at a time and only when none of its proposals
-    is outstanding, which a two-phase learner cannot hold a barrier for, so the
-    file is refused rather than silently cutting a generation at the handover.
-    """
-    with pytest.raises(ValueError, match='whole generations of 8') as raised:
-        config_module.loads(MINIMAL + '[GENERAL]\ntrainer = "differential_evolution"\n')
-    assert 'Name a trainer' in str(raised.value)
-
-
-def test_how_often_the_trainer_comes_back_is_named_in_the_general_table():
-    """It configures the arrangement of the two learners, not either of them.
-
-    Neither learner's constructor could take it: the trainer does not know it
-    is behind a main learner, and the main learner does not know how often it
-    is stood down. That is what ``[GENERAL]`` carries, and why this is not a
-    knob in a ``[LEARNER.<name>]`` table.
+    choose rather than this package's to fix, and it is the Gaussian process's
+    knob because no other learner runs one. Built from its own table whether
+    the file names it or leaves it to the default.
     """
     named = config_module.loads(
-        MINIMAL + '[GENERAL]\nnum_runs_between_trainer_runs = 4\n'
+        MINIMAL + '[LEARNER.gaussian_process]\nexplorer = "random"\n'
     )
-    assert learners.build(named).num_runs_between_trainer_runs == 4
-    # And what a file naming none gets: a run that never goes back.
-    unnamed = learners.build(config_module.loads(MINIMAL))
-    assert unnamed.num_runs_between_trainer_runs is None
+    assert type(learners.build(named).explorer) is learners.RandomLearner
+    # And what a file naming none gets: the band around middling costs, on
+    # the knobs of its own table.
+    unnamed = learners.build(
+        config_module.loads(MINIMAL + '[LEARNER.directed_random]\ntrust_region = 0.4\n')
+    )
+    assert type(unnamed.explorer) is learners.DirectedRandomLearner
+    np.testing.assert_allclose(unnamed.explorer.trust_region, [0.4])
 
 
-def test_how_often_the_trainer_comes_back_is_refused_where_there_is_no_trainer():
-    """No trainer is built for such a learner, so there is nothing to come back.
-
-    Refused beside the trainer's own name and in the same sentence, because a
-    file switching learners usually carries both and would otherwise be
-    refused twice over.
-    """
-    written = MINIMAL + '[GENERAL]\nlearner = "differential_evolution"\n'
-    with pytest.raises(
-        ValueError, match='num_runs_between_trainer_runs is not accepted'
-    ):
-        config_module.loads(written + 'num_runs_between_trainer_runs = 4\n')
-    with pytest.raises(
-        ValueError, match='num_runs_between_trainer_runs and trainer are not accepted'
-    ):
+def test_an_unknown_explorer_is_refused_at_load():
+    """Rather than at worker configure, with the apparatus already running."""
+    with pytest.raises(ValueError) as raised:
         config_module.loads(
-            written + 'num_runs_between_trainer_runs = 4\ntrainer = "random"\n'
+            MINIMAL + '[LEARNER.gaussian_process]\nexplorer = "directed_randon"\n'
         )
+    assert str(raised.value) == (
+        "explorer must be one of ('random', 'directed_random'), got "
+        "'directed_randon'"
+    )
 
 
-def test_a_warmup_shorter_than_the_learner_needs_stops_the_load():
-    """Rather than at worker configure, with the apparatus already running.
-
-    MINIMAL searches one parameter, so the Gaussian process it builds will not
-    fit below two usable observations. A file asking to hand over after one is
-    asking for a handover that would happen after two.
+def test_the_learner_m_loop_trained_with_cannot_explore_here():
+    """M-LOOP's machine-learning controllers defaulted to differential
+    evolution for their training shots. Here that learner proposes only whole
+    generations, and a Gaussian process only once it has warmed up, so neither
+    can keep a warmup topped up shot by shot or fill a buffer on demand.
     """
-    with pytest.raises(ValueError, match='num_training_runs is 1') as raised:
-        config_module.loads(MINIMAL + '[GENERAL]\nnum_training_runs = 1\n')
-    assert 'holds 2 usable observations' in str(raised.value)
-    loaded = config_module.loads(MINIMAL + '[GENERAL]\nnum_training_runs = 2\n')
-    assert loaded.num_training_runs == 2
+    for other in ('differential_evolution', 'gaussian_process'):
+        with pytest.raises(ValueError, match='explorer must be one of'):
+            config_module.loads(
+                MINIMAL + f'[LEARNER.gaussian_process]\nexplorer = "{other}"\n'
+            )
 
 
-def test_a_trainer_that_will_not_propose_from_an_empty_history_is_refused():
-    """The trainer proposes the first shot of the run, from an empty history,
-    so there is nothing behind it to propose instead.
+def test_the_default_warmup_of_a_wide_search_loads():
+    """A warmup that scales with the search, so a file leaving it out loads
+    whatever it searches over. A constant default below twice the parameters
+    is one the Gaussian process would need raised for every search past two
+    parameters.
     """
-    with pytest.raises(ValueError, match='will not propose until') as raised:
-        config_module.loads(MINIMAL + '[GENERAL]\ntrainer = "gaussian_process"\n')
-    assert 'begins with none' in str(raised.value)
+    written = MINIMAL + ''.join(
+        f'[PARAMETERS.G.p{i}]\nglobal_name = "g{i}"\nmin = 0.0\nmax = 1.0\n'
+        for i in range(4)
+    )
+    learner = learners.build(config_module.loads(written))
+    assert learner.space.num_params == 5
+    assert learner.warmup_observations == 10
+
+
+@pytest.mark.parametrize(
+    'text, key, replacement',
+    [
+        (MINIMAL + '[GENERAL]\ntrainer = "random"\n', 'trainer', 'explorer'),
+        (
+            MINIMAL + '[GENERAL]\nnum_training_runs = 20\n',
+            'num_training_runs',
+            'warmup_observations',
+        ),
+        (
+            MINIMAL + '[GENERAL]\nnum_runs_between_trainer_runs = 4\n',
+            'num_runs_between_trainer_runs',
+            'explore_runs',
+        ),
+        (MINIMAL + '[GENERAL]\nrefit_interval = 4\n', 'refit_interval', 'batch_size'),
+        (
+            MINIMAL + '[GENERAL]\nminimum_observations = 10\n',
+            'minimum_observations',
+            'warmup_observations',
+        ),
+        (
+            MINIMAL + '[LEARNER.gaussian_process]\nrefit_interval = 4\n',
+            'refit_interval',
+            'batch_size',
+        ),
+        (
+            MINIMAL + '[LEARNER.gaussian_process]\nminimum_observations = 10\n',
+            'minimum_observations',
+            'warmup_observations',
+        ),
+    ],
+    ids=[
+        'GENERAL.trainer',
+        'GENERAL.num_training_runs',
+        'GENERAL.num_runs_between_trainer_runs',
+        'GENERAL.refit_interval',
+        'GENERAL.minimum_observations',
+        'LEARNER.gaussian_process.refit_interval',
+        'LEARNER.gaussian_process.minimum_observations',
+    ],
+)
+def test_a_replaced_setting_is_refused_naming_what_replaces_it(text, key, replacement):
+    """Each is refused rather than aliased, and the refusal names the knob that
+    replaces it and the table that knob is written in. Left to the spelling
+    check, an old key is a typo and the reader is handed everything the table
+    accepts to choose from -- and an alias would go on loading a file whose
+    settings mean something else now: a period between explorer shots read as
+    a count of them.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(text)
+    message = str(raised.value)
+    assert f'{key} in ' in message
+    assert f'replaced by {replacement} in [LEARNER.gaussian_process]' in message
+
+
+def test_a_file_carrying_several_replaced_settings_is_told_about_all_at_once():
+    """A file written for the trainer carries most of them together, so
+    reporting one is a load and an edit per key."""
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(
+            MINIMAL
+            + '[GENERAL]\ntrainer = "random"\nnum_training_runs = 20\n'
+            + '[LEARNER.gaussian_process]\nrefit_interval = 4\n'
+        )
+    message = str(raised.value)
+    for key in ('trainer', 'num_training_runs', 'refit_interval'):
+        assert f'{key} in ' in message
 
 
 def test_a_setting_left_out_takes_the_value_the_documents_promise():
     """What a lab may leave out on the strength of what it was told.
 
-    UPGRADING §5 promises three buffered runs, the Gaussian process is the
+    UPGRADING §5 promises two buffered runs, the Gaussian process is the
     learner a file naming none gets, and a cost is minimised unless the file
     says otherwise -- the flip nothing downstream would show.
     """
     config = config_module.loads(MINIMAL)
-    assert config.num_buffered_runs == 3
+    assert config.num_buffered_runs == 2
     assert config.learner == 'gaussian_process'
     assert config.maximize is False
 
@@ -375,7 +404,7 @@ def test_a_file_that_sets_no_options_gets_exactly_the_dataclass_defaults():
     'load',
     [
         f'config.loads({MINIMAL!r})',
-        f'config.loads({MINIMAL + "[LEARNER.gaussian_process]\nrefit_interval = 4\n"!r})',
+        f'config.loads({MINIMAL + "[LEARNER.gaussian_process]\nbatch_size = 4\n"!r})',
         f'config.load({str(EXAMPLE)!r})',
     ],
     ids=['a minimal file', 'a table naming the gaussian process', 'the example'],
@@ -835,8 +864,8 @@ def test_a_per_learner_table_accepts_that_learners_knob():
             "'false'.",
         ),
         (
-            MINIMAL + '[LEARNER.gaussian_process]\nrefit_interval = true\n',
-            "refit_interval must be written as a whole number, got True.",
+            MINIMAL + '[LEARNER.gaussian_process]\nbatch_size = true\n',
+            "batch_size must be written as a whole number, got True.",
         ),
         (
             MINIMAL + '[LEARNER.gaussian_process]\nlength_scale_bounds = 5\n',
@@ -872,7 +901,7 @@ def test_a_per_learner_table_accepts_that_learners_knob():
     ids=[
         'cost_has_noise',
         'trust_gaussian',
-        'refit_interval',
+        'batch_size',
         'length_scale_bounds',
         'trust_region',
         'trust_range',
@@ -896,32 +925,52 @@ def test_the_example_configuration_loads_and_builds_its_learner():
     """The file every new lab starts from, held to the schema like any other."""
     config = config_module.load(EXAMPLE)
     learner = learners.build(config)
-    assert isinstance(learner, learners.TwoPhaseLearner)
-    assert learner.num_training == 20
+    assert isinstance(learner, learners.GaussianProcessLearner)
+    assert type(learner.explorer) is learners.DirectedRandomLearner
+    assert learner.warmup_observations == 20
 
 
-# --- the Gaussian process's refit interval ---------------------------------
+# --- the Gaussian process's cycle ------------------------------------------
 
 
-def test_refit_interval_is_the_gaussian_process_knob():
+def test_the_cycle_is_set_in_the_gaussian_process_table():
+    """How many points a batch holds and how many explorer shots follow it are
+    the Gaussian process's knobs, and each reaches it from its table."""
     config = config_module.loads(
-        MINIMAL + '[LEARNER.gaussian_process]\nrefit_interval = 6\n'
+        MINIMAL + '[LEARNER.gaussian_process]\nbatch_size = 6\nexplore_runs = 0\n'
     )
-    assert learners.build(config).main.refit_interval == 6
+    learner = learners.build(config)
+    assert (learner.batch_size, learner.explore_runs) == (6, 0)
+    # And what a file writing neither gets.
+    unwritten = learners.build(config_module.loads(MINIMAL))
+    assert (unwritten.batch_size, unwritten.explore_runs) == (4, 1)
 
 
-def test_the_old_spelling_of_the_refit_interval_is_refused():
-    """It named a batch, and there is no batch left for it to name.
+def test_a_gaussian_process_with_no_buffer_and_no_explorer_shots_loads():
+    """A pure Gaussian process, which idles the apparatus while each batch is
+    fitted. Unwise for most labs and impossible for none, and its starvation
+    is counted truthfully; see tests/test_session.py."""
+    config = config_module.loads(
+        MINIMAL
+        + '[GENERAL]\nnum_buffered_runs = 0\n'
+        + '[LEARNER.gaussian_process]\nexplore_runs = 0\n'
+    )
+    assert config.num_buffered_runs == 0
+    assert learners.build(config).explore_runs == 0
 
-    The key set the period of the exploration schedule as well, which
-    uncer_bias now holds, so a file still writing batch_size is asking for a
-    schedule it would not get. Taken quietly it would set the refit interval
-    and say nothing about the half of its meaning that had gone.
+
+@pytest.mark.parametrize('learner', ['random', 'directed_random'])
+def test_a_learner_that_proposes_nothing_at_a_depth_of_zero_is_refused_it(learner):
+    """The random learners keep exactly num_buffered_runs in flight, so at zero
+    they never propose, and the session would sit empty with nothing said.
+    The configured start does not rescue it: the learner meets the start as a
+    shot in flight and proposes nothing beside it or after it.
     """
-    with pytest.raises(ValueError, match='batch_size'):
-        config_module.loads(
-            MINIMAL + '[LEARNER.gaussian_process]\nbatch_size = 6\n'
-        )
+    written = MINIMAL + f'[GENERAL]\nlearner = "{learner}"\n'
+    with pytest.raises(ValueError, match='num_buffered_runs is 0') as raised:
+        config_module.loads(written + 'num_buffered_runs = 0\n')
+    assert 'at least 1' in str(raised.value)
+    assert config_module.loads(written + 'num_buffered_runs = 1\n').num_buffered_runs == 1
 
 
 # --- the budget and the population -----------------------------------------
@@ -971,20 +1020,6 @@ def test_a_generation_a_constructor_assigns_is_refused_a_queue_depth_too(monkeyp
     assert 'generation of 8' in str(raised.value)
     # The same learner without the setting is the file that loads.
     assert config_module.loads(written).learner == 'ordinary'
-
-
-def test_a_generational_learner_behind_a_trainer_is_refused_at_load(monkeypatch):
-    """Rather than at worker configure, with the apparatus already running.
-
-    A two-phase learner can neither answer for a generation nor pass one on,
-    so it refuses to wrap one. Building the learner at load is what brings
-    that refusal forward to the file that asks for the combination.
-    """
-    monkeypatch.setattr(
-        learners, 'NEEDS_TRAINING', frozenset({'differential_evolution'})
-    )
-    with pytest.raises(ValueError, match='whole generations of 8'):
-        config_module.loads(DE)
 
 
 @pytest.mark.parametrize(
@@ -1049,8 +1084,6 @@ def test_the_budget_is_measured_against_the_generation_a_learner_declares(monkey
     'setting, written',
     [
         ('num_buffered_runs', '2.9'),
-        ('num_training_runs', '19.5'),
-        ('num_runs_between_trainer_runs', '4.5'),
         ('max_num_runs', '400.5'),
         ('max_num_runs_without_better_params', '80.5'),
         ('seed', '1.9'),
@@ -1073,8 +1106,6 @@ def test_a_whole_number_setting_written_as_a_fraction_is_refused(setting, writte
     'setting',
     [
         'num_buffered_runs',
-        'num_training_runs',
-        'num_runs_between_trainer_runs',
         'max_num_runs',
         'seed',
     ],
@@ -1092,7 +1123,7 @@ def test_a_whole_number_setting_written_as_a_boolean_is_refused(setting):
     )
 
 
-@pytest.mark.parametrize('setting', ['learner', 'trainer'])
+@pytest.mark.parametrize('setting', ['learner'])
 def test_a_string_setting_written_as_a_number_is_refused(setting):
     """``str()`` coercion has the flaw ``int()`` coercion has.
 
@@ -1109,13 +1140,10 @@ def test_a_string_setting_written_as_a_number_is_refused(setting):
 @pytest.mark.parametrize(
     'setting, refused, accepted, alongside',
     [
-        ('num_buffered_runs', 0, 1, ''),
-        # No training shots at all is a floor the dataclass holds, and a file
-        # reaches it only beside a learner that asks for no warmup: the
-        # Gaussian process MINIMAL would otherwise build refuses a warmup
-        # shorter than the two usable observations it needs for one parameter.
-        ('num_training_runs', -1, 0, 'learner = "random"\n'),
-        ('num_runs_between_trainer_runs', 0, 1, ''),
+        # Zero is a floor the dataclass holds, and a file reaches it beside
+        # the Gaussian process MINIMAL builds; a random learner at zero is
+        # refused for proposing nothing, below.
+        ('num_buffered_runs', -1, 0, ''),
         ('seed', -1, 0, ''),
         ('max_num_runs', 0, 1, ''),
         ('max_num_runs_without_better_params', 0, 1, ''),

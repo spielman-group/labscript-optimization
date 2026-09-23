@@ -205,9 +205,11 @@ class Session:
         The learner is handed the history and ``num_buffered_runs`` as a hint,
         and answers with whatever its method allows it to propose now, each
         proposal beside its source: the random learners top the shots in
-        flight up to the hint, and a learner declaring a generation proposes a
+        flight up to the hint, a learner declaring a generation proposes a
         whole one when nothing of the last is outstanding and nothing
-        otherwise. The session holds no barrier of its own. It submits what
+        otherwise, and the Gaussian process proposes a batch with explorer
+        shots behind it when nothing of its last batch is outstanding. The
+        session holds no barrier of its own. It submits what
         comes back and records each proposal with its source, which nothing
         changes after; a proposal without one is refused rather than recorded
         as anyone's.
@@ -259,8 +261,9 @@ class Session:
         # The learner is asked in the same call, from a history in which the
         # start already holds position 0 as a pending record, so the start
         # takes a place inside the first batch rather than a batch of its own:
-        # one of a random learner's places, and slot 0 of the first generation,
-        # which then still goes out whole and is still waited for as one. A
+        # one of a random learner's places, the first of a Gaussian process's
+        # warmup shots, and slot 0 of the first generation, which then still
+        # goes out whole and is still waited for as one. A
         # start sent out on its own would be the second route past that
         # barrier. The record's shot id is ``None``, because runmanager has not
         # minted one, and that is how a learner holding a barrier tells a

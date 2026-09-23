@@ -2,31 +2,69 @@
 
 A scikit-learn :class:`~sklearn.gaussian_process.GaussianProcessRegressor` fit
 to the scaled history, and a multi-start L-BFGS-B search over its posterior for
-the next point.
+the next point, run in a cycle of its own with an explorer beside it.
 
-Exploration comes from the acquisition, which minimises
+The cycle, which :meth:`GaussianProcessLearner.propose` is the whole of:
+
+- **Warmup.** Until the history holds ``warmup_observations`` usable
+  observations, the explorer alone proposes, keeping
+  max(``explore_runs``, hint, 1) of the run's shots in flight. It counts usable
+  observations, not shots: a shot whose cost is NaN, or one that was dropped,
+  moves it no nearer the end. Warmup ends at the count, and the explorer shots
+  already queued at that moment still run and join the fit when their costs
+  land. That is the design, not an overrun: nothing takes a queued shot back.
+- **The batch.** After warmup the Gaussian process proposes ``batch_size``
+  points, each conditioned on the ones before it, and behind them
+  max(``explore_runs``, hint) explorer shots, in that order -- so a run budget
+  cutting what it has no room for from the end takes explorer shots first and
+  the batch last. The next batch goes out when every shot of this one has
+  completed or been dropped. Explorer shots never hold it up; their costs join
+  the fit whenever they land.
+
+The hint is the session's ``num_buffered_runs``. Computing a batch is slow, so
+the next cannot go out the moment the last comes back, and the explorer shots
+queued behind a batch are what keep the apparatus busy through that fit, which
+is what ``num_buffered_runs`` asks for; ``explore_runs`` is the exploring done
+regardless, and the buffer only ever adds to it. Raising ``num_buffered_runs``
+to cover a slow fit therefore also raises the share of explorer shots.
+
+Pending means submitted and not yet completed or dropped, and a shot is known
+dropped only once a reconcile has said so, which runs when a shot arrives. So
+a batch whose shots were all deleted is released only when some shot reaches
+lyse: with nothing of this run's still queued and runmanager sending nothing
+in its place, the apparatus idles and the cycle waits with it.
+
+Each proposal carries the source a lab reads in the ``phase`` column:
+:data:`WARMUP_SOURCE` for the explorer's shots during warmup,
+:data:`BATCH_SOURCE` for the Gaussian process's own, and
+:data:`EXPLORE_SOURCE` for the explorer's shots behind a batch. The configured
+start, which the session proposes itself, reads ``start``. The batch barrier
+is read off those sources, so a history whose records carry none -- one built
+outside a session -- holds no barrier.
+
+Exploration within the batch comes from the acquisition, which minimises
 
     cost_bias * predicted_cost - uncer_bias * predicted_standard_deviation
 
-where ``uncer_bias`` is a list of weights cycled by the number of
-observations in hand, so that the schedule's period is the list's length. The
-default runs 0, 1, 2, 3: one proposal in four is purely greedy and the rest
-trade predicted cost for a look somewhere less certain. The position in the
-cycle is read off the history, so it advances with the proposals a session
-makes rather than with a point's position within the group of them asked for
-at once.
+where ``uncer_bias`` is a list of weights walked by position within the batch,
+so each batch starts from the first weight. The default runs 0, 1, 2, 3: the
+first point of a batch is purely greedy and the rest trade predicted cost for a
+look somewhere less certain, and the default batch of four is one pass of it.
+The Gaussian process does not condition on the explorer's shots in flight: a
+random draw is a weaker thing to fold in as a fantasy than a point of its own,
+and conditioning on pending points is measured to make the answer worse.
 
 Refitting the kernel hyperparameters is the expensive part, so it happens once
-per ``refit_interval`` new observations rather than on every call; the
-posterior is refit to all the data every time.
+per batch, on the usable observations in hand when the batch is computed; the
+posterior is refit to all of them with those hyperparameters held.
 
 scikit-learn and scipy are imported where they are used rather than at the top
-of this module, and nothing here reaches a point of use until a proposal is
+of this module, and nothing here reaches a point of use until a batch is
 asked for. Loading a configuration resolves the class of the learner it names,
-to hold the file's knobs to the constructor, and builds it, to ask how many
-proposals it makes at a time -- and that happens in the lyse routine's own
-process, which never asks the learner for a proposal and should not pay
-several seconds to import the scientific stack.
+to hold the file's knobs to the constructor, and builds it and asks it to open
+a run, to learn what it does with the queue depth -- and that happens in the
+lyse routine's own process, which should not pay several seconds to import the
+scientific stack. Opening a run is warmup, which is the explorer's.
 """
 
 import warnings
@@ -45,6 +83,7 @@ from ..observations import (
     usable,
 )
 from .base import InsufficientData, ParameterSpaceLearner
+from .random import DirectedRandomLearner, RandomLearner
 from ..space import ParameterSpace
 
 
@@ -59,9 +98,28 @@ LENGTH_SCALE_AT_BOUND = (
     r"The optimal value found for dimension \d+ of parameter \S*length_scale "
 )
 
+#: The learners a Gaussian process may explore with, by the name its
+#: ``explorer`` knob takes. Both draw without fitting anything, so an explorer
+#: proposes from the first shot of a run and never waits on a fit.
+EXPLORERS = {"random": RandomLearner, "directed_random": DirectedRandomLearner}
+
+#: The source of an explorer's shot proposed during warmup.
+WARMUP_SOURCE = "warmup"
+
+#: The source of a point of the Gaussian process's own batch.
+BATCH_SOURCE = "main"
+
+#: The source of an explorer's shot queued behind a batch.
+EXPLORE_SOURCE = "explore"
+
 
 class GaussianProcessLearner(ParameterSpaceLearner):
-    """Fit a Gaussian process to the history and search its posterior.
+    """Fit a Gaussian process to the history and search its posterior, in
+    batches, with an explorer's shots queued behind each.
+
+    Raising ``num_buffered_runs`` to cover a slow fit also raises the share of
+    explorer shots, because it is the number queued behind each batch whenever
+    it exceeds ``explore_runs``.
 
     Args:
         space: The parameter space to search.
@@ -80,17 +138,32 @@ class GaussianProcessLearner(ParameterSpaceLearner):
             standardised cost.
         cost_bias: Weight on predicted cost in the acquisition.
         uncer_bias: The weights on predicted uncertainty the exploration
-            schedule above cycles through, one per proposal. A single number
-            is a cycle of one step, and so a fixed weight on every proposal.
-            A zero in the list is a purely greedy proposal; the larger the
-            weight, the wider the look.
-        refit_interval: How many new observations are accepted before the
-            kernel hyperparameters are refit.
+            schedule above walks through, one per point of a batch, starting
+            again from the first at every batch. A single number is a cycle of
+            one step, and so a fixed weight on every point. A zero in the list
+            is a purely greedy point; the larger the weight, the wider the
+            look.
+        batch_size: How many points the Gaussian process proposes at a time,
+            each conditioned on the ones before it. The kernel hyperparameters
+            are refit once per batch.
         trust_region: Restrict the search to this distance around the best
             point seen.
-        minimum_observations: Refuse to propose until the history holds this
-            many usable observations, so a two-phase wrapper keeps using its
-            trainer. Defaults to twice the parameter count.
+        warmup_observations: How many usable observations the explorer gathers
+            before the Gaussian process proposes, counted as observations a fit
+            can use and not as shots. Defaults to max(5, twice the parameter
+            count). Warmup ends at the count, and explorer shots already
+            queued then still run.
+        explorer: The learner whose shots run the warmup and follow each
+            batch: ``"random"`` or ``"directed_random"``, built from its
+            defaults, or an instance of either. A configuration names it, and
+            :func:`~labscript_optimization.learners.build` hands over the
+            instance built from that learner's own ``[LEARNER.<name>]`` table.
+        explore_runs: How many explorer shots follow each batch at the least.
+            ``num_buffered_runs`` raises it and never lowers it: the number
+            queued is the larger of the two. Zero, beside a
+            ``num_buffered_runs`` of zero, is a Gaussian process with no
+            explorer shots after warmup, which leaves the apparatus idle while
+            each batch is fitted.
     """
 
     def __init__(
@@ -102,9 +175,11 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         noise_level_bounds: Sequence[float] = (1e-5, 1e1),
         cost_bias: float = 1.0,
         uncer_bias: float | Sequence[float] = (0.0, 1.0, 2.0, 3.0),
-        refit_interval: int = 4,
+        batch_size: int = 4,
         trust_region=None,
-        minimum_observations: int | None = None,
+        warmup_observations: int | None = None,
+        explorer: str | RandomLearner = "directed_random",
+        explore_runs: int = 1,
     ):
         super().__init__(space, rng)
         self.cost_has_noise = knobs.boolean("cost_has_noise", cost_has_noise)
@@ -115,10 +190,10 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         self.cost_bias = knobs.number("cost_bias", cost_bias)
         # Written out rather than derived from a step and a period, because
         # the schedule a session runs is what a lab wants to read off the
-        # file: a list says which proposal explores how far, where a pair of
-        # numbers leaves that to be worked out. A single number is a cycle of
-        # one step, so a file that writes a weight gets that weight on every
-        # proposal.
+        # file: a list says which point of a batch explores how far, where a
+        # pair of numbers leaves that to be worked out. A single number is a
+        # cycle of one step, so a file that writes a weight gets that weight
+        # on every point.
         if knobs.is_number(uncer_bias):
             schedule = [uncer_bias]
         elif knobs.is_numbers(uncer_bias):
@@ -135,27 +210,46 @@ class GaussianProcessLearner(ParameterSpaceLearner):
                 "runs through and needs at least one of them; an empty list "
                 "leaves no weight to propose at"
             )
-        self.refit_interval = knobs.integer("refit_interval", refit_interval)
-        if self.refit_interval < 1:
+        self.batch_size = knobs.integer("batch_size", batch_size)
+        if self.batch_size < 1:
             raise ValueError(
-                f"refit_interval must be at least 1, got {self.refit_interval}"
+                f"batch_size is how many points the Gaussian process proposes "
+                f"at a time, so it must be at least 1, got {self.batch_size}. "
+                f"A batch of none is a learner that never proposes after "
+                f"warmup."
             )
         self.trust_region = space.absolute_trust_region(trust_region)
-        self.minimum_observations = (
-            2 * space.num_params
-            if minimum_observations is None
-            else knobs.integer("minimum_observations", minimum_observations)
+        # Scaled with the search, because a constant warmup is too short for a
+        # search over enough parameters and too long for one over few; the
+        # floor keeps a one-parameter search from fitting on two points.
+        self.warmup_observations = (
+            max(5, 2 * space.num_params)
+            if warmup_observations is None
+            else knobs.integer("warmup_observations", warmup_observations)
         )
-        if self.minimum_observations < 1:
+        if self.warmup_observations < 1:
             # A fit needs something to fit to. At zero the guard in ``fit``
             # passes on an empty history, and the refusal a file gets is
             # scikit-learn's, from inside a scaler, naming neither this
             # setting nor the learner.
             raise ValueError(
-                f"minimum_observations is how many usable observations the "
-                f"Gaussian process needs before it will fit, so it must be at "
-                f"least 1, got {self.minimum_observations}. A fit has nothing "
-                f"to work from on an empty history."
+                f"warmup_observations is how many usable observations the "
+                f"Gaussian process gathers before it will fit, so it must be "
+                f"at least 1, got {self.warmup_observations}. A fit has "
+                f"nothing to work from on an empty history."
+            )
+        if isinstance(explorer, tuple(EXPLORERS.values())):
+            self.explorer = explorer
+        else:
+            self.explorer = EXPLORERS[knobs.choice("explorer", explorer, EXPLORERS)](
+                space, rng
+            )
+        self.explore_runs = knobs.integer("explore_runs", explore_runs)
+        if self.explore_runs < 0:
+            raise ValueError(
+                f"explore_runs is how many explorer shots follow each batch at "
+                f"the least, so it cannot be negative, got {self.explore_runs}. "
+                f"Zero queues none beyond what num_buffered_runs asks for."
             )
         self.num_restarts = max(10, space.num_params)
 
@@ -214,15 +308,15 @@ class GaussianProcessLearner(ParameterSpaceLearner):
                 )
         return (uncers / scaler.scale_[0]) ** 2
 
-    def fit_hyperparameters(self, prefix: Sequence[Observation]):
-        """Fit the cost scaling and the kernel hyperparameters to ``prefix``.
+    def fit_hyperparameters(self, seen: Sequence[Observation]):
+        """Fit the cost scaling and the kernel hyperparameters to ``seen``.
 
         The scaling belongs with them because it sets the units the noise level
         is measured in: restandardising as each observation arrived would leave
         a cached kernel describing units that had since moved. The restart
-        draws are seeded from the length of ``prefix``, not from the learner's
-        rng, which would make the search depend on how much this instance had
-        already proposed.
+        draws are seeded from the number of observations in ``seen``, not from
+        the learner's rng, which would make the search depend on how much this
+        instance had already proposed.
 
         scikit-learn warns once per length scale left at a bound on every fit,
         which is a real diagnostic said too often to be read. That one message
@@ -237,14 +331,14 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         from sklearn.gaussian_process import GaussianProcessRegressor
         from sklearn.preprocessing import StandardScaler
 
-        costs = costs_array(prefix).reshape(-1, 1)
+        costs = costs_array(seen).reshape(-1, 1)
         scaler = StandardScaler().fit(costs)
         regressor = GaussianProcessRegressor(
             kernel=self.new_kernel(),
-            alpha=self.point_variances(prefix, scaler),
+            alpha=self.point_variances(seen, scaler),
             normalize_y=False,
             n_restarts_optimizer=self.num_restarts,
-            random_state=len(prefix),
+            random_state=len(seen),
         )
         with warnings.catch_warnings():
             warnings.filterwarnings(
@@ -253,7 +347,7 @@ class GaussianProcessLearner(ParameterSpaceLearner):
                 category=ConvergenceWarning,
             )
             regressor.fit(
-                self.space.scale(params_array(prefix)),
+                self.space.scale(params_array(seen)),
                 scaler.transform(costs).ravel(),
             )
         self.report_length_scale_bounds(regressor.kernel_)
@@ -313,25 +407,27 @@ class GaussianProcessLearner(ParameterSpaceLearner):
             )
 
     def fit(self, history: Sequence[Observation]) -> bool:
-        """Fit the regressor to ``history``. Returns whether a fit was possible."""
+        """Fit the regressor to ``history``. Returns whether a fit was possible.
+
+        The hyperparameters are fitted to the usable observations in hand and
+        kept for as long as those are the observations handed over, which
+        within a session is the one call per batch that computes it. What an
+        instance keeps is a cache: it holds the kernel a fresh instance handed
+        the same history computes, however much this one has fitted before.
+        """
         from sklearn.gaussian_process import GaussianProcessRegressor
 
         seen = usable(history)
-        if len(seen) < self.minimum_observations:
+        if len(seen) < self.warmup_observations:
             return False
 
-        # Hyperparameters come from whole intervals, so that an instance that
-        # has been fitting all session holds the kernel a fresh one handed the
-        # same history computes, and what it keeps is a cache. Short of one
-        # interval there is nothing to hold back.
-        whole = len(seen) - len(seen) % self.refit_interval
-        prefix = seen[:whole] if whole else seen
         # Keyed on which observations they were fitted to and not how many: a
-        # cost arriving late lands in proposal order and rewrites a prefix of
-        # unchanged length.
-        fitted_to = tuple(o.shot_id for o in prefix)
+        # cost arriving late lands in proposal order, in the middle, so two
+        # histories holding the same number of usable observations can hold
+        # different ones.
+        fitted_to = tuple(o.shot_id for o in seen)
         if fitted_to != self._fitted_to:
-            self._cost_scaler, self._kernel = self.fit_hyperparameters(prefix)
+            self._cost_scaler, self._kernel = self.fit_hyperparameters(seen)
             self._fitted_to = fitted_to
 
         costs = costs_array(seen).reshape(-1, 1)
@@ -438,27 +534,55 @@ class GaussianProcessLearner(ParameterSpaceLearner):
     def propose(
         self, history: Sequence[Observation], hint: int
     ) -> list[tuple[np.ndarray, str]]:
-        """Top the run's shots in flight up to ``hint``, as the random learners do.
+        """The cycle: warmup, then a batch whenever the last one is back.
 
-        Every pending record counts against the hint, so nothing is fitted
-        while the queue is full.
+        Below ``warmup_observations`` usable observations, the explorer tops
+        the run's shots in flight up to max(``explore_runs``, ``hint``, 1),
+        every pending record counting whoever proposed it, as the random
+        learners count them. After warmup, nothing while any point of the
+        latest batch is pending, and otherwise a batch followed by
+        max(``explore_runs``, ``hint``) explorer shots. No batch goes out while
+        one is pending, so a pending record of the batch's source is always
+        one of the latest batch, and the explorer's never hold the next back.
         """
-        wanted = hint - sum(o.state == PENDING for o in history)
-        if wanted <= 0:
+        if len(usable(history)) < self.warmup_observations:
+            wanted = max(self.explore_runs, hint, 1) - sum(
+                o.state == PENDING for o in history
+            )
+            if wanted <= 0:
+                return []
+            return [
+                (params, WARMUP_SOURCE)
+                for params in self.explorer.ask(history, wanted)
+            ]
+        if any(o.state == PENDING and o.source == BATCH_SOURCE for o in history):
             return []
-        return [(params, "main") for params in self.ask(history, wanted)]
+        # The batch first, so that what the run budget has no room for is cut
+        # from the explorer's shots and never from the batch.
+        return [
+            *((params, BATCH_SOURCE) for params in self.ask(history, self.batch_size)),
+            *(
+                (params, EXPLORE_SOURCE)
+                for params in self.explorer.ask(
+                    history, max(self.explore_runs, hint)
+                )
+            ),
+        ]
 
     def ask(self, history: Sequence[Observation], k: int) -> np.ndarray:
         """The next ``k`` points, each folded into the fit before the next.
 
-        The search without the pacing, as a ``(k, num_params)`` array.
+        The search without the cycle, as a ``(k, num_params)`` array: what
+        :meth:`propose` sends a batch out with. The exploration schedule is
+        walked from its first weight by position among these ``k``, and the
+        hyperparameters are refit here if the usable observations differ from
+        the ones they were last fitted to.
         """
         if not self.fit(history):
             raise InsufficientData(
-                f"the Gaussian process needs {self.minimum_observations} usable "
+                f"the Gaussian process needs {self.warmup_observations} usable "
                 f"observations and has {len(usable(history))}"
             )
-        seen = usable(history)
         best_params = best(history).params
         low, high = self.space.bounds_near(best_params, self.trust_region)
         lows, highs = self.space.scale(low), self.space.scale(high)
@@ -468,13 +592,11 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         regressor = self.regressor
         proposals = np.empty((k, self.space.num_params))
         for i in range(k):
-            # Where the exploration schedule stands, counted off the history
-            # and then the points picked so far in this group. A schedule kept
-            # as a counter over the group asked for at once would sit at its
-            # first weight -- the greedy one, by default -- for ever in a
-            # session that settles into asking for one point at a time, and
-            # every other weight in the list would go unused.
-            weight = self.uncer_bias[(len(seen) + i) % len(self.uncer_bias)]
+            # Where the exploration schedule stands is the point's position in
+            # the batch, so every batch starts from the first weight -- the
+            # greedy one, by default -- and a batch as long as the schedule
+            # spends one point at each weight.
+            weight = self.uncer_bias[i % len(self.uncer_bias)]
             scaled = self.minimise_acquisition(
                 regressor, weight, best_params, lows, highs
             )
