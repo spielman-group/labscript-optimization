@@ -9,8 +9,6 @@ written into the shot file: that is what a cost is matched to a proposal by.
 
 from typing import Iterable, Sequence
 
-import numpy as np
-
 #: The state runmanager reports for a shot id it has no row for.
 UNKNOWN_SHOT_STATE = "unknown"
 
@@ -136,9 +134,7 @@ class RunmanagerInterface:
         before submitting any of them, so a raise here leaves nothing behind
         to account for.
         """
-        entries = [
-            self.config.globals_for(np.asarray(p, dtype=float)) for p in proposals
-        ]
+        entries = [self.config.globals_for(p) for p in proposals]
         return [d["shot_id"] for d in self.client.submit_shots(entries)]
 
     def shot_status(self, shot_ids: Iterable[str]) -> dict[str, dict]:

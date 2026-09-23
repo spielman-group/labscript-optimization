@@ -34,7 +34,7 @@ column. `session.py` is touched only for A6.
 - [x] A2: Learner knobs are refused, not coerced
 - [x] A3: A group listed in `groups` that no table defines is refused
 - [x] A4: Differential evolution redraws its weight once per generation
-- [ ] A5: runmanager receives plain Python values
+- [x] A5: runmanager receives plain Python values
 - [ ] A6: The first stop reason is kept
 
 ---
@@ -185,10 +185,10 @@ runmanager half is a separate item and is not touched here.
 
 ### Acceptance criteria
 
-- [ ] A `global_name` mapping submits a Python `float`
-- [ ] An `expr` mapping such as `lambda a, b: (a, b)` submits a tuple of Python
+- [x] A `global_name` mapping submits a Python `float`
+- [x] An `expr` mapping such as `lambda a, b: (a, b)` submits a tuple of Python
       `float`s, with no numpy scalar anywhere inside it
-- [ ] Each submitted value's `repr` evaluates without numpy in scope
+- [x] Each submitted value's `repr` evaluates without numpy in scope
 
 ### Blocked by
 

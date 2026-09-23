@@ -4,6 +4,7 @@ These use a fake client returning the shapes the real one documents, so a
 change to those shapes shows up here rather than in the lab.
 """
 
+import numpy as np
 import pytest
 
 from labscript_optimization import config as config_module
@@ -168,6 +169,56 @@ def test_submitting_sends_one_entry_of_globals_per_proposal(interface, client):
         {'gx': 1.0, 'gy_doubled': 4.0},
         {'gx': 3.0, 'gy_doubled': 8.0},
     ]
+
+
+def holds_only_python_values(value):
+    """Whether ``value`` is built of Python's own types, however it nests.
+
+    Compared by ``type`` rather than ``isinstance``, because numpy's
+    ``float64`` subclasses ``float`` and would pass for one.
+    """
+    if type(value) in (tuple, list):
+        return all(holds_only_python_values(item) for item in value)
+    return type(value) in (bool, int, float, str)
+
+
+@pytest.mark.parametrize(
+    'name, submitted',
+    [('gx', [1.0, 3.0]), ('shim', [(1.0, 2.0), (3.0, 4.0)])],
+    ids=['a global_name mapping', 'an expr building a tuple'],
+)
+def test_a_global_is_submitted_as_a_python_value(client, name, submitted):
+    """runmanager writes a submitted value into its global's expression as the
+    value's repr, and a numpy scalar's repr names numpy -- ``np.float64(1.0)``
+    in the operator's runmanager and in the shot file, evaluating only because
+    runmanager's namespace happens to carry numpy. Proposals arrive as a numpy
+    array, so every value is checked, down to the members of a tuple.
+    """
+    config = config_module.loads(
+        """
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = ["G"]
+[PARAMETERS.G.x]
+global_name = "gx"
+min = 0.0
+max = 10.0
+[PARAMETERS.G.y]
+min = 0.0
+max = 10.0
+[RUNMANAGER_GLOBALS.G.shim]
+expr = "lambda a, b: (a, b)"
+args = ["x", "y"]
+"""
+    )
+    RunmanagerInterface(config, client).submit(np.array([[1.0, 2.0], [3.0, 4.0]]))
+    values = [entry[name] for entry in client.entries]
+    assert values == submitted
+    for value in values:
+        assert eval(repr(value), {'__builtins__': {}}) == value
+        # And by type as well as by repr, which a numpy scalar printed the way
+        # numpy printed one before version 2 would pass.
+        assert holds_only_python_values(value), repr(value)
 
 
 def test_a_refusal_reaches_the_caller_unchanged(interface, client):

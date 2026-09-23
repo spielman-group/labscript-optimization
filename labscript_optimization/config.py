@@ -317,8 +317,17 @@ class Config:
         return routine, f"u_{result}"
 
     def globals_for(self, params: Sequence[float]) -> dict[str, Any]:
-        """The runmanager globals that realise one parameter vector."""
-        values = {p.name: v for p, v in zip(self.space.parameters, params)}
+        """The runmanager globals that realise one parameter vector.
+
+        Each parameter reaches its mappings as a Python ``float``, so a
+        global's value -- the parameter itself, or what an ``expr`` builds
+        from several -- holds no numpy scalar however the vector arrived.
+        runmanager writes a submitted value into its global's expression as
+        the value's ``repr``, and a numpy scalar's repr names numpy:
+        ``np.float64(0.25)`` would be what the operator reads in runmanager
+        and what the shot file stores.
+        """
+        values = {p.name: float(v) for p, v in zip(self.space.parameters, params)}
         return {g.name: g.evaluate(values) for g in self.globals}
 
 
