@@ -123,6 +123,11 @@ found in `[GENERAL]` is refused with the table it belongs in named. Two
 learners run whenever the one you name has a trainer, so a knob both take is
 written twice, once in each table, and each gets its own value.
 
+A setting in `[GENERAL]` or in a learner's table is held to the kind it takes:
+a quoted `"false"`, a fraction where a whole number belongs, or one number
+where a pair belongs is refused, naming the setting, rather than converted into
+something nobody wrote.
+
 `[PARAMETERS.<group>.<name>]` is one optimised parameter and
 `[RUNMANAGER_GLOBALS.<group>.<name>]` is a runmanager global computed from
 several of them; `[ANALYSIS] groups` says which groups take part.

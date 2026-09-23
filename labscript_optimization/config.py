@@ -24,10 +24,10 @@ keys named here before it will load.
 learner trains it, how deep the queue is, what stops the run -- and a learner's
 knobs are written in ``[LEARNER.<name>]``, the table of the learner that takes
 them. A named table is held to that learner's constructor, so every key in it
-is a knob that learner takes, and a knob found in ``[GENERAL]`` is refused with
-the tables it belongs in named. Two learners run whenever the one selected has
-a trainer, so a knob both take is written twice, once in each table, and each
-gets its own value.
+is a knob that learner takes and every value is of the kind that knob takes,
+and a knob found in ``[GENERAL]`` is refused with the tables it belongs in
+named. Two learners run whenever the one selected has a trainer, so a knob both
+take is written twice, once in each table, and each gets its own value.
 
 Known is not the same as acted on: a table written for a learner no session
 builds goes unread, which is what lets one file carry the settings for several

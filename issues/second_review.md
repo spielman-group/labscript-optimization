@@ -31,7 +31,7 @@ column. `session.py` is touched only for A6.
 
 ## Checklist
 
-- [ ] A2: Learner knobs are refused, not coerced
+- [x] A2: Learner knobs are refused, not coerced
 - [ ] A3: A group listed in `groups` that no table defines is refused
 - [ ] A4: Differential evolution redraws its weight once per generation
 - [ ] A5: runmanager receives plain Python values
@@ -80,18 +80,18 @@ fixed weight.
 
 ### Acceptance criteria
 
-- [ ] Every knob of `RandomLearner`, `DirectedRandomLearner`,
+- [x] Every knob of `RandomLearner`, `DirectedRandomLearner`,
       `DifferentialEvolutionLearner` and `GaussianProcessLearner` is checked
       for its kind, and refused with a `ValueError` naming it
-- [ ] A quoted boolean is refused for `cost_has_noise` and `trust_gaussian`
-- [ ] A single number is refused for `mutation_scale`, `trust_range`,
+- [x] A quoted boolean is refused for `cost_has_noise` and `trust_gaussian`
+- [x] A single number is refused for `mutation_scale`, `trust_range`,
       `length_scale_bounds` and `noise_level_bounds`, and `mutation_scale`'s
       refusal says to write a pair for a fixed weight
-- [ ] A fractional or boolean integer knob is refused, not truncated
-- [ ] A quoted `trust_region` is refused by `ParameterSpace.absolute_trust_region`
-- [ ] Tuples, lists, numpy arrays and numpy scalars are still accepted wherever
+- [x] A fractional or boolean integer knob is refused, not truncated
+- [x] A quoted `trust_region` is refused by `ParameterSpace.absolute_trust_region`
+- [x] Tuples, lists, numpy arrays and numpy scalars are still accepted wherever
       a pair or a number is
-- [ ] The same refusals reach a configuration loaded from TOML
+- [x] The same refusals reach a configuration loaded from TOML
 
 ### Blocked by
 

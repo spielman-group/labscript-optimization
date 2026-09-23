@@ -790,6 +790,77 @@ def test_a_per_learner_table_accepts_that_learners_knob():
     assert config.learner_options['directed_random'] == {'trust_region': 0.2}
 
 
+@pytest.mark.parametrize(
+    'text, message',
+    [
+        (
+            MINIMAL + '[LEARNER.gaussian_process]\ncost_has_noise = "false"\n',
+            "cost_has_noise must be written as true or false, unquoted, not "
+            "'false'.",
+        ),
+        (
+            MINIMAL + '[LEARNER.directed_random]\ntrust_gaussian = "false"\n',
+            "trust_gaussian must be written as true or false, unquoted, not "
+            "'false'.",
+        ),
+        (
+            MINIMAL + '[LEARNER.gaussian_process]\nrefit_interval = true\n',
+            "refit_interval must be written as a whole number, got True.",
+        ),
+        (
+            MINIMAL + '[LEARNER.gaussian_process]\nlength_scale_bounds = 5\n',
+            "length_scale_bounds must be written as a pair of numbers, [low, "
+            "high], not 5.",
+        ),
+        (
+            MINIMAL + '[LEARNER.gaussian_process]\ntrust_region = "0.1"\n',
+            "trust_region must be written as a number in (0, 1), a fraction of "
+            "each parameter's range, or as a list of numbers, one distance per "
+            "parameter, not '0.1'.",
+        ),
+        (
+            MINIMAL + '[LEARNER.directed_random]\ntrust_range = 0.5\n',
+            "trust_range must be written as a pair of numbers, [low, high], "
+            "not 0.5.",
+        ),
+        (
+            MINIMAL
+            + '[GENERAL]\nlearner = "differential_evolution"\n'
+            + '[LEARNER.differential_evolution]\npopulation_size = 8.9\n',
+            "population_size must be written as a whole number, got 8.9.",
+        ),
+        (
+            MINIMAL
+            + '[GENERAL]\nlearner = "differential_evolution"\n'
+            + '[LEARNER.differential_evolution]\nmutation_scale = 0.8\n',
+            "mutation_scale is the range the differential weight is drawn "
+            "from, [low, high], not one weight: for a fixed weight of 0.8, "
+            "write [0.8, 0.8].",
+        ),
+    ],
+    ids=[
+        'cost_has_noise',
+        'trust_gaussian',
+        'refit_interval',
+        'length_scale_bounds',
+        'trust_region',
+        'trust_range',
+        'population_size',
+        'mutation_scale',
+    ],
+)
+def test_a_learner_knob_of_the_wrong_kind_stops_the_load(text, message):
+    """``[GENERAL]`` is held to its kinds by :class:`Config`, and a learner's
+    table by that learner's constructor, which the load builds. Either way a
+    quoted boolean, a truncated fraction or a lone number where a pair belongs
+    is refused before anything runs, rather than acting as a setting nobody
+    wrote.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(text)
+    assert str(raised.value) == message
+
+
 def test_the_example_configuration_loads_and_builds_its_learner():
     """The file every new lab starts from, held to the schema like any other."""
     config = config_module.load(EXAMPLE)

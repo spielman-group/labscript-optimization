@@ -13,6 +13,8 @@ from typing import Sequence
 
 import numpy as np
 
+from . import knobs
+
 
 @dataclass(frozen=True)
 class Parameter:
@@ -78,9 +80,8 @@ class ParameterSpace:
         # written for some of them. Refused rather than honoured for those and
         # drawn for the rest, because a file that names a start has a reason
         # for it and a draw is not that reason -- and refused rather than
-        # dropped, which is what used to happen: a start on three parameters
-        # of five was silently ignored for all five, and the run opened on a
-        # uniform draw with nothing said.
+        # dropped, because a start on three parameters of five dropped for
+        # all five opens the run on a uniform draw with nothing said.
         started = [p.name for p in self.parameters if p.start is not None]
         unstarted = [p.name for p in self.parameters if p.start is None]
         if started and unstarted:
@@ -156,26 +157,34 @@ class ParameterSpace:
     def absolute_trust_region(self, trust_region) -> np.ndarray | None:
         """Resolve a trust region onto an absolute per-parameter distance.
 
-        A float in (0, 1) is read as a fraction of each parameter's range; a
-        sequence is read as absolute distances already. ``None`` means the
-        learner may travel anywhere.
+        A number in (0, 1) is read as a fraction of each parameter's range; a
+        sequence of numbers is read as absolute distances already. ``None``
+        means the learner may travel anywhere. Anything else is refused rather
+        than converted: a quoted ``"0.1"`` is a string that ``float`` would
+        read as a number nobody wrote.
         """
         if trust_region is None:
             return None
-        if np.isscalar(trust_region):
-            if not 0 < float(trust_region) < 1:
+        if knobs.is_number(trust_region):
+            if not 0 < trust_region < 1:
                 raise ValueError(
                     f"a scalar trust_region is a fraction of each parameter's "
                     f"range and must be in (0, 1), got {trust_region}"
                 )
             region = float(trust_region) * self.extent
-        else:
+        elif knobs.is_numbers(trust_region):
             region = np.array(trust_region, dtype=float)
             if region.shape != (self.num_params,):
                 raise ValueError(
                     f"trust_region has shape {region.shape}, expected "
                     f"({self.num_params},)"
                 )
+        else:
+            raise ValueError(
+                f"trust_region must be written as a number in (0, 1), a "
+                f"fraction of each parameter's range, or as a list of numbers, "
+                f"one distance per parameter, not {trust_region!r}."
+            )
         if not np.all(region > 0):
             raise ValueError(f"every trust_region value must be positive: {region}")
         if not np.all(region <= self.extent):

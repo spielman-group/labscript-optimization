@@ -12,6 +12,7 @@ from typing import Sequence
 
 import numpy as np
 
+from .. import knobs
 from ..observations import Observation, costs_array, params_array, usable
 from ..space import ParameterSpace
 from .base import ParameterSpaceLearner
@@ -71,25 +72,23 @@ class DirectedRandomLearner(ParameterSpaceLearner):
     ):
         super().__init__(space, rng)
         self.trust_region = space.absolute_trust_region(trust_region)
-        self.trust_gaussian = bool(trust_gaussian)
+        self.trust_gaussian = knobs.boolean("trust_gaussian", trust_gaussian)
 
-        self.explore_fraction = float(explore_fraction)
+        self.explore_fraction = knobs.number("explore_fraction", explore_fraction)
         if not 0 <= self.explore_fraction <= 1:
             raise ValueError(
                 f"explore_fraction must be in [0, 1], got {self.explore_fraction}"
             )
 
-        if len(trust_range) != 2:
-            raise ValueError(f"trust_range needs two values, got {trust_range!r}")
+        self.trust_range = knobs.pair("trust_range", trust_range)
         # Refused rather than sorted: a pair written backwards is a
         # misunderstanding of which end is which, and putting it in order
         # quietly runs a search the lab did not ask for.
-        if not 0 <= trust_range[0] <= trust_range[1] <= 1:
+        if not 0 <= self.trust_range[0] <= self.trust_range[1] <= 1:
             raise ValueError(
                 f"trust_range must be an ordered pair within [0, 1], got "
                 f"{trust_range!r}"
             )
-        self.trust_range = tuple(float(t) for t in trust_range)
 
     def centre(self, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
         """Pick the point to draw around.

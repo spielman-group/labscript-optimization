@@ -1490,3 +1490,306 @@ def test_a_late_cost_refits_a_prefix_of_unchanged_length(space):
     grid = space.uniform(np.random.default_rng(5), 5)
     np.testing.assert_allclose(carried.predict(grid)[0], fresh.predict(grid)[0])
     np.testing.assert_allclose(carried.predict(grid)[1], fresh.predict(grid)[1])
+
+
+# --- what a knob may be written as ----------------------------------------
+
+
+#: One value of the wrong kind for every knob of every learner a configuration
+#: can name, and the whole of the refusal it gets. Each is something a
+#: conversion would have taken: a quoted boolean is a non-empty string and so
+#: true, a fraction truncates, a boolean is 1, a quoted number reads as the
+#: number, and a single number where a pair belongs dies inside ``tuple`` in
+#: Python's words rather than this package's.
+REGION = (
+    "trust_region must be written as a number in (0, 1), a fraction of each "
+    "parameter's range, or as a list of numbers, one distance per parameter, "
+    "not {}."
+)
+MISWRITTEN = [
+    (
+        'directed_random',
+        'trust_gaussian',
+        'false',
+        "trust_gaussian must be written as true or false, unquoted, not 'false'.",
+    ),
+    (
+        'gaussian_process',
+        'cost_has_noise',
+        'false',
+        "cost_has_noise must be written as true or false, unquoted, not 'false'.",
+    ),
+    (
+        'gaussian_process',
+        'cost_has_noise',
+        0,
+        "cost_has_noise must be written as true or false, unquoted, not 0.",
+    ),
+    (
+        'differential_evolution',
+        'population_size',
+        8.9,
+        "population_size must be written as a whole number, got 8.9.",
+    ),
+    (
+        'differential_evolution',
+        'population_size',
+        True,
+        "population_size must be written as a whole number, got True.",
+    ),
+    (
+        'gaussian_process',
+        'refit_interval',
+        True,
+        "refit_interval must be written as a whole number, got True.",
+    ),
+    (
+        'gaussian_process',
+        'refit_interval',
+        4.5,
+        "refit_interval must be written as a whole number, got 4.5.",
+    ),
+    (
+        'gaussian_process',
+        'minimum_observations',
+        6.5,
+        "minimum_observations must be written as a whole number, got 6.5.",
+    ),
+    (
+        'gaussian_process',
+        'minimum_observations',
+        True,
+        "minimum_observations must be written as a whole number, got True.",
+    ),
+    (
+        'directed_random',
+        'explore_fraction',
+        '0.5',
+        "explore_fraction must be written as a number, unquoted, not '0.5'.",
+    ),
+    (
+        'directed_random',
+        'explore_fraction',
+        True,
+        "explore_fraction must be written as a number, unquoted, not True.",
+    ),
+    (
+        'differential_evolution',
+        'cross_over_probability',
+        '0.7',
+        "cross_over_probability must be written as a number, unquoted, not '0.7'.",
+    ),
+    (
+        'differential_evolution',
+        'cross_over_probability',
+        True,
+        "cross_over_probability must be written as a number, unquoted, not True.",
+    ),
+    (
+        'gaussian_process',
+        'cost_bias',
+        '1.0',
+        "cost_bias must be written as a number, unquoted, not '1.0'.",
+    ),
+    (
+        'gaussian_process',
+        'cost_bias',
+        True,
+        "cost_bias must be written as a number, unquoted, not True.",
+    ),
+    (
+        'gaussian_process',
+        'uncer_bias',
+        '1.0',
+        "uncer_bias must be written as a number or a list of numbers, "
+        "unquoted, not '1.0'.",
+    ),
+    (
+        'gaussian_process',
+        'uncer_bias',
+        True,
+        "uncer_bias must be written as a number or a list of numbers, "
+        "unquoted, not True.",
+    ),
+    (
+        'gaussian_process',
+        'uncer_bias',
+        ['0', '1'],
+        "uncer_bias must be written as a number or a list of numbers, "
+        "unquoted, not ['0', '1'].",
+    ),
+    (
+        'directed_random',
+        'trust_range',
+        0.5,
+        "trust_range must be written as a pair of numbers, [low, high], not 0.5.",
+    ),
+    (
+        'directed_random',
+        'trust_range',
+        '0.1, 0.25',
+        "trust_range must be written as a pair of numbers, [low, high], not "
+        "'0.1, 0.25'.",
+    ),
+    (
+        'directed_random',
+        'trust_range',
+        ['0.1', '0.25'],
+        "trust_range must be written as a pair of numbers, [low, high], not "
+        "['0.1', '0.25'].",
+    ),
+    (
+        'directed_random',
+        'trust_range',
+        [0.1, 0.2, 0.25],
+        "trust_range must be written as a pair of numbers, [low, high], not "
+        "[0.1, 0.2, 0.25].",
+    ),
+    (
+        'gaussian_process',
+        'length_scale_bounds',
+        5,
+        "length_scale_bounds must be written as a pair of numbers, [low, "
+        "high], not 5.",
+    ),
+    (
+        'gaussian_process',
+        'length_scale_bounds',
+        np.array(5.0),
+        "length_scale_bounds must be written as a pair of numbers, [low, "
+        "high], not array(5.).",
+    ),
+    (
+        'gaussian_process',
+        'length_scale_bounds',
+        [1e-2, [1e2]],
+        "length_scale_bounds must be written as a pair of numbers, [low, "
+        "high], not [0.01, [100.0]].",
+    ),
+    (
+        'gaussian_process',
+        'noise_level_bounds',
+        'fixed',
+        "noise_level_bounds must be written as a pair of numbers, [low, "
+        "high], not 'fixed'.",
+    ),
+    (
+        'gaussian_process',
+        'noise_level_bounds',
+        [1e-5, True],
+        "noise_level_bounds must be written as a pair of numbers, [low, "
+        "high], not [1e-05, True].",
+    ),
+    (
+        'differential_evolution',
+        'mutation_scale',
+        0.8,
+        "mutation_scale is the range the differential weight is drawn from, "
+        "[low, high], not one weight: for a fixed weight of 0.8, write "
+        "[0.8, 0.8].",
+    ),
+    (
+        'differential_evolution',
+        'mutation_scale',
+        [0.5],
+        "mutation_scale must be written as a pair of numbers, [low, high], "
+        "not [0.5].",
+    ),
+    (
+        'differential_evolution',
+        'mutation_scale',
+        ['0.5', '1.0'],
+        "mutation_scale must be written as a pair of numbers, [low, high], "
+        "not ['0.5', '1.0'].",
+    ),
+    (
+        'differential_evolution',
+        'evolution_strategy',
+        ['best1'],
+        "evolution_strategy must be one of ('best1', 'best2', 'rand1', "
+        "'rand2'), got ['best1']",
+    ),
+    ('directed_random', 'trust_region', '0.1', REGION.format("'0.1'")),
+    ('differential_evolution', 'trust_region', '0.1', REGION.format("'0.1'")),
+    ('gaussian_process', 'trust_region', '0.1', REGION.format("'0.1'")),
+    ('directed_random', 'trust_region', True, REGION.format('True')),
+    ('directed_random', 'trust_region', ['1', '1'], REGION.format("['1', '1']")),
+]
+
+
+@pytest.mark.parametrize('name, knob, written, message', MISWRITTEN)
+def test_a_knob_of_the_wrong_kind_is_refused_naming_it(
+    space, rng, name, knob, written, message
+):
+    """Checked in the constructor, so a learner built in Python is held to its
+    kinds exactly as one built from a file.
+    """
+    with pytest.raises(ValueError) as refusal:
+        learners.LEARNERS[name](space, rng, **{knob: written})
+    assert str(refusal.value) == message
+
+
+def test_every_knob_of_every_learner_is_held_to_its_kind():
+    """Read off the constructors, so a knob added to one without a case above
+    fails here rather than going unchecked.
+    """
+    held = {(name, knob) for name, knob, _, _ in MISWRITTEN}
+    taken = {
+        (name, knob)
+        for knob, names in learners.knobs_by_learner().items()
+        for name in names
+    }
+    assert held == taken
+
+
+def test_a_knob_takes_the_kinds_python_and_numpy_hand_it(space, rng):
+    """A list is what TOML gives. Tuples, numpy arrays and numpy scalars are
+    what code building a learner directly passes, and each is the kind of
+    thing its knob asks for.
+    """
+    directed = DirectedRandomLearner(
+        space,
+        rng,
+        trust_region=np.array([1.0, 2.0]),
+        trust_range=np.array([0.1, 0.25]),
+        trust_gaussian=True,
+        explore_fraction=np.float64(0.25),
+    )
+    np.testing.assert_array_equal(directed.trust_region, [1.0, 2.0])
+    assert directed.trust_range == (0.1, 0.25)
+    assert directed.trust_gaussian is True
+    assert directed.explore_fraction == 0.25
+
+    evolving = DifferentialEvolutionLearner(
+        space,
+        rng,
+        population_size=np.int64(5),
+        mutation_scale=[0.5, 1],
+        cross_over_probability=np.float32(0.5),
+        trust_region=np.float64(0.1),
+    )
+    assert evolving.population_size == 5
+    assert evolving.mutation_scale == (0.5, 1.0)
+    assert evolving.cross_over_probability == 0.5
+    np.testing.assert_allclose(evolving.trust_region, [1.0, 1.0])
+
+    fitting = GaussianProcessLearner(
+        space,
+        rng,
+        cost_has_noise=False,
+        length_scale_bounds=np.array([1e-2, 1e2]),
+        noise_level_bounds=(1e-5, 10),
+        cost_bias=np.int64(2),
+        uncer_bias=np.array([0.0, 1.5]),
+        refit_interval=np.int64(3),
+        minimum_observations=np.int64(4),
+        trust_region=[1, 2],
+    )
+    assert fitting.cost_has_noise is False
+    assert fitting.length_scale_bounds == (1e-2, 1e2)
+    assert fitting.noise_level_bounds == (1e-5, 10.0)
+    assert fitting.cost_bias == 2.0
+    assert fitting.uncer_bias == (0.0, 1.5)
+    assert fitting.refit_interval == 3
+    assert fitting.minimum_observations == 4
+    np.testing.assert_array_equal(fitting.trust_region, [1.0, 2.0])

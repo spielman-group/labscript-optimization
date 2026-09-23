@@ -34,6 +34,7 @@ from typing import Sequence
 
 import numpy as np
 
+from .. import knobs
 from ..observations import (
     Observation,
     best,
@@ -107,17 +108,27 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         minimum_observations: int | None = None,
     ):
         super().__init__(space, rng)
-        self.cost_has_noise = bool(cost_has_noise)
-        self.length_scale_bounds = tuple(length_scale_bounds)
-        self.noise_level_bounds = tuple(noise_level_bounds)
-        self.cost_bias = float(cost_bias)
+        self.cost_has_noise = knobs.boolean("cost_has_noise", cost_has_noise)
+        self.length_scale_bounds = knobs.pair(
+            "length_scale_bounds", length_scale_bounds
+        )
+        self.noise_level_bounds = knobs.pair("noise_level_bounds", noise_level_bounds)
+        self.cost_bias = knobs.number("cost_bias", cost_bias)
         # Written out rather than derived from a step and a period, because
         # the schedule a session runs is what a lab wants to read off the
         # file: a list says which proposal explores how far, where a pair of
         # numbers leaves that to be worked out. A single number is a cycle of
         # one step, so a file that writes a weight gets that weight on every
         # proposal.
-        schedule = [uncer_bias] if np.ndim(uncer_bias) == 0 else list(uncer_bias)
+        if knobs.is_number(uncer_bias):
+            schedule = [uncer_bias]
+        elif knobs.is_numbers(uncer_bias):
+            schedule = list(uncer_bias)
+        else:
+            raise ValueError(
+                f"uncer_bias must be written as a number or a list of numbers, "
+                f"unquoted, not {uncer_bias!r}."
+            )
         self.uncer_bias = tuple(float(weight) for weight in schedule)
         if not self.uncer_bias:
             raise ValueError(
@@ -125,7 +136,7 @@ class GaussianProcessLearner(ParameterSpaceLearner):
                 "runs through and needs at least one of them; an empty list "
                 "leaves no weight to propose at"
             )
-        self.refit_interval = int(refit_interval)
+        self.refit_interval = knobs.integer("refit_interval", refit_interval)
         if self.refit_interval < 1:
             raise ValueError(
                 f"refit_interval must be at least 1, got {self.refit_interval}"
@@ -134,7 +145,7 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         self.minimum_observations = (
             2 * space.num_params
             if minimum_observations is None
-            else int(minimum_observations)
+            else knobs.integer("minimum_observations", minimum_observations)
         )
         if self.minimum_observations < 1:
             # A fit needs something to fit to. At zero the guard in ``fit``

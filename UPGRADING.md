@@ -327,7 +327,10 @@ goes out whole.
   now refused at construction, where M-LOOP quietly sorted it.
 - **Every learner knob goes under `[LEARNER.<name>]`**, which step 3 above is
   the move for. A named learner table is strict: an unknown learner, or a key
-  that learner's constructor does not accept, stops the file from loading.
+  that learner's constructor does not accept, stops the file from loading, and
+  so does a value of the wrong kind -- a quoted `"false"`, a fraction where a
+  whole number belongs, or one number where a pair belongs, as in
+  `mutation_scale`, whose fixed weight is written `[0.8, 0.8]`.
 - **Differential evolution is generational**, which is what the textbook
   algorithm and scipy's deferred updating are. A whole population is proposed
   at once and none of its trials is judged until the generation is complete,

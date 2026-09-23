@@ -24,6 +24,7 @@ from typing import Sequence
 
 import numpy as np
 
+from .. import knobs
 from ..observations import Observation
 from ..space import ParameterSpace
 from .base import ParameterSpaceLearner
@@ -73,13 +74,18 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         trust_region=None,
     ):
         super().__init__(space, rng)
-        if evolution_strategy not in STRATEGIES:
+        # A string first, because the lookup hashes what it is given and a
+        # list written for the strategy would fail on that in Python's words.
+        if (
+            not isinstance(evolution_strategy, str)
+            or evolution_strategy not in STRATEGIES
+        ):
             raise ValueError(
                 f"evolution_strategy must be one of {tuple(STRATEGIES)}, got "
                 f"{evolution_strategy!r}"
             )
         self.evolution_strategy = evolution_strategy
-        self.population_size = int(population_size)
+        self.population_size = knobs.integer("population_size", population_size)
         # A mutation draws distinct members from the population minus the slot
         # it is replacing, so it needs one member more than it draws on.
         draws = STRATEGIES[evolution_strategy]
@@ -89,13 +95,24 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
                 f"other members, so it needs a population of at least "
                 f"{draws + 1}; population_size is {self.population_size}"
             )
-        self.mutation_scale = tuple(float(m) for m in mutation_scale)
-        if len(self.mutation_scale) != 2 or not 0 <= self.mutation_scale[0] <= self.mutation_scale[1]:
+        if knobs.is_number(mutation_scale):
+            # One number is the natural way to ask for a fixed weight, and the
+            # range that asks for it is that number at both ends.
+            raise ValueError(
+                f"mutation_scale is the range the differential weight is drawn "
+                f"from, [low, high], not one weight: for a fixed weight of "
+                f"{float(mutation_scale)!r}, write "
+                f"[{float(mutation_scale)!r}, {float(mutation_scale)!r}]."
+            )
+        self.mutation_scale = knobs.pair("mutation_scale", mutation_scale)
+        if not 0 <= self.mutation_scale[0] <= self.mutation_scale[1]:
             raise ValueError(
                 f"mutation_scale must be an ordered non-negative pair, got "
                 f"{mutation_scale!r}"
             )
-        self.cross_over_probability = float(cross_over_probability)
+        self.cross_over_probability = knobs.number(
+            "cross_over_probability", cross_over_probability
+        )
         if not 0 <= self.cross_over_probability <= 1:
             raise ValueError(
                 f"cross_over_probability must be in [0, 1], got "
