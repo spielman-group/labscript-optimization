@@ -61,10 +61,9 @@ Each file in `results/` repeats its date, commit and command in its own header.
 
 This is where `population_size`'s default of **8** comes from, and it is what
 `DifferentialEvolutionLearner`'s docstring and the root `README.md` cite. The
-dimension sweep below was re-run at `5d39025`, after the differential weight
-moved from a per-trial draw to a per-generation one (`2947996`); the block
-winners come out the same — N=8 for the budgets a lab usually runs, N=16 past
-a thousand shots — so the default and the docstring stand unchanged.
+dimension sweep below is measured at `5d39025`, with the differential weight
+drawn once per generation as the learner ships it: N=8 takes the budgets a lab
+usually runs, and N=16 takes over past a thousand shots.
 
 **The setting is a member count, not a multiplier on the parameter count.** A
 4-D sweep alone cannot tell "a multiplier of 4 is right" from "about 16 members
