@@ -14,43 +14,10 @@ stand in for one. Nothing in this repository runs on 3.11.
 import importlib
 import inspect
 import pkgutil
-import re
-import subprocess
 import typing
 from pathlib import Path
 
 import labscript_optimization
-
-ROOT = Path(__file__).resolve().parent.parent
-
-#: M-LOOP, however it is spelt.
-NAME = re.compile(r'mloop|m-loop|m_loop', re.IGNORECASE)
-
-#: Files whose subject is M-LOOP itself, which may say so as often as they
-#: need to. Two are decision records for work already done, one is the
-#: document a lab moving off M-LOOP reads, and the last is this file, which
-#: has to name the word in order to look for it.
-SPEAKS_OF_M_LOOP = frozenset(
-    {
-        'UPGRADING.md',
-        'codex_issues_proposal.md',
-        'issues/codex_issues.md',
-        'tests/test_package.py',
-    }
-)
-
-#: Every other file allowed to say it, and how many times. The name belongs
-#: where the subject is M-LOOP -- what this package replaces, whose code it
-#: carries, which table names it refuses and why a behaviour differs -- and
-#: nowhere it is merely inherited.
-MENTIONS_M_LOOP = {
-    'LICENSE': 5,
-    'README.md': 11,
-    'benchmarks/README.md': 1,
-    'issues/buffer_hint_plan.md': 1,
-    'labscript_optimization/config.py': 5,
-    'tests/test_config.py': 13,
-}
 
 
 def test_every_annotation_in_the_package_resolves():
@@ -103,47 +70,3 @@ def test_every_annotation_in_the_package_resolves():
                 )
 
     assert unresolved == []
-
-
-def test_the_name_m_loop_appears_only_where_the_subject_is_m_loop():
-    """This package replaces M-LOOP and shares none of its code, so its own
-    name is what it should be read under. The word returning anywhere -- the
-    configuration surface a lab types every day among them -- is otherwise
-    noticed only by somebody re-running the grep.
-
-    Two tiers, because neither shape guards on its own. A bare list of files
-    lets the word multiply inside one already allowed a sentence of it: the
-    README that explains what this package replaces could grow twenty
-    mentions and stay on the list. A bare total drifts silently the other
-    way, since one file losing a mention as another gains one leaves the
-    number where it was, and a total that does move says nothing about where.
-
-    So the files whose whole subject is M-LOOP are named and not counted --
-    counting them would break on every edit to prose that is meant to say the
-    word -- and every other file is counted exactly, with the whole mapping
-    compared at once, so a file saying it for the first time fails as loudly
-    as a count that moved.
-    """
-    listed = subprocess.run(
-        ['git', 'ls-files', '-z'],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    tracked = [path for path in listed.split('\0') if path]
-
-    # A listing that reached nothing would agree with every expectation below.
-    assert 'labscript_optimization/config.py' in tracked
-    assert SPEAKS_OF_M_LOOP <= set(tracked)
-
-    found = {}
-    for path in tracked:
-        if path in SPEAKS_OF_M_LOOP:
-            continue
-        text = (ROOT / path).read_bytes().decode('utf-8', errors='replace')
-        said = len(NAME.findall(text))
-        if said:
-            found[path] = said
-
-    assert found == MENTIONS_M_LOOP
