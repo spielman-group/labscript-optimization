@@ -263,13 +263,13 @@ may carry; nothing keeps a mutable count.
   stalls forever on a deleted shot].
 - Explorer shots behind a batch number max(`explore_runs`, `num_buffered_runs`)
   [off by one either way].
-- Warmup ends at `warmup_observations` *usable* observations [count shots — a
-  NaN warmup never ends].
+- Warmup ends at `warmup_observations` *usable* observations [count shots — warmup
+  ends early on NaN costs].
 - `warmup_observations` defaults to `max(5, 2 × num_params)` [a constant — #8
   returns; drop the floor — a one-parameter search warms up on two].
 - Every shot's `phase` is its own source [write the latest proposal's phase —
   7 of 24 reproduces].
-- The budget cuts the batch before the explorer shots [reverse it].
+- The budget cuts explorer shots before any of the batch [reverse it].
 - `starved` is not counted for DE and is counted for a GP at
   `explore_runs = 0, num_buffered_runs = 0` [count both, or neither].
 - The budget refusal still fires at `max_num_runs < 2 × population_size` after

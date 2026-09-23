@@ -22,7 +22,7 @@ House rules that apply to every slice:
   behaviour changes, grep for every sentence that described the old behaviour.
 - No settings accepted for compatibility. A removed key is refused at load,
   naming its replacement.
-- Branch is `Development`. The suite stands at 463 tests. A count quoted inside
+- Branch is `Development`. The suite stands at 474 tests. A count quoted inside
   a slice is the one that slice was written against; recount before relying on
   either.
 
@@ -30,7 +30,7 @@ House rules that apply to every slice:
 
 - [x] Slice 1: Each shot carries the learner that proposed it
 - [x] Slice 2: Learners pace themselves
-- [ ] Slice 3: The Gaussian process runs its own cycle
+- [x] Slice 3: The Gaussian process runs its own cycle
 - [ ] Slice 4: Test cleanup
 - [x] Slice 5: Re-run the population measurement against the shipped dither
 
@@ -181,26 +181,26 @@ The Gaussian process owns its explorer and its warmup, and proposes in batches.
 
 ### Acceptance criteria
 
-- [ ] The GP proposes exactly `batch_size` points, and nothing while any
+- [x] The GP proposes exactly `batch_size` points, and nothing while any
       GP-sourced proposal of its latest batch is pending
-- [ ] A dropped GP shot releases the batch; requiring completion stalls the
+- [x] A dropped GP shot releases the batch; requiring completion stalls the
       cycle and fails the test
-- [ ] Explorer shots behind a batch number max(`explore_runs`,
+- [x] Explorer shots behind a batch number max(`explore_runs`,
       `num_buffered_runs`), including at `num_buffered_runs = 0`
-- [ ] Warmup ends at `warmup_observations` usable observations; counting shots
+- [x] Warmup ends at `warmup_observations` usable observations; counting shots
       fails the test with NaN costs
-- [ ] `warmup_observations` defaults to `max(5, 2 × num_params)`
-- [ ] `num_buffered_runs` defaults to 2
-- [ ] Each batch walks the exploration schedule from its first weight
-- [ ] The budget cuts explorer shots before any of the batch
-- [ ] A pure GP (`explore_runs = 0`, `num_buffered_runs = 0`) loads, and its
+- [x] `warmup_observations` defaults to `max(5, 2 × num_params)`
+- [x] `num_buffered_runs` defaults to 2
+- [x] Each batch walks the exploration schedule from its first weight
+- [x] The budget cuts explorer shots before any of the batch
+- [x] A pure GP (`explore_runs = 0`, `num_buffered_runs = 0`) loads, and its
       starvation is counted
-- [ ] Every removed key is refused naming its replacement
-- [ ] The late-cost cache test still passes
-- [ ] No sentence in the package, README, UPGRADING or the example still
+- [x] Every removed key is refused naming its replacement
+- [x] The late-cost cache test still passes
+- [x] No sentence in the package, README, UPGRADING or the example still
       describes the trainer, the two-phase wrapper, the periodic trainer run, or
       `num_training_runs`
-- [ ] Ian's configuration loads and builds
+- [x] Ian's configuration loads and builds
 
 ### Blocked by
 
