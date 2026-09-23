@@ -19,7 +19,11 @@ import numpy as np
 
 from . import learners, observations
 from .observations import COMPLETE, DROPPED, PENDING, Observation
-from .runmanager_interface import BLOCKED_SHOT_STATE, UNKNOWN_SHOT_STATE
+from .runmanager_interface import (
+    BLOCKED_SHOT_STATE,
+    REFUSED_SEQUENCE,
+    UNKNOWN_SHOT_STATE,
+)
 
 #: The source recorded for the configured start. The session proposes it
 #: itself, whichever learner is running, so it carries a name of the session's
@@ -228,7 +232,8 @@ class Session:
 
         Returns the shot ids submitted, which is empty once the session has
         stopped. Raises unless the interface answers with one shot id per
-        proposal.
+        proposal. runmanager refusing to add to the run's sequence stops the
+        session, with runmanager's reason; any other refusal is raised.
         """
         if self.stopped:
             return []
@@ -298,7 +303,16 @@ class Session:
         # submit rather than on every refill.
         self.interface.check_unchanged()
         proposals = np.array([params for params, _ in proposed], dtype=float)
-        shot_ids = self.interface.submit(proposals)
+        try:
+            shot_ids = self.interface.submit(proposals)
+        except Exception as exc:
+            # Starting another sequence would split the run in two. runmanager's
+            # server wraps its reason in a traceback, whose last line it is.
+            message = str(exc)
+            if REFUSED_SEQUENCE not in message:
+                raise
+            self.stop(message[message.rfind(REFUSED_SEQUENCE) :].splitlines()[0])
+            return []
         if len(shot_ids) != len(proposals):
             # Nothing is recorded before the raise: the session is left as it
             # was rather than holding ids that may not name their proposals.

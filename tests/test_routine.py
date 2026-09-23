@@ -514,52 +514,19 @@ def session(monkeypatch, tmp_path):
     storage.optimisation_worker = None
 
 
-@pytest.fixture
-def analysed(session, shot):
-    """Run the routine on a session that has already seen a row of its sequence.
+def shots(*rows):
+    """The shots of one pass as the routine is handed them, a frame each."""
+    return [frame([row]) for row in rows]
 
-    Each call adds shots to the sequence lyse has analysed and invokes the
-    routine on the whole of it, returning the status. The first invocation of
-    a session hands nothing over -- it remembers where the sequence had got to
-    and no further -- so everything about what reaches the worker starts from
-    the second, and the priming invocation's message is cleared away here.
-    """
-    sequence = [shot(shot_id='before-this-session')]
-    routine_module.optimise(session.path, session.storage, frame(sequence))
-    session.worker.sent.clear()
+
+@pytest.fixture
+def analysed(session):
+    """Run the routine on the shots of one pass, returning the status."""
 
     def analyse(*rows):
-        sequence.extend(rows)
-        return routine_module.optimise(
-            session.path, session.storage, frame(sequence)
-        )
+        return routine_module.optimise(session.path, session.storage, shots(*rows))
 
     return analyse
-
-
-@pytest.fixture
-def box(session, shot, monkeypatch):
-    """lyse's file box: the shots it has analysed, and what it was asked for.
-
-    ``rows`` is the sequence, oldest first, and ``asked`` records the
-    ``n_shots`` of each request, which is how a routine that fetches a pile-up
-    whole is told from one that reads the end of it.
-    """
-    lyse = pytest.importorskip('lyse')
-    sequence, asked = [], []
-
-    def data(n_sequences=None, n_shots=None):
-        assert n_sequences == 1, 'a run is one sequence'
-        asked.append(n_shots)
-        return frame(sequence[-n_shots:] if n_shots else sequence)
-
-    monkeypatch.setattr(lyse, 'data', data)
-    monkeypatch.setattr(lyse, 'routine_storage', session.storage)
-
-    def add(*shot_ids):
-        sequence.extend(shot(shot_id=shot_id) for shot_id in shot_ids)
-
-    return types.SimpleNamespace(add=add, asked=asked)
 
 
 def ids_sent(worker):
@@ -583,17 +550,6 @@ def test_every_shot_analysed_since_the_last_invocation_is_handed_over(
     assert ids_sent(session.worker) == [['row-1', 'row-2']]
 
 
-def test_a_shot_already_handed_over_is_not_sent_again(session, shot, analysed):
-    """The session would ignore a second cost for a shot it has already
-    recorded, so this is invisible in what the optimisation does and plain in
-    what crosses the pipe: every invocation would re-send the whole frame it
-    can see, growing the message for as long as the run lasts.
-    """
-    analysed(shot(shot_id='row-1', cost=1.0))
-    analysed(shot(shot_id='row-2', cost=2.0))
-    assert ids_sent(session.worker) == [['row-1'], ['row-2']]
-
-
 def test_several_observations_travel_in_one_message(session, shot, analysed):
     """The routine waits for one reply, and the worker answers one request at
     a time. Three messages would earn three replies, of which this invocation
@@ -605,61 +561,36 @@ def test_several_observations_travel_in_one_message(session, shot, analysed):
     assert len(session.worker.sent) == 1
 
 
-def test_a_pile_up_larger_than_the_first_request_is_fetched_whole(session, box):
-    """Analysis paused and resumed, or lyse started with shots already in the
-    box, and a single invocation answers for a batch of any size. The routine
-    asks for more until the row it handled last is in the frame; stopping at
-    the first request would hand over the end of the batch and lose the rest.
-    """
-    box.add('row-0')
-    routine_module.optimise(session.path)
-    box.add('row-1', 'row-2', 'row-3', 'row-4')
-    routine_module.optimise(session.path)
-    assert ids_sent(session.worker)[-1] == ['row-1', 'row-2', 'row-3', 'row-4']
-    assert box.asked == [1, 2, 4, 8]
-
-
-def test_the_steady_state_costs_one_request(session, box):
-    """Where analysis keeps up there is one new shot an invocation, and the
-    frame that holds it and the row handled last is two rows. Asking for a
-    third would be a second round trip to lyse for every shot of every run.
-    """
-    box.add('row-0')
-    routine_module.optimise(session.path)
-    box.add('row-1')
-    routine_module.optimise(session.path)
-    assert ids_sent(session.worker)[-1] == ['row-1']
-    assert box.asked == [1, 2]
-
-
-def test_the_first_invocation_hands_over_nothing_and_reads_one_row(session, box):
-    """A session opens with whatever lyse already has in its box, which was
-    analysed before the session existed. It proposed none of those shots, so
-    it can make nothing of them -- and reaching back over a sequence hundreds
-    of rows long to be told so would cost the whole frame to learn nothing.
-    """
-    box.add(*(f'row-{n}' for n in range(5)))
-    routine_module.optimise(session.path)
-    assert session.worker.sent == [('shot', 1, None)]
-    assert box.asked == [1]
-
-
-def test_a_frame_that_no_longer_reaches_the_handled_row_is_handed_over_whole(
-    session, shot, analysed
+def test_the_shots_lyse_names_are_read_from_their_own_files(
+    session, tmp_path, monkeypatch
 ):
-    """A sequence that has run on further than the frame reaches, or a new one
-    entirely, leaves lyse holding rows none of which is the one this routine
-    handled last. Every one of them may be a run the session spent. Handing a
-    row over twice is harmless -- the session takes a cost for a shot id once
-    -- and skipping one is a run it never hears about at all.
+    """``lyse.paths`` names the shots analysed since the last pass, and each is
+    read from its file with ``lyse.data``, in the shape that call returns.
+    Outside lyse there are none.
     """
-    analysed(shot(shot_id='row-1', cost=1.0))
-    routine_module.optimise(
-        session.path,
-        session.storage,
-        frame([shot(shot_id='row-2', cost=2.0), shot(shot_id='row-3', cost=3.0)]),
-    )
-    assert ids_sent(session.worker)[-1] == ['row-2', 'row-3']
+    lyse = pytest.importorskip('lyse')
+    paths = []
+    for n, shot_id in enumerate(['row-1', None, 'row-2']):
+        path = tmp_path / f'analysed{n}.h5'
+        with h5py.File(path, 'w') as f:
+            f.create_group('globals')
+            f.attrs['sequence_id'] = '20260922T120000_optimisation'
+            if shot_id is not None:
+                f.attrs['shot_id'] = shot_id
+            f.create_group('results/zTOF').attrs['Nb'] = n + 1.0
+        paths.append(str(path))
+
+    monkeypatch.setattr(lyse, 'paths', None, raising=False)
+    routine_module.optimise(session.path, session.storage)
+    monkeypatch.setattr(lyse, 'paths', paths)
+    routine_module.optimise(session.path, session.storage)
+
+    first, second = session.worker.sent
+    assert first == ('shot', 1, None)
+    assert [observation[:2] for observation in second[2]] == [
+        ('row-1', -1.0),
+        ('row-2', -3.0),
+    ]
 
 
 def test_an_invocation_with_nothing_new_still_sends_one_message(
@@ -1134,6 +1065,27 @@ def test_a_status_that_cannot_be_written_does_not_stop_the_session(
     assert os.path.basename(row['filepath']) in capsys.readouterr().err
 
 
+def test_a_session_that_has_stopped_says_why_and_the_routine_returns(
+    session, analysed, shot, capsys
+):
+    """lyse shows what a routine prints, and pauses its analysis when one
+    raises. A stopped session is reported the first way, so lyse goes on
+    analysing the shots still in flight.
+    """
+    reason = (
+        'Cannot add shots to sequence 20260923T101112_expt: '
+        'runmanager has no record of it'
+    )
+    session.worker.replies += [
+        ('status', ((None,), status())),
+        ('status', ((None,), status(stopped=reason))),
+    ]
+    analysed(shot())
+    assert capsys.readouterr().out == ''
+    assert analysed(shot())['stopped'] == reason
+    assert reason in capsys.readouterr().out
+
+
 WORKER_CONFIG = """
 [ANALYSIS]
 cost_key = ["zTOF", "Nb"]
@@ -1242,7 +1194,7 @@ def test_a_request_the_worker_could_not_handle_ends_the_wait(running, shot):
 
     with pytest.raises(RuntimeError, match='error in its globals'):
         routine_module.optimise(
-            session.path, session.storage, frame([shot(shot_id='row-0')])
+            session.path, session.storage, shots(shot(shot_id='row-0'))
         )
 
     assert time.monotonic() - started < 2.0
@@ -1294,11 +1246,9 @@ def test_each_status_reaches_the_shot_that_earned_it_behind_slow_trailing_work(
             return 'results/labscript_optimization' in f
 
     session = running(SlowToSubmit)
-    sequence = [shot(shot_id='before-this-session')]
-    def invoke():
-        return routine_module.optimise(
-            session.path, session.storage, frame(sequence)
-        )
+
+    def invoke(*rows):
+        return routine_module.optimise(session.path, session.storage, shots(*rows))
 
     invoke()
 
@@ -1307,8 +1257,7 @@ def test_each_status_reaches_the_shot_that_earned_it_behind_slow_trailing_work(
     rows = {}
     for n, shot_id in enumerate(['shot-0', 'shot-1', 'someone-elses', 'shot-2']):
         rows[shot_id] = shot(shot_id=shot_id, cost=5.0 - n)
-        sequence.append(rows[shot_id])
-        invoke()
+        invoke(rows[shot_id])
 
     ours = ['shot-0', 'shot-1', 'shot-2']
     for _ in range(40):
@@ -1338,12 +1287,10 @@ def test_shots_handed_over_together_each_carry_their_own_phase(
         reply_timeout=5.0,
         config=WORKER_CONFIG.replace('max = 1.0', 'max = 1.0\nstart = 0.5'),
     )
-    sequence = [shot(shot_id='before-this-session')]
-    routine_module.optimise(session.path, session.storage, frame(sequence))
+    routine_module.optimise(session.path, session.storage, [])
 
     start, learners = shot(shot_id='shot-0'), shot(shot_id='shot-1')
-    sequence += [start, learners]
-    routine_module.optimise(session.path, session.storage, frame(sequence))
+    routine_module.optimise(session.path, session.storage, shots(start, learners))
 
     assert results(start)['phase'] == 'start'
     assert results(learners)['phase'] == 'main'

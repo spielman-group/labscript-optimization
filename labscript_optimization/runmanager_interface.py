@@ -17,6 +17,11 @@ UNKNOWN_SHOT_STATE = "unknown"
 #: moves what is in front of it.
 BLOCKED_SHOT_STATE = "blocked"
 
+#: How runmanager's reason begins when it will not add shots to the sequence
+#: a submission names: it has no record of it, as after a restart. Nothing is
+#: queued.
+REFUSED_SEQUENCE = "Cannot add shots to sequence "
+
 #: Seconds runmanager is given to answer the greeting that opens a session.
 #: Short, so that a runmanager which is not running is named as the cause in a
 #: few seconds rather than a minute later by whichever question happened to be
@@ -63,6 +68,9 @@ class RunmanagerInterface:
         self.config = config
         self.client = client
         self.labscript_file = None
+        # The runmanager sequence this session's shots go into, once the first
+        # submission has started it.
+        self.sequence = None
 
     def check_ready(self) -> None:
         """Raise if runmanager cannot start a session, and pin its labscript file.
@@ -129,13 +137,18 @@ class RunmanagerInterface:
     def submit(self, proposals: Sequence[Sequence[float]]) -> list[str]:
         """Queue one shot per proposal. Returns their shot ids, in order.
 
+        A run is one runmanager sequence: the first submission starts it, and
+        every later one names it and joins it.
+
         A refusal means nothing was queued: submit_shots checks every entry --
         that the globals evaluate, and that each produces exactly one shot --
-        before submitting any of them, so a raise here leaves nothing behind
-        to account for.
+        and the sequence named before submitting any of them, so a raise here
+        leaves nothing behind to account for.
         """
         entries = [self.config.globals_for(p) for p in proposals]
-        return [d["shot_id"] for d in self.client.submit_shots(entries)]
+        descriptors = self.client.submit_shots(entries, sequence=self.sequence)
+        self.sequence = descriptors[0]["sequence_id"]
+        return [d["shot_id"] for d in descriptors]
 
     def shot_status(self, shot_ids: Iterable[str]) -> dict[str, dict]:
         """What runmanager says about each of these shots, as it says it.
