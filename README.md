@@ -130,7 +130,10 @@ something nobody wrote.
 
 `[PARAMETERS.<group>.<name>]` is one optimised parameter and
 `[RUNMANAGER_GLOBALS.<group>.<name>]` is a runmanager global computed from
-several of them; `[ANALYSIS] groups` says which groups take part.
+several of them; `[ANALYSIS] groups` says which groups take part. A group
+defined and not listed there is switched off. A group listed and defined by no
+table is refused, naming it: it is a misspelling, and the group it was meant
+for would otherwise sit switched off with nothing said.
 
 A parameter's `start` is where the run begins. The session proposes that point
 first and once, whichever learner is running: no learner has an opening of its

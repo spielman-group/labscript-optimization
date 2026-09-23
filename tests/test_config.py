@@ -445,6 +445,37 @@ max = 1.0
         )
 
 
+def test_a_listed_group_that_no_table_defines_is_refused_naming_it():
+    """A misspelt group matches nothing, and the group it was meant to name is
+    then one nobody listed: switched off, its globals never set, while the lab
+    believes its parameters are being searched.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(
+            MINIMAL.replace('groups = ["G"]', 'groups = ["G", "SHIMSS", "CMTO"]')
+            + '[PARAMETERS.SHIMS.b]\nglobal_name = "gb"\nmin = 0.0\nmax = 1.0\n'
+        )
+    assert str(raised.value) == (
+        "ANALYSIS.groups lists 'SHIMSS', 'CMTO', which no [PARAMETERS.<group>] "
+        "or [RUNMANAGER_GLOBALS.<group>] table defines. A group takes part "
+        "only through the tables written under it, so a name with none is a "
+        "misspelling. The groups this file defines are ['G', 'SHIMS']."
+    )
+
+
+def test_a_group_with_only_globals_in_it_is_defined():
+    """A group need carry no parameter of its own: one that only computes a
+    global from parameters elsewhere is written under ``RUNMANAGER_GLOBALS``
+    alone, and listing it switches that global on.
+    """
+    config = config_module.loads(
+        MINIMAL.replace('groups = ["G"]', 'groups = ["G", "DERIVED"]')
+        + '[RUNMANAGER_GLOBALS.DERIVED.doubled]\n'
+        + 'expr = "lambda v: 2 * v"\nargs = ["x"]\n'
+    )
+    assert [g.name for g in config.globals] == ['gx', 'doubled']
+
+
 def test_a_missing_cost_key_says_so():
     """And says it plainly.
 

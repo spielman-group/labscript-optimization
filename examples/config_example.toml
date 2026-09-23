@@ -23,7 +23,9 @@ cost_key = ["zTOF_singleShot", "Nb"]
 # The cost column holds something to be made as large as possible.
 maximize = true
 
-# Only parameter groups named here take part.
+# Only parameter groups named here take part. A group written below and not
+# named here is switched off; a name here that no table below defines is
+# refused, since it can only be a misspelling.
 groups = ["CMOT"]
 
 [GENERAL]

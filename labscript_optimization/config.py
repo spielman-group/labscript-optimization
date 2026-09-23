@@ -14,7 +14,9 @@
 ``[ANALYSIS] groups`` selects which groups take part. A parameter in a group
 that is not listed is left out entirely; one with ``enable = false`` in a group
 that is listed is carried but not searched, and gets no mapping, so its
-runmanager global keeps whatever value it already holds.
+runmanager global keeps whatever value it already holds. A name listed there
+that no table defines is refused, because it is a misspelling of a group that
+would otherwise be left out without a word.
 
 Every key must be one this package knows: a spelling it does not is refused
 rather than accepted and ignored, so a stale file has to be cut down to the
@@ -518,6 +520,23 @@ def from_dict(raw: dict) -> Config:
     general = raw.get("GENERAL", {})
 
     active_groups = require_type(analysis.get("groups", []), list, "ANALYSIS.groups")
+    # A group is defined by the tables written under it, so a name listed with
+    # no table is a misspelling rather than a group with nothing in it -- and
+    # left to load, it takes part as nothing, while the group it was meant to
+    # name stays switched off with its globals never set. The converse, a
+    # group defined and not listed, is how a group is switched off.
+    defined = sorted(
+        {*raw.get("PARAMETERS", {}), *raw.get("RUNMANAGER_GLOBALS", {})}
+    )
+    undefined = [group for group in active_groups if group not in defined]
+    if undefined:
+        raise ValueError(
+            f"ANALYSIS.groups lists {', '.join(repr(g) for g in undefined)}, "
+            f"which no [PARAMETERS.<group>] or [RUNMANAGER_GLOBALS.<group>] "
+            f"table defines. A group takes part only through the tables "
+            f"written under it, so a name with none is a misspelling. The "
+            f"groups this file defines are {defined}."
+        )
 
     parameters: list[Parameter] = []
     mappings: list[GlobalMapping] = []

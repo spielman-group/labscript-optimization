@@ -32,7 +32,7 @@ column. `session.py` is touched only for A6.
 ## Checklist
 
 - [x] A2: Learner knobs are refused, not coerced
-- [ ] A3: A group listed in `groups` that no table defines is refused
+- [x] A3: A group listed in `groups` that no table defines is refused
 - [ ] A4: Differential evolution redraws its weight once per generation
 - [ ] A5: runmanager receives plain Python values
 - [ ] A6: The first stop reason is kept
@@ -119,10 +119,10 @@ which is not an error.
 
 ### Acceptance criteria
 
-- [ ] A name in `groups` that no table defines is refused, naming it and the
+- [x] A name in `groups` that no table defines is refused, naming it and the
       groups the file defines
-- [ ] A group defined only under `[RUNMANAGER_GLOBALS]` counts as defined
-- [ ] A group defined and not listed still loads, switched off
+- [x] A group defined only under `[RUNMANAGER_GLOBALS]` counts as defined
+- [x] A group defined and not listed still loads, switched off
 
 ### Blocked by
 

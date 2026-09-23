@@ -228,7 +228,9 @@ goes out whole.
   above -- and
   `[RUNMANAGER_GLOBALS.<group>.<name>]` takes `expr` and `args`.
   `ANALYSIS.groups` still selects which groups take part, and `enable = false`
-  still keeps a parameter in the file but out of the search.
+  still keeps a parameter in the file but out of the search. A name in
+  `groups` that no table defines is refused, naming it, so a misspelt group
+  cannot leave the one it meant switched off.
 - `cost_key` is still `[routine_name, result_name]`, `maximize` still means
   your cost column holds something to be made large, and an optional
   `u_<result>` column alongside is still read as the uncertainty and weights
