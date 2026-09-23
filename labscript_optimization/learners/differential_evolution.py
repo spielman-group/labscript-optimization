@@ -55,7 +55,8 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
             of the setting.
         evolution_strategy: Which mutation to use, one of :data:`STRATEGIES`.
         mutation_scale: ``(low, high)`` bounds on the differential weight,
-            redrawn each generation.
+            which is drawn once per generation and shared by every trial in
+            it.
         cross_over_probability: Chance that a given coordinate comes from the
             mutant rather than the incumbent.
         trust_region: Restrict sampling to this distance around the best member.
@@ -177,7 +178,9 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
             return best + scale * (drawn[0] + drawn[1] - drawn[2] - drawn[3])
         return drawn[0] + scale * (drawn[1] + drawn[2] - drawn[3] - drawn[4])
 
-    def trial(self, slot: int, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
+    def trial(
+        self, slot: int, params: np.ndarray, costs: np.ndarray, scale: float
+    ) -> np.ndarray:
         draws = STRATEGIES[self.evolution_strategy]
         if int((~np.isnan(costs)).sum()) < draws + 1:
             # Too few slots hold a member for the mutation to draw distinct
@@ -185,7 +188,6 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
             # from and the point is drawn the way a founder is.
             return self.sample_new_member(params, costs)
 
-        scale = self.rng.uniform(*self.mutation_scale)
         mutant = self.mutant(slot, params, costs, scale)
 
         crossovers = self.rng.random(self.space.num_params) < self.cross_over_probability
@@ -204,6 +206,14 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
 
     def propose(self, history: Sequence[Observation], k: int) -> np.ndarray:
         params, costs = self.replay(history)
+        # One differential weight for the call, and a call is a generation:
+        # the barrier this learner declares means it is asked for a whole
+        # generation or for nothing. Textbook differential evolution, scipy's
+        # included, draws the weight once per generation rather than once per
+        # trial. The one call that falls short of a generation is the one a
+        # session opens with a configured start in the first position, and
+        # every proposal in that call is a founder, which uses no weight.
+        scale = self.rng.uniform(*self.mutation_scale)
         proposals = np.empty((k, self.space.num_params))
         for i in range(k):
             slot = (len(history) + i) % self.population_size
@@ -215,5 +225,5 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
                 # until one of its trials lands.
                 proposals[i] = self.sample_new_member(params, costs)
             else:
-                proposals[i] = self.trial(slot, params, costs)
+                proposals[i] = self.trial(slot, params, costs, scale)
         return proposals

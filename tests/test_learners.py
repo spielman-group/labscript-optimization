@@ -5,6 +5,7 @@ these tests survive any rewrite that keeps the interface.
 """
 
 import inspect
+import itertools
 import numbers
 import warnings
 
@@ -563,6 +564,70 @@ def test_a_slot_whose_founder_produced_nothing_is_drawn_founder_style(rng):
     for slot in (1, 2, 3):
         shared = int(np.isclose(proposals[slot], members[slot]).sum())
         assert shared == space.num_params - 1, slot
+
+
+def weight_bred_with(trial, best, members, slot):
+    """The differential weight a ``best1`` trial was bred with, read off it.
+
+    With every coordinate taken from the mutant and none resampled at a bound,
+    such a trial is the best member plus the weight times the difference of two
+    members other than its own slot's. Of all those pairs, the one the step
+    from the best lies along gives the weight as the ratio; in four dimensions
+    no other pair lines up with it by chance.
+    """
+    step = trial - best
+    others = [member for i, member in enumerate(members) if i != slot]
+    fits = []
+    for a, b in itertools.combinations(others, 2):
+        difference = a - b
+        weight = step @ difference / (difference @ difference)
+        fits.append((np.linalg.norm(step - weight * difference), abs(weight)))
+    residual, weight = min(fits)
+    assert residual < 1e-9
+    return weight
+
+
+def test_every_trial_in_a_generation_shares_one_differential_weight():
+    """Drawn once per generation, as textbook differential evolution and scipy
+    draw it, rather than once per trial.
+
+    The founders sit in a small cluster in the middle of a wide space and every
+    coordinate is taken from the mutant, so no trial reaches a bound and each
+    is exactly the best member plus a weight times a difference of two others.
+    Each generation's trials cost more than every founder, so the population
+    they are bred from is the founders throughout, and the weight can be read
+    back off every trial of three successive generations.
+    """
+    space = walk_space()
+    size = 5
+    learner = DifferentialEvolutionLearner(
+        space,
+        np.random.default_rng(7),
+        population_size=size,
+        cross_over_probability=1.0,
+    )
+    founders = np.random.default_rng(8).uniform(-0.5, 0.5, (size, space.num_params))
+    history = [observe(slot, point, float(slot)) for slot, point in enumerate(founders)]
+
+    generations = []
+    for generation in range(3):
+        trials = learner.propose(history, learner.generation)
+        generations.append(
+            [
+                weight_bred_with(trial, founders[0], founders, slot)
+                for slot, trial in enumerate(trials)
+            ]
+        )
+        history += [
+            observe(f'{generation}-{slot}', trial, 100.0)
+            for slot, trial in enumerate(trials)
+        ]
+
+    for weights in generations:
+        np.testing.assert_allclose(weights, weights[0])
+        assert 0.5 <= weights[0] <= 1.0
+    firsts = [weights[0] for weights in generations]
+    assert len({round(weight, 9) for weight in firsts}) == 3, firsts
 
 
 @pytest.mark.parametrize('strategy, smallest', SMALLEST_POPULATIONS)

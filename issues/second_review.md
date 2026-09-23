@@ -33,7 +33,7 @@ column. `session.py` is touched only for A6.
 
 - [x] A2: Learner knobs are refused, not coerced
 - [x] A3: A group listed in `groups` that no table defines is refused
-- [ ] A4: Differential evolution redraws its weight once per generation
+- [x] A4: Differential evolution redraws its weight once per generation
 - [ ] A5: runmanager receives plain Python values
 - [ ] A6: The first stop reason is kept
 
@@ -154,10 +154,10 @@ Prose that the change makes false is corrected.
 
 ### Acceptance criteria
 
-- [ ] Every trial in one generation shares one differential weight, and
+- [x] Every trial in one generation shares one differential weight, and
       successive generations draw different ones, shown by recovering the
       weight from the trials themselves
-- [ ] No sentence in the package, `README.md`, `UPGRADING.md`, `examples/` or
+- [x] No sentence in the package, `README.md`, `UPGRADING.md`, `examples/` or
       `benchmarks/README.md` describes a per-member draw
 
 ### Blocked by
