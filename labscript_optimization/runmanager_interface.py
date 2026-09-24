@@ -173,10 +173,9 @@ class RunmanagerInterface:
         about: runmanager loops over the ids it was handed and answers for each
         of them, so an id it has no row for comes back ``'unknown'`` rather
         than absent. ``pending`` is whether that shot could still produce a
-        cost. ``state`` is the queue row's own state, or ``'submitted'`` for a
-        shot runmanager has taken on but has no row for yet, ``'blocked'`` for
-        a row sitting behind one an operator has to clear, and ``'unknown'``
-        for an id runmanager does not know.
+        cost. ``state`` is the queue row's own state, ``'blocked'`` for a row
+        sitting behind one an operator has to clear, and ``'unknown'`` for an
+        id runmanager does not know.
         """
         shot_ids = list(shot_ids)
         if not shot_ids:
