@@ -19,6 +19,7 @@ import math
 import os
 import queue
 import subprocess
+import sys
 import threading
 import time
 import types
@@ -111,34 +112,34 @@ def shot(tmp_path):
 
 
 def test_the_shot_id_says_which_proposal_the_shot_answers(config, shot):
-    shot_id, _, _, _ = extract(frame([shot()]), config)
+    _, [(shot_id, _, _, _)] = extract(frame([shot()]), config)
     assert shot_id == 'row-3'
 
 
 def test_a_maximised_quantity_has_its_sign_flipped(config, shot):
-    _, cost, _, bad = extract(frame([shot(cost=7.0)]), config)
+    _, [(_, cost, _, bad)] = extract(frame([shot(cost=7.0)]), config)
     assert cost == -7.0 and not bad
 
 
 def test_a_minimised_quantity_is_passed_through(shot):
     config = config_module.loads(CONFIG.replace('maximize = true', 'maximize = false'))
-    _, cost, _, _ = extract(frame([shot(cost=7.0)]), config)
+    _, [(_, cost, _, _)] = extract(frame([shot(cost=7.0)]), config)
     assert cost == 7.0
 
 
 def test_an_uncertainty_column_is_picked_up_when_present(config, shot):
-    _, _, uncer, _ = extract(frame([shot(uncer=0.5)]), config)
+    _, [(_, _, uncer, _)] = extract(frame([shot(uncer=0.5)]), config)
     assert uncer == 0.5
 
 
 def test_a_missing_uncertainty_is_absent_rather_than_zero(config, shot):
-    _, _, uncer, _ = extract(frame([shot()]), config)
+    _, [(_, _, uncer, _)] = extract(frame([shot()]), config)
     assert uncer is None
 
 
 @pytest.mark.parametrize('value', [float('nan'), float('inf')])
 def test_a_shot_with_no_usable_cost_is_bad(config, shot, value):
-    _, _, _, bad = extract(frame([shot(cost=value)]), config)
+    _, [(_, _, _, bad)] = extract(frame([shot(cost=value)]), config)
     assert bad
 
 
@@ -149,18 +150,19 @@ def test_a_shot_carrying_no_identifier_has_nothing_to_read(config, shot):
 
     Empty rather than missing: lyse writes the column for every shot.
     """
-    assert extract(frame([shot(shot_id='')]), config) is None
+    assert extract(frame([shot(shot_id='')]), config) == ([], [])
 
 
 def test_a_dataframe_with_no_shot_id_column_yields_nothing(config):
     """A dataframe without the column claims nothing, rather than claiming
     every shot and matching costs to proposals at random.
     """
-    assert extract(frame([{'filepath': '/p', ('zTOF', 'Nb'): 5.0}]), config) is None
+    shots = frame([{'filepath': '/p', ('zTOF', 'Nb'): 5.0}])
+    assert extract(shots, config) == ([], [])
 
 
 def test_a_cost_column_that_does_not_exist_yet_reads_as_bad(config, shot):
-    shot_id, _, _, bad = extract(frame([shot(with_cost=False)]), config)
+    _, [(shot_id, _, _, bad)] = extract(frame([shot(with_cost=False)]), config)
     assert shot_id == 'row-3' and bad
 
 
@@ -172,7 +174,7 @@ def test_a_shot_carrying_images_deepens_every_column_label(config, shot):
     """
     row = shot()
     row[('side', 'atoms', 'exposure_time')] = 0.01
-    shot_id, cost, _, _ = extract(frame([row]), config)
+    _, [(shot_id, cost, _, _)] = extract(frame([row]), config)
     assert shot_id == 'row-3' and cost == -7.0
 
 
@@ -515,8 +517,10 @@ def session(monkeypatch, tmp_path):
 
 
 def shots(*rows):
-    """The shots of one pass as the routine is handed them, a frame each."""
-    return [frame([row]) for row in rows]
+    """The shots of one pass as the routine is handed them: lyse's rows for
+    them, or ``[]`` when there are none.
+    """
+    return frame(rows) if rows else []
 
 
 @pytest.fixture
@@ -561,36 +565,28 @@ def test_several_observations_travel_in_one_message(session, shot, analysed):
     assert len(session.worker.sent) == 1
 
 
-def test_the_shots_lyse_names_are_read_from_their_own_files(
-    session, tmp_path, monkeypatch
+def test_the_shots_lyse_names_are_asked_of_its_dataframe_in_one_request(
+    session, shot, monkeypatch
 ):
-    """``lyse.paths`` names the shots analysed since the last pass, and each is
-    read from its file with ``lyse.data``, in the shape that call returns.
-    Outside lyse there are none.
+    """``lyse.paths`` names the shots analysed since the last pass, and their
+    rows are asked of lyse's dataframe together, by file. Outside lyse, and on
+    a pass that names none, there is nothing to ask for and lyse is not asked.
     """
-    lyse = pytest.importorskip('lyse')
-    paths = []
-    for n, shot_id in enumerate(['row-1', None, 'row-2']):
-        path = tmp_path / f'analysed{n}.h5'
-        with h5py.File(path, 'w') as f:
-            f.create_group('globals')
-            f.attrs['sequence_id'] = '20260922T120000_optimisation'
-            if shot_id is not None:
-                f.attrs['shot_id'] = shot_id
-            f.create_group('results/zTOF').attrs['Nb'] = n + 1.0
-        paths.append(str(path))
+    rows = [shot(shot_id='row-1'), shot(shot_id=''), shot(shot_id='row-2')]
+    asked = []
 
-    monkeypatch.setattr(lyse, 'paths', None, raising=False)
-    routine_module.optimise(session.path, session.storage)
-    monkeypatch.setattr(lyse, 'paths', paths)
-    routine_module.optimise(session.path, session.storage)
+    def data(where):
+        asked.append(where)
+        return frame(rows)
 
-    first, second = session.worker.sent
-    assert first == ('shot', 1, None)
-    assert [observation[:2] for observation in second[2]] == [
-        ('row-1', -1.0),
-        ('row-2', -3.0),
-    ]
+    lyse = types.SimpleNamespace(paths=None, data=data)
+    monkeypatch.setitem(sys.modules, 'lyse', lyse)
+    for paths in [None, [], [row['filepath'] for row in rows]]:
+        lyse.paths = paths
+        routine_module.optimise(session.path, session.storage)
+
+    assert asked == [{'filepath': paths}]
+    assert ids_sent(session.worker) == [[], [], ['row-1', 'row-2']]
 
 
 def test_an_invocation_with_nothing_new_still_sends_one_message(

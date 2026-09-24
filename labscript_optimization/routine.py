@@ -111,62 +111,62 @@ LIVENESS_POLL = 0.5
 CONFIGURE_REQUEST = 0
 
 
-def value(shot, key):
-    """One column of a one-row frame, or ``None`` if there is no such column.
-
-    A one-row frame rather than the row ``dataframe.iloc[-1]``: pandas
-    resolves a key shallower than the column MultiIndex against a frame's
-    columns, whatever the frame's depth, where against a row the same key
-    names a sub-Series. ``key`` may be shallower than the frame's MultiIndex,
-    whose padding levels are empty.
-    """
-    if key not in shot:
-        return None
-    return shot[key].iloc[-1]
-
-
 def analysed():
-    """The shots lyse analysed since the last pass, each as a one-row frame.
+    """The rows of lyse's dataframe for the shots analysed since the last pass.
 
-    ``lyse.paths`` names them, and is ``None`` outside lyse. A file can be
-    named twice, after a failed pass, and a BLACS rerun is a file of its own
-    carrying the same shot id; the session takes a cost for an id once, so
-    both pass through harmlessly.
+    ``lyse.paths`` names them, and is ``None`` outside lyse: with none named
+    there is nothing to ask lyse for, and this is ``[]``. The rows come in one
+    request, in the dataframe's order. A file named twice, after a failed
+    pass, is one row, and a BLACS rerun is a file of its own carrying the same
+    shot id, which passes through harmlessly because the session takes a cost
+    for an id once.
     """
     import lyse
 
-    return [lyse.data(filepath=path).to_frame().T for path in lyse.paths or ()]
+    paths = lyse.paths
+    if not paths:
+        return []
+    return lyse.data(where={"filepath": paths})
 
 
-def extract(shot, config):
-    """Read the shot id and cost of one shot, given as a one-row frame.
+def extract(shots, config):
+    """Read the shot ids and costs of ``shots``, rows of lyse's dataframe.
 
-    Returns ``(shot_id, cost, uncer, bad)``, or ``None`` when there is no id to
-    read: lyse reads the identifier runmanager wrote into the file as a column,
-    and it is empty for one of runmanager's default shots, which go to BLACS
-    already compiled and so never have an id written into them. An id that is
-    there does not make the shot the session's -- runmanager mints one for
-    every row it compiles, a user's own shots included -- and which ids belong
-    to the session is the session's own answer. The sign flip for ``maximize``
-    happens here, on the way in, so everything downstream minimises; the
-    session puts it back in the best cost it reports.
+    Returns two lists in step: the file of each shot there is an id to read,
+    and its ``(shot_id, cost, uncer, bad)``. lyse reads the identifier
+    runmanager wrote into the file as a column, and it is empty for one of
+    runmanager's default shots, which go to BLACS already compiled and so
+    never have an id written into them. An id that is there does not make the
+    shot the session's -- runmanager mints one for every row it compiles, a
+    user's own shots included -- and which ids belong to the session is the
+    session's own answer. A shot with an id is read whether or not its cost is
+    usable: it has run and lyse has analysed it, so withholding it would leave
+    its id awaited until a reconcile quietly dropped it, understating the runs
+    spent. The sign flip for ``maximize`` happens here, on the way in, so
+    everything downstream minimises; the session puts it back in the best
+    cost it reports.
     """
-    shot_id = value(shot, "shot_id")
-    if shot_id is None or shot_id == "":
-        return None
-
-    cost, uncer = float("nan"), None
-    raw = value(shot, config.cost_key)
-    if raw is not None:
-        cost = float(raw)
-        measured = value(shot, config.uncertainty_key)
-        if measured is not None and np.isfinite(float(measured)):
-            uncer = float(measured)
-
-    bad = not np.isfinite(cost)
-    if not bad and config.maximize:
-        cost = -cost
-    return shot_id, cost, uncer, bad
+    # A column at a time off the frame rather than a row at a time: pandas
+    # resolves a key shallower than the column MultiIndex, whose padding levels
+    # are empty, against a frame's columns, where against a row the same key
+    # names a sub-Series. A column the frame does not have is None throughout.
+    keys = "filepath", "shot_id", config.cost_key, config.uncertainty_key
+    columns = [shots[k] if k in shots else [None] * len(shots) for k in keys]
+    filepaths, observations = [], []
+    for filepath, shot_id, raw, measured in zip(*columns):
+        if shot_id is None or shot_id == "":
+            continue
+        cost, uncer = float("nan"), None
+        if raw is not None:
+            cost = float(raw)
+            if measured is not None and np.isfinite(float(measured)):
+                uncer = float(measured)
+        bad = not np.isfinite(cost)
+        if not bad and config.maximize:
+            cost = -cost
+        filepaths.append(filepath)
+        observations.append((shot_id, cost, uncer, bad))
+    return filepaths, observations
 
 
 def save_status(filepath, status) -> None:
@@ -371,7 +371,7 @@ def optimise(config_path, storage=None, shots=None):
         config_path: The TOML configuration.
         storage: Where to keep the worker between invocations. Defaults to
             ``lyse.routine_storage``.
-        shots: The shots to hand over, each a one-row frame. Defaults to
+        shots: The shots to hand over, rows of lyse's dataframe. Defaults to
             :func:`analysed`.
 
     Returns:
@@ -425,18 +425,7 @@ def optimise(config_path, storage=None, shots=None):
     to_worker, from_worker, popen = storage.optimisation_worker
     if shots is None:
         shots = analysed()
-
-    handed, observations = [], []
-    for shot in shots:
-        observation = extract(shot, config)
-        if observation is None:
-            # One of runmanager's default shots, carrying no queue-row id.
-            continue
-        # Handed over whether or not its cost is usable: the shot has run and
-        # lyse has analysed it, so withholding it would leave its id awaited
-        # until a reconcile quietly dropped it, understating the runs spent.
-        handed.append(value(shot, "filepath"))
-        observations.append(observation)
+    handed, observations = extract(shots, config)
 
     storage.optimisation_request += 1
     request = storage.optimisation_request

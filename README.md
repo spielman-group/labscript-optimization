@@ -417,10 +417,11 @@ anywhere else is one lyse cannot import.
 
 Needs Python 3.11 or newer, numpy, scipy and scikit-learn. The lyse routine
 additionally needs `lyse`, `runmanager` and `labscript_utils`, which a labscript
-suite installation already provides. It reads the shots lyse names in
-`lyse.paths`, each with its `shot_id`, and submits with `submit_shots`'s
-`sequence`, so it needs a lyse and a runmanager that have them; an older one
-fails at the first use and says so.
+suite installation already provides. It asks lyse's dataframe for the rows of
+the shots lyse names in `lyse.paths`, in one `lyse.data(where=...)` request,
+each with its `shot_id`, and submits with `submit_shots`'s `sequence`, so it
+needs a lyse and a runmanager that have them; an older one fails at the first
+use and says so.
 
 ## Tests
 
