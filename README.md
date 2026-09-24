@@ -366,8 +366,7 @@ than the optimisation that stopping for it would end.
 runmanager refusing to add shots to the run's sequence stops the session
 without raising. It remembers a sequence only until it restarts, so this is a
 runmanager restarted mid-run. Its reason is the session's `stopped`, and the
-routine prints it on every invocation from then on, while lyse goes on
-analysing.
+routine prints it once, while lyse goes on analysing.
 
 Two waits are bounded, and neither of them is the experiment's. The routine
 waits a couple of seconds for the worker's answer, so lyse is held up for that

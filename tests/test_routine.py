@@ -24,6 +24,7 @@ import sys
 import threading
 import time
 import types
+import warnings
 
 try:
     # The lock lyse puts over h5py refuses to be imported once h5py has been,
@@ -68,7 +69,7 @@ def frame(rows):
     """Build a dataframe shaped the way lyse shapes one.
 
     Every column label is a tuple, padded with empty levels out to the depth of
-    the deepest one and sorted, which is what lyse does. Two levels is the
+    the deepest one, which is what lyse does, and sorted. Two levels is the
     shallowest it ever makes; a shot carrying images makes it deeper.
     """
 
@@ -588,6 +589,29 @@ def test_the_shots_lyse_names_are_asked_of_its_dataframe_in_one_request(
 
     assert asked == [{'filepath': paths}]
     assert ids_sent(session.worker) == [[], [], ['row-1', 'row-2']]
+
+
+def test_lyse_s_unsorted_columns_are_read_without_a_warning(
+    session, shot, monkeypatch
+):
+    """lyse keeps its columns in the order they were added, and pandas warns
+    about lexsort depth when an unsorted MultiIndex is read by a shallower key,
+    which would print into lyse's output as though the optimiser had failed.
+    The frame is made deeper than the cost key, as a shot carrying images makes
+    it, because a key as deep as the columns is looked up whole and does not
+    warn."""
+    row = shot(shot_id='row-1', cost=1.0)
+    row[('image', 'raw', 'width')] = 1
+    rows = frame([row])
+    unsorted = rows[rows.columns[::-1]]
+    lyse = types.SimpleNamespace(
+        paths=[rows[('filepath', '')].iloc[0]], data=lambda where: unsorted
+    )
+    monkeypatch.setitem(sys.modules, 'lyse', lyse)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', pd.errors.PerformanceWarning)
+        routine_module.optimise(session.path, session.storage)
+    assert ids_sent(session.worker) == [['row-1']]
 
 
 def test_an_invocation_with_nothing_new_still_sends_one_message(

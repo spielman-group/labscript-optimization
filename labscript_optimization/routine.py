@@ -125,7 +125,10 @@ def analysed():
     paths = lyse.paths
     if not paths:
         return []
-    return lyse.data(where={"filepath": paths})
+    # Columns sorted, because lyse keeps them in the order they were added and
+    # pandas warns about lexsort depth when an unsorted MultiIndex is read by
+    # a key shallower than it, as :func:`extract` reads it.
+    return lyse.data(where={"filepath": paths}).sort_index(axis=1)
 
 
 def extract(shots, config):

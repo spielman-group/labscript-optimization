@@ -22,6 +22,10 @@ Needs Python 3.11 or newer, and numpy, scipy and scikit-learn. There is no
 tensorflow: the neural-network learner is gone, and with it M-LOOP's hard
 import of tensorflow through every other learner.
 
+It also needs a lyse and a runmanager that have what the routine uses:
+`lyse.paths`, `lyse.data(where=...)`, `save_result`'s `save_to_h5`, and
+`submit_shots`'s `sequence`. An older one fails at the first pass and says so.
+
 Your lyse analysis routine becomes two lines:
 
 ```python
