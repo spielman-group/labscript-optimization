@@ -422,8 +422,9 @@ additionally needs `lyse`, `runmanager` and `labscript_utils`, which a labscript
 suite installation already provides. It asks lyse's dataframe for the rows of
 the shots lyse names in `lyse.paths`, in one `lyse.data(where=...)` request,
 each with its `shot_id`, saves its progress with `save_result`'s `save_to_h5`,
-and submits with `submit_shots`'s `sequence`, so it needs a lyse and a
-runmanager that have them; an older one fails at the first use and says so.
+and submits with `submit_shots`'s `sequence` and `sequence_index`, so it needs
+a lyse and a runmanager that have them; an older one fails at the first use and
+says so.
 
 ## Tests
 

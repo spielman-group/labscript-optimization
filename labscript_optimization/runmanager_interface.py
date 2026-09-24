@@ -69,8 +69,10 @@ class RunmanagerInterface:
         self.client = client
         self.labscript_file = None
         # The runmanager sequence this session's shots go into, once the first
-        # submission has started it.
+        # submission has started it. Its index tells it apart from another
+        # sequence started in the same second, which shares its id.
         self.sequence = None
+        self.sequence_index = None
 
     def check_ready(self) -> None:
         """Raise if runmanager cannot start a session, and pin its labscript file.
@@ -157,8 +159,11 @@ class RunmanagerInterface:
                 f"Untick Scan? and JIT? in runmanager for {', '.join(ticked)}: "
                 f"their shots would not run the values this session submits."
             )
-        descriptors = self.client.submit_shots(entries, sequence=self.sequence)
+        descriptors = self.client.submit_shots(
+            entries, sequence=self.sequence, sequence_index=self.sequence_index
+        )
         self.sequence = descriptors[0]["sequence_id"]
+        self.sequence_index = descriptors[0]["sequence_index"]
         return [d["shot_id"] for d in descriptors]
 
     def shot_status(self, shot_ids: Iterable[str]) -> dict[str, dict]:

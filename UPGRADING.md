@@ -24,7 +24,8 @@ import of tensorflow through every other learner.
 
 It also needs a lyse and a runmanager that have what the routine uses:
 `lyse.paths`, `lyse.data(where=...)`, `save_result`'s `save_to_h5`, and
-`submit_shots`'s `sequence`. An older one fails at the first pass and says so.
+`submit_shots`'s `sequence` and `sequence_index`. An older one fails at the first
+pass and says so.
 
 Your lyse analysis routine becomes two lines:
 
@@ -48,8 +49,8 @@ old name is **refused** before any other complaint about the file is reached.
 | `[MLOOP]` | `[GENERAL]` |
 | `[MLOOP_PARAMS.<group>.<name>]` | `[PARAMETERS.<group>.<name>]` |
 
-This package replaces M-LOOP and carries none of its code, so a settings table
-named after it was a name nothing written under it answered to. `[GENERAL]`
+This package replaces M-LOOP rather than running it, so a settings table named
+after M-LOOP names a tool nothing here answers to. `[GENERAL]`
 reads against `[ANALYSIS]` and `[LEARNER.<name>]` without naming the table
 after the package every table in the file belongs to anyway.
 `[RUNMANAGER_GLOBALS.<group>.<name>]` was already named for what it holds and
@@ -89,7 +90,7 @@ Gaussian process, which runs its warmup and its explorer itself:
 | `[GENERAL]`, `[LEARNER.gaussian_process]` | `minimum_observations` | `warmup_observations` |
 
 The last four appear only in a file already written for this package; an
-analysislib-mloop file carries none of them. The last five are each
+analysislib-mloop file carries none of them. The last six are each
 **refused** naming the key that replaces it and the table it goes in, and none
 is read as its replacement: `explore_runs`, for one, counts the explorer shots
 behind each batch, where `num_runs_between_trainer_runs` was a period between

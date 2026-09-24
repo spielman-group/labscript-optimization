@@ -72,18 +72,20 @@ class FakeClient:
     def get_jit_enabled(self):
         return self.jit_enabled
 
-    def submit_shots(self, entries, sequence=None):
+    def submit_shots(self, entries, sequence=None, sequence_index=None):
         """Starts a sequence for each submission that names none."""
         if self.refuse:
             raise RuntimeError(self.refuse)
-        self.sequences.append(sequence)
+        self.sequences.append((sequence, sequence_index))
         self.entries.extend(entries)
         if sequence is None:
             sequence = f'20260918T12000{len(self.sequences)}_expt'
+            sequence_index = len(self.sequences)
         return [
             {
                 'shot_id': f'id-{len(self.entries) - len(entries) + i}',
                 'sequence_id': sequence,
+                'sequence_index': sequence_index,
                 'run_number': len(self.entries) - len(entries) + i,
                 'path': f'/data/shot{i}.h5',
             }
@@ -199,8 +201,8 @@ def test_every_submission_after_the_first_joins_its_sequence(interface, client):
     between."""
     for _ in range(3):
         interface.submit([[1.0, 2.0]])
-    joined = '20260918T120001_expt'
-    assert client.sequences == [None, joined, joined]
+    joined = ('20260918T120001_expt', 1)
+    assert client.sequences == [(None, None), joined, joined]
 
 
 def holds_only_python_values(value):
