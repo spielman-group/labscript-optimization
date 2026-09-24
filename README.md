@@ -357,8 +357,9 @@ learner's own knobs is a keyword argument with a default.
 ## Failures
 
 Failures stop the session and are reported through lyse's normal error path:
-runmanager unreachable, a broken global, a labscript file changed underneath a
-running session, or a learner raising. Nothing is retried, and no shot, fit or
+runmanager unreachable, a broken global, a global the session sets with Scan?
+or JIT? ticked, a labscript file changed underneath a running session, or a
+learner raising. Nothing is retried, and no shot, fit or
 submission is put on a clock. The exception is a status that cannot be written
 to its shot, which is printed and passed over: a progress report is worth less
 than the optimisation that stopping for it would end.

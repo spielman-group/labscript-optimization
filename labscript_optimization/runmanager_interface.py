@@ -146,6 +146,17 @@ class RunmanagerInterface:
         leaves nothing behind to account for.
         """
         entries = [self.config.globals_for(p) for p in proposals]
+        # A ticked global runs its scan value, or under JIT? the window's value
+        # at compile time, rather than the value submitted.
+        scan, jit = self.client.get_scan_enabled(), self.client.get_jit_enabled()
+        ticked = [
+            g.name for g in self.config.globals if scan.get(g.name) or jit.get(g.name)
+        ]
+        if ticked:
+            raise RuntimeError(
+                f"Untick Scan? and JIT? in runmanager for {', '.join(ticked)}: "
+                f"their shots would not run the values this session submits."
+            )
         descriptors = self.client.submit_shots(entries, sequence=self.sequence)
         self.sequence = descriptors[0]["sequence_id"]
         return [d["shot_id"] for d in descriptors]

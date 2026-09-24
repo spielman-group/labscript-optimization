@@ -49,6 +49,8 @@ class FakeClient:
         self.timeout = 60.0
         self.silent = False
         self.asked = []
+        self.scan_enabled = {}
+        self.jit_enabled = {}
 
     def say_hello(self):
         self.asked.append(('say_hello', self.timeout))
@@ -63,6 +65,12 @@ class FakeClient:
     def get_labscript_file(self):
         self.asked.append(('get_labscript_file', self.timeout))
         return self.labscript
+
+    def get_scan_enabled(self):
+        return self.scan_enabled
+
+    def get_jit_enabled(self):
+        return self.jit_enabled
 
     def submit_shots(self, entries, sequence=None):
         """Starts a sequence for each submission that names none."""
@@ -165,6 +173,16 @@ def test_a_labscript_file_changed_mid_session_is_refused(interface, client):
     client.labscript = '/lab/something_else.py'
     with pytest.raises(RuntimeError, match='labscript file changed'):
         interface.check_unchanged()
+
+
+@pytest.mark.parametrize('box', ['scan_enabled', 'jit_enabled'])
+def test_a_global_with_scan_or_jit_ticked_is_refused_before_submitting(
+    interface, client, box
+):
+    setattr(client, box, {'gx': False, 'gy_doubled': True})
+    with pytest.raises(RuntimeError):
+        interface.submit(np.array([[1.0, 2.0]]))
+    assert client.entries == []
 
 
 def test_submitting_sends_one_entry_of_globals_per_proposal(interface, client):
