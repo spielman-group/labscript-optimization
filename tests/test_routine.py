@@ -1086,6 +1086,24 @@ def test_a_session_that_has_stopped_says_why_and_the_routine_returns(
     assert reason in capsys.readouterr().out
 
 
+def test_a_stopped_session_does_not_repeat_the_reason_on_a_later_pass(
+    session, analysed, shot, capsys
+):
+    """Every pass of a stopped session gets the same status back, and
+    printing it again on each one would flood lyse's output with a line
+    nothing has changed about since the pass that first printed it.
+    """
+    reason = 'reached max_num_runs (400)'
+    session.worker.replies += [
+        ('status', ((None,), status(stopped=reason))),
+        ('status', ((None,), status(stopped=reason))),
+    ]
+    assert analysed(shot())['stopped'] == reason
+    assert capsys.readouterr().out.count(reason) == 1
+    assert analysed(shot())['stopped'] == reason
+    assert capsys.readouterr().out == ''
+
+
 WORKER_CONFIG = """
 [ANALYSIS]
 cost_key = ["zTOF", "Nb"]

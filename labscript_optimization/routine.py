@@ -386,7 +386,9 @@ def optimise(config_path, storage=None, shots=None):
         a later invocation writes that status onto them when it arrives.
         Worker configuration is acknowledged before the worker is stored, so
         the first invocation receives its own answer like every later one.
-        Once the session has stopped, each invocation prints why.
+        The first invocation whose status carries a stop reason prints why;
+        later invocations of the same session get the same status back and do
+        not print it again.
     """
     if storage is None:
         import lyse
@@ -410,6 +412,10 @@ def optimise(config_path, storage=None, shots=None):
         # written onto the shots that produced it. A handful of entries at
         # most: the worker owes one status per request.
         storage.optimisation_pending = {}
+        # Whether this session has already told lyse why it stopped. Every
+        # pass of a stopped session gets the same status back, and this is
+        # what keeps it from being printed again on each one.
+        storage.optimisation_stop_printed = False
         # The ordinary shutdown, where lyse asks the analysis subprocess to
         # quit. A killed subprocess does not run this and the worker is left
         # to zprocess's heartbeat.
@@ -453,10 +459,13 @@ def optimise(config_path, storage=None, shots=None):
         to_worker.put(("shot", request, None))
 
     status = _drain(from_worker, popen, request, storage.optimisation_pending)
-    if status is not None and status.get("stopped"):
+    stopped = status is not None and status.get("stopped")
+    if stopped and not storage.optimisation_stop_printed:
         # lyse shows what a routine prints. Nothing is raised, so lyse goes on
-        # analysing and the shots still in flight are still taken.
+        # analysing and the shots still in flight are still taken. Printed
+        # once per session: every later pass gets the same status back.
         print(f"The optimisation has stopped: {status['stopped']}")
+        storage.optimisation_stop_printed = True
     return status
 
 
