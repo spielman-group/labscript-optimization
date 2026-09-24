@@ -299,6 +299,12 @@ def test_the_default_warmup_of_a_wide_search_loads():
             'explore_runs',
         ),
         (MINIMAL + '[GENERAL]\nrefit_interval = 4\n', 'refit_interval', 'batch_size'),
+        (MINIMAL + '[GENERAL]\ngeneration_size = 4\n', 'generation_size', 'batch_size'),
+        (
+            MINIMAL + '[LEARNER.gaussian_process]\ngeneration_size = 4\n',
+            'generation_size',
+            'batch_size',
+        ),
         (
             MINIMAL + '[GENERAL]\nminimum_observations = 10\n',
             'minimum_observations',
@@ -320,6 +326,8 @@ def test_the_default_warmup_of_a_wide_search_loads():
         'GENERAL.num_training_runs',
         'GENERAL.num_runs_between_trainer_runs',
         'GENERAL.refit_interval',
+        'GENERAL.generation_size',
+        'LEARNER.gaussian_process.generation_size',
         'GENERAL.minimum_observations',
         'LEARNER.gaussian_process.refit_interval',
         'LEARNER.gaussian_process.minimum_observations',
@@ -717,8 +725,8 @@ def test_every_setting_the_upgrade_document_retires_is_refused(text, spelling, n
 def test_a_table_named_after_mloop_is_refused_naming_what_replaces_it(
     text, old, new, other
 ):
-    """This package replaces M-LOOP and carries none of its code, so the two
-    tables named after it are gone. Nothing is preserved: read under the new
+    """This package replaces M-LOOP rather than running it, so the two tables
+    named after it are gone. Nothing is preserved: read under the new
     name, a file written for the old one would load and mean something, and a
     lab would go on typing the name of a tool it is not running.
 
@@ -1396,6 +1404,35 @@ def test_a_parameter_table_written_as_a_value_names_the_depth():
         config_module.loads(
             'PARAMETERS = 5\n[ANALYSIS]\ncost_key = ["r", "c"]\ngroups = ["G"]\n'
         )
+
+
+def test_a_learner_knob_written_without_its_learner_names_the_depth():
+    """[LEARNER] instead of [LEARNER.<name>]: the knob is read as a learner's
+    table, and a number is not one."""
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(MINIMAL + '[LEARNER]\nbatch_size = 4\n')
+    message = str(raised.value)
+    assert '[LEARNER]' in message
+    assert '[LEARNER.<name>]' in message
+    assert "'batch_size'" in message
+
+
+@pytest.mark.parametrize(
+    'entry, setting',
+    [
+        ('min = true\nmax = 2.0\nglobal_name = "gy"\n', 'min'),
+        ('min = 0.0\nmax = "2"\nglobal_name = "gy"\n', 'max'),
+        ('min = 0.0\nmax = 2.0\nstart = "1"\nglobal_name = "gy"\n', 'start'),
+        ('min = 0.0\nmax = 2.0\nglobal_name = 5\n', 'global_name'),
+    ],
+    ids=['min true', 'max quoted', 'start quoted', 'global_name a number'],
+)
+def test_a_parameter_setting_of_the_wrong_kind_is_refused(entry, setting):
+    """Refused rather than converted, as every other setting is: ``float``
+    reads ``true`` as 1 and ``"2"`` as 2, and a global named by a number
+    reaches runmanager at the first submission rather than failing here."""
+    with pytest.raises(ValueError, match=rf'\[PARAMETERS\.G\.y\] {setting} must'):
+        config_module.loads(MINIMAL + '[PARAMETERS.G.y]\n' + entry)
 
 
 def test_a_learner_table_written_one_level_too_deep_names_the_key():

@@ -43,11 +43,14 @@ class FakeClient:
         self.labscript = labscript
         self.broken_globals = False
         self.entries = []
+        self.sequences = []
         self.states = {}
         self.refuse = None
         self.timeout = 60.0
         self.silent = False
         self.asked = []
+        self.scan_enabled = {}
+        self.jit_enabled = {}
 
     def say_hello(self):
         self.asked.append(('say_hello', self.timeout))
@@ -63,14 +66,26 @@ class FakeClient:
         self.asked.append(('get_labscript_file', self.timeout))
         return self.labscript
 
-    def submit_shots(self, entries):
+    def get_scan_enabled(self):
+        return self.scan_enabled
+
+    def get_jit_enabled(self):
+        return self.jit_enabled
+
+    def submit_shots(self, entries, sequence=None, sequence_index=None):
+        """Starts a sequence for each submission that names none."""
         if self.refuse:
             raise RuntimeError(self.refuse)
+        self.sequences.append((sequence, sequence_index))
         self.entries.extend(entries)
+        if sequence is None:
+            sequence = f'20260918T12000{len(self.sequences)}_expt'
+            sequence_index = len(self.sequences)
         return [
             {
                 'shot_id': f'id-{len(self.entries) - len(entries) + i}',
-                'sequence_id': '20260918T120000_expt',
+                'sequence_id': sequence,
+                'sequence_index': sequence_index,
                 'run_number': len(self.entries) - len(entries) + i,
                 'path': f'/data/shot{i}.h5',
             }
@@ -162,6 +177,16 @@ def test_a_labscript_file_changed_mid_session_is_refused(interface, client):
         interface.check_unchanged()
 
 
+@pytest.mark.parametrize('box', ['scan_enabled', 'jit_enabled'])
+def test_a_global_with_scan_or_jit_ticked_is_refused_before_submitting(
+    interface, client, box
+):
+    setattr(client, box, {'gx': False, 'gy_doubled': True})
+    with pytest.raises(RuntimeError):
+        interface.submit(np.array([[1.0, 2.0]]))
+    assert client.entries == []
+
+
 def test_submitting_sends_one_entry_of_globals_per_proposal(interface, client):
     ids = interface.submit([[1.0, 2.0], [3.0, 4.0]])
     assert ids == ['id-0', 'id-1']
@@ -169,6 +194,15 @@ def test_submitting_sends_one_entry_of_globals_per_proposal(interface, client):
         {'gx': 1.0, 'gy_doubled': 4.0},
         {'gx': 3.0, 'gy_doubled': 8.0},
     ]
+
+
+def test_every_submission_after_the_first_joins_its_sequence(interface, client):
+    """A run is one runmanager sequence, whatever an operator engages in
+    between."""
+    for _ in range(3):
+        interface.submit([[1.0, 2.0]])
+    joined = ('20260918T120001_expt', 1)
+    assert client.sequences == [(None, None), joined, joined]
 
 
 def holds_only_python_values(value):

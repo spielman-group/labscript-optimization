@@ -214,7 +214,7 @@ def test_a_second_cost_for_one_shot_is_ignored(session):
 def test_a_shot_that_will_never_arrive_stops_being_waited_on(session, runmanager):
     """A lost shot must free its slot, or the session stalls for ever.
 
-    Aborted, cancelled and compile-failed shots never reach lyse, so nothing
+    Aborted, rejected and compile-failed shots never reach lyse, so nothing
     will ever report their cost. Counting submissions against costs received
     would leave their places held permanently.
     """
@@ -814,6 +814,31 @@ def test_a_refused_submission_leaves_the_session_untouched(session, runmanager):
     assert session.history == []
 
 
+def test_a_sequence_runmanager_cannot_add_to_stops_the_session(session, runmanager):
+    """runmanager forgets a run's sequence when it restarts, and refuses to add
+    to it rather than split the run in two. Its server wraps the reason in the
+    traceback it raised, whose source lines can hold the same words, and the
+    reason alone is why the run stopped.
+    """
+    reason = (
+        'Cannot add shots to sequence 20260923T101112_expt: '
+        'runmanager has no record of it'
+    )
+
+    def refuse(proposals):
+        raise Exception(
+            'Runmanager server returned an exception:\n'
+            'Traceback (most recent call last):\n'
+            "    raise Exception('Cannot add shots to sequence %s: ...' % sequence)\n"
+            f'Exception: {reason}\n'
+        )
+
+    runmanager.submit = refuse
+    assert session.refill() == []
+    assert session.stopped == reason
+    assert session.proposals == {}
+
+
 def test_a_submission_that_returns_too_few_ids_fails_loudly(session, runmanager):
     """Ids that cannot be paired with the proposals must stop the session.
 
@@ -837,7 +862,7 @@ def test_a_shot_behind_a_row_nobody_can_move_is_counted_apart(session, runmanage
     counting the two together makes a jammed queue read like a finished run."""
     session.refill()
     runmanager.blocked.add('shot-0')
-    runmanager.cancelled.add('shot-1')
+    runmanager.rejected.add('shot-1')
     session.reconcile()
 
     status = session.status()

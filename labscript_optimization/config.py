@@ -46,6 +46,7 @@ import tomllib
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Sequence
 
+from . import knobs
 from .space import Parameter, ParameterSpace
 
 #: The tables a configuration file carries. Anything else at the top level is
@@ -61,8 +62,8 @@ TOP_LEVEL_TABLES = frozenset(
 )
 
 #: The tables this package used to name after M-LOOP, and what each is called
-#: now. It replaces M-LOOP and carries none of its code, so a table named after
-#: it was a name nothing written under it answered to. They are kept here to be
+#: now. It replaces M-LOOP rather than running it, so a table named after M-LOOP
+#: names a tool nothing here answers to. They are kept here to be
 #: refused by name: aliased to their replacements instead, an old file would go
 #: on loading and a lab would go on typing the name of a tool it is not
 #: running.
@@ -80,6 +81,7 @@ RENAMED_KEYS = {
     "num_training_runs": "warmup_observations",
     "num_runs_between_trainer_runs": "explore_runs",
     "refit_interval": "batch_size",
+    "generation_size": "batch_size",
     "minimum_observations": "warmup_observations",
 }
 
@@ -368,7 +370,11 @@ def require_type(value: Any, kind: type, where: str) -> Any:
     characters, so either goes through and acts as something nobody wrote.
     """
     if not isinstance(value, kind):
-        written = {bool: "true or false, unquoted", list: "a list in [brackets]"}[kind]
+        written = {
+            bool: "true or false, unquoted",
+            list: "a list in [brackets]",
+            str: "a string in quotes",
+        }[kind]
         raise ValueError(f"{where} must be written as {written}, not {value!r}.")
     return value
 
@@ -396,9 +402,9 @@ def require_tables(holder: Any, where: str, shape: str) -> dict:
         named = ", ".join(repr(key) for key in wrong)
         raise ValueError(
             f"{where} gives {named} a value where {shape} expects a table, so "
-            f"this is one level short of where it belongs. Write the group "
-            f"it goes under: {shape} names the group and then the entry, and "
-            f"only the innermost table carries settings."
+            f"this is one level short of where it belongs. Write the table "
+            f"it goes under: only the innermost table of {shape} carries "
+            f"settings."
         )
     return holder
 
@@ -467,11 +473,12 @@ def check_keys(raw: dict) -> None:
     if renamed:
         raise ValueError(
             f"the configuration no longer names its tables after M-LOOP, "
-            f"which this package replaces and carries no code from: "
+            f"which this package replaces: "
             f"{'; '.join(renamed)}. Rename the table; nothing is read under "
             f"the old name."
         )
     reject_unknown(raw, TOP_LEVEL_TABLES, "the top level of the configuration")
+    require_tables(raw.get("LEARNER", {}), "[LEARNER]", "[LEARNER.<name>]")
     reject_unknown(raw.get("ANALYSIS", {}), ANALYSIS_KEYS, "[ANALYSIS]")
     replaced = [
         f"{key} in {where} is replaced by {RENAMED_KEYS[key]} in "
@@ -511,6 +518,11 @@ def check_keys(raw: dict) -> None:
                     require_type(entry["args"], list, f"{where} args")
                 if "enable" in entry:
                     require_type(entry["enable"], bool, f"{where} enable")
+                for key in ("min", "max", "start"):
+                    if key in entry:
+                        knobs.number(f"{where} {key}", entry[key])
+                if "global_name" in entry:
+                    require_type(entry["global_name"], str, f"{where} global_name")
     # [LEARNER.<name>] is left to learners.validate_options, which is the only
     # thing that knows one learner's keys: the table names its learner, so that
     # learner's constructor is the schema for it.

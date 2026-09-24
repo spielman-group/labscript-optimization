@@ -65,7 +65,7 @@ class FakeInterface:
     def shot_status(self, shot_ids):
         """The shape runmanager answers with: a verdict and a state per id."""
         return {
-            i: {'pending': False, 'state': 'cancelled'}
+            i: {'pending': False, 'state': 'rejected'}
             if i in self.gone
             else {'pending': True, 'state': 'running'}
             for i in shot_ids
@@ -245,7 +245,7 @@ def test_a_status_message_frees_the_places_of_lost_shots(config_file):
     class LosesEverything(FakeInterface):
         def shot_status(self, shot_ids):
             return {
-                i: {'pending': False, 'state': 'cancelled'} for i in shot_ids
+                i: {'pending': False, 'state': 'rejected'} for i in shot_ids
             }
 
     sent = run(

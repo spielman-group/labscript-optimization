@@ -29,6 +29,9 @@ matched to the proposal it answers by that id, so shots can come back in any
 order and your own shots can be mixed into the queue. runmanager is never
 stopped or waited on.
 
+A run is one runmanager sequence. The session's first submission starts it,
+and every later one names it and joins it.
+
 There is no count of shots in flight. Whether a shot is still coming is
 runmanager's answer, asked afresh each time the routine runs, so a shot that is
 aborted, cancelled, or deleted stops being waited on instead of holding its
@@ -49,8 +52,8 @@ lyse runs a multishot routine once per drained batch of singleshot analyses
 rather than once per shot. Where analysis keeps up that is one shot an
 invocation; where it does not — a shot arriving while the one before it is
 still being analysed, analysis paused and resumed, or lyse started with shots
-already in the box — it is several. Each invocation hands over every shot
-analysed since the one before it, so a batch costs the optimiser nothing.
+already in the box — it is several. lyse names them in `lyse.paths`, and
+each invocation hands over every one, so a batch costs the optimiser nothing.
 
 ## Using it
 
@@ -63,18 +66,20 @@ optimisation.optimise('optimisation_config.toml')
 ```
 
 Adding the routine starts the session; removing it, restarting it, or reaching
-the run budget stops it. Progress is saved onto each shot the session proposed,
-under the results group `labscript_optimization`, so it comes back as
-dataframe columns: `df[('labscript_optimization', 'best_cost')]` is the best
-cost so far, beside the parameters and the shot that produced it, and why the
-session stopped. `phase` is the shot's own: what proposed that shot, which is
-the source the learner gave it when it proposed it, or `start` for the
-configured start, however far the run has moved on since. A value the session
-does not have yet is empty — `NaN` for the best cost, an empty string or list
-for the rest. Shots that are not the optimiser's own — yours, and
-runmanager's default shots — are left alone: runmanager mints a shot id for
-every queue row it compiles, so carrying one does not make a shot the
-optimiser's, and the session writes onto an id it proposed and no other.
+the run budget stops it. Progress is saved into lyse's dataframe, in the row
+of each shot the session proposed, under the results group
+`labscript_optimization`, so it is dataframe columns:
+`df[('labscript_optimization', 'best_cost')]` is the best cost so far, beside
+the parameters and the shot that produced it, and why the session stopped. It
+is saved to the dataframe alone and not into the shot files, so shots loaded
+into lyse afresh come without it. `phase` is the shot's own: what proposed
+that shot, which is the source the learner gave it when it proposed it, or
+`start` for the configured start, however far the run has moved on since. A
+value the session does not have yet is empty — `NaN` for the best cost, an
+empty string or list for the rest. Shots that are not the optimiser's own —
+yours, and runmanager's default shots — are left alone: runmanager mints a
+shot id for every queue row it compiles, so carrying one does not make a shot
+the optimiser's, and the session writes onto an id it proposed and no other.
 
 The session's own counters are one answer for the whole run rather than
 anything about a shot, so they are not written onto every shot of it.
@@ -105,7 +110,7 @@ generation says nothing about the run.
 
 Those default shots are also what keeps the routine running while the optimiser
 waits. They go to BLACS already compiled, so runmanager never writes a shot id
-into them, and they deliberately never become the sequence anchor.
+into them, and the routine passes them over.
 
 `gaussian_process` waits the same way for its batch: the next goes out when
 every shot of the last has come back or been given up on. A shot is given up
@@ -352,11 +357,17 @@ learner's own knobs is a keyword argument with a default.
 ## Failures
 
 Failures stop the session and are reported through lyse's normal error path:
-runmanager unreachable, a broken global, a labscript file changed underneath a
-running session, or a learner raising. Nothing is retried, and no shot, fit or
+runmanager unreachable, a broken global, a global the session sets with Scan?
+or JIT? ticked, a labscript file changed underneath a running session, or a
+learner raising. Nothing is retried, and no shot, fit or
 submission is put on a clock. The exception is a status that cannot be written
 to its shot, which is printed and passed over: a progress report is worth less
 than the optimisation that stopping for it would end.
+
+runmanager refusing to add shots to the run's sequence stops the session
+without raising. It remembers a sequence only until it restarts, so this is a
+runmanager restarted mid-run. Its reason is the session's `stopped`, and the
+routine prints it once, while lyse goes on analysing.
 
 Two waits are bounded, and neither of them is the experiment's. The routine
 waits a couple of seconds for the worker's answer, so lyse is held up for that
@@ -408,9 +419,12 @@ anywhere else is one lyse cannot import.
 
 Needs Python 3.11 or newer, numpy, scipy and scikit-learn. The lyse routine
 additionally needs `lyse`, `runmanager` and `labscript_utils`, which a labscript
-suite installation already provides. It reads lyse's `shot_id` column and asks
-for a bounded number of recent shots rather than the whole dataframe, so it
-needs a lyse that has both; an older one refuses the request and says so.
+suite installation already provides. It asks lyse's dataframe for the rows of
+the shots lyse names in `lyse.paths`, in one `lyse.data(where=...)` request,
+each with its `shot_id`, saves its progress with `save_result`'s `save_to_h5`,
+and submits with `submit_shots`'s `sequence` and `sequence_index`, so it needs
+a lyse and a runmanager that have them; an older one fails at the first use and
+says so.
 
 ## Tests
 
