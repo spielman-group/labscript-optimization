@@ -170,8 +170,8 @@ class Session:
 
         An ``unknown`` shot is given up on only once it has been unknown across
         two reconciles running. Every other not-pending answer names a reason
-        nothing further will happen -- cancelled, will not compile, refused by
-        BLACS, or behind a row only an operator can clear -- and goes at once.
+        nothing further will happen -- will not compile, refused by BLACS, or
+        behind a row only an operator can clear -- and goes at once.
         """
         awaiting = self.awaiting
         if not awaiting:

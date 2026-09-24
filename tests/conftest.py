@@ -16,14 +16,14 @@ class FakeRunmanager:
     """Stands in for runmanager, and decides what is still coming.
 
     It answers as runmanager does: one ``{'pending', 'state'}`` per id asked
-    about. A cancelled shot keeps its row and says so, while a shot that has
+    about. A rejected shot keeps its row and says so, while a shot that has
     run leaves the queue and becomes indistinguishable from an id runmanager
     never had -- both are ``unknown``.
     """
 
     def __init__(self):
         self.submitted: list[str] = []
-        self.cancelled: set[str] = set()
+        self.rejected: set[str] = set()
         self.blocked: set[str] = set()
         self.finished: set[str] = set()
         self.labscript_changed = False
@@ -45,8 +45,8 @@ class FakeRunmanager:
         for shot_id in shot_ids:
             if shot_id in self.blocked:
                 answers[shot_id] = {'pending': False, 'state': 'blocked'}
-            elif shot_id in self.cancelled:
-                answers[shot_id] = {'pending': False, 'state': 'cancelled'}
+            elif shot_id in self.rejected:
+                answers[shot_id] = {'pending': False, 'state': 'rejected'}
             elif shot_id in self.finished or shot_id not in self.submitted:
                 answers[shot_id] = {'pending': False, 'state': 'unknown'}
             else:
@@ -55,7 +55,7 @@ class FakeRunmanager:
 
     def lose(self, *shot_ids):
         """An operator disposes of these shots, so they will never run."""
-        self.cancelled.update(shot_ids)
+        self.rejected.update(shot_ids)
 
     def finish(self, *shot_ids):
         """These shots run and leave the queue, as every healthy shot does."""

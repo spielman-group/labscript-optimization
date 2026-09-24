@@ -214,7 +214,7 @@ def test_a_second_cost_for_one_shot_is_ignored(session):
 def test_a_shot_that_will_never_arrive_stops_being_waited_on(session, runmanager):
     """A lost shot must free its slot, or the session stalls for ever.
 
-    Aborted, cancelled and compile-failed shots never reach lyse, so nothing
+    Aborted, rejected and compile-failed shots never reach lyse, so nothing
     will ever report their cost. Counting submissions against costs received
     would leave their places held permanently.
     """
@@ -862,7 +862,7 @@ def test_a_shot_behind_a_row_nobody_can_move_is_counted_apart(session, runmanage
     counting the two together makes a jammed queue read like a finished run."""
     session.refill()
     runmanager.blocked.add('shot-0')
-    runmanager.cancelled.add('shot-1')
+    runmanager.rejected.add('shot-1')
     session.reconcile()
 
     status = session.status()
