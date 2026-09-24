@@ -15,6 +15,7 @@ last two drive it against the worker's own message loop in a thread, where
 the replies come when the worker really sends them.
 """
 
+import contextlib
 import math
 import os
 import queue
@@ -36,7 +37,6 @@ except ImportError:
     pass
 
 import h5py
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -88,7 +88,8 @@ def shot(tmp_path):
 
     lyse reads the identifier runmanager wrote into the file as a column, and
     an empty one for a shot that carries none, so the row is where the routine
-    reads it. The file itself is there for the results written back onto it.
+    reads it. The file itself is there for lyse to read the row from, which
+    ``lyse_column`` has it do.
     """
     made = []
 
@@ -772,23 +773,33 @@ def test_the_stand_in_status_carries_the_keys_the_session_sends(config):
 
 
 @pytest.fixture
-def results():
-    """Read a shot's results back the way lyse reads them into its dataframe.
+def results(monkeypatch):
+    """Read back what was saved against a shot, as lyse's dataframe gets it.
 
-    Only the attributes of ``/results/<group>`` become columns, so reading
-    them is also what says the status was saved where lyse will find it. lyse
+    Inside lyse, ``save_result`` hands each value over in ``_updated_data``,
+    by file and then by column, and lyse sets it into that shot's row, so
+    reading it there is also what says the status was saved where lyse will
+    find it. Outside lyse nothing is handed over, so this stands in for the
+    analysis subprocess. A shot nothing was saved against reads as empty. lyse
     itself is an optional dependency -- the learners do not need the suite --
-    so a checkout without it skips what reaches a shot file rather than
-    passing on a write that never happened.
+    so a checkout without it skips what reaches lyse rather than passing on a
+    save that never happened.
     """
     pytest.importorskip('lyse')
-    from labscript_utils.properties import get_attributes
+    from lyse.utils import worker
+
+    monkeypatch.setattr(worker, 'spinning_top', True)
+    monkeypatch.setattr(worker, '_updated_data', {})
 
     def read(row):
         # Spelt out rather than read back from the module that wrote it: the
         # group name is the promise, df[('labscript_optimization', ...)].
-        with h5py.File(row['filepath'], 'r') as f:
-            return get_attributes(f['results/labscript_optimization'])
+        saved = worker._updated_data.get(row['filepath'], {})
+        return {
+            name: value
+            for (group, name), value in saved.items()
+            if group == 'labscript_optimization'
+        }
 
     return read
 
@@ -796,9 +807,10 @@ def results():
 def test_the_status_is_written_onto_the_shot_as_lyse_results(
     session, analysed, shot, results
 ):
-    """lyse turns each attribute into a column, so this is the whole point of
-    computing a status: the lab reads it as ``df[('labscript_optimization',
-    'best_cost')]`` alongside the shot it belongs to.
+    """lyse sets each value saved into a column of the shot's row, so this is
+    the whole point of computing a status: the lab reads it as
+    ``df[('labscript_optimization', 'best_cost')]`` alongside the shot it
+    belongs to.
     """
     row = shot()
     session.worker.replies.append(
@@ -813,7 +825,7 @@ def test_the_status_is_written_onto_the_shot_as_lyse_results(
     analysed(row)
     written = results(row)
     assert written['best_cost'] == 7.0
-    assert list(written['best_params']) == [0.25]
+    assert written['best_params'] == [0.25]
     assert written['best_shot_id'] == 'row-3'
     assert written['phase'] == 'warmup'
 
@@ -822,8 +834,8 @@ def test_the_sessions_own_counters_are_not_written_onto_every_shot(
     session, analysed, shot, results
 ):
     """They are one answer for the whole run rather than anything about a shot,
-    and an attribute overwritten shot after shot grows the file for nothing. A
-    routine that wants them has them: optimise returns the whole status.
+    and a column repeating a running total says nothing about the shot it lands
+    on. A routine that wants them has them: optimise returns the whole status.
     """
     row = shot()
     session.worker.replies.append(('status', (('main',), status())))
@@ -843,8 +855,8 @@ def test_the_sessions_own_counters_are_not_written_onto_every_shot(
 def test_a_value_the_session_does_not_have_yet_is_written_as_its_own_empty(
     session, analysed, shot, results
 ):
-    """An h5 attribute cannot be None, so a key without a value needs a stand
-    in, and lyse gives a column one dtype: the stand in has to be the type of
+    """lyse gives a column one dtype, fixed by the shots already saved, so the
+    stand in for a value the session does not have yet has to be the type of
     the value it holds a place for. NaN is that only for the one key that is a
     float.
     """
@@ -854,7 +866,7 @@ def test_a_value_the_session_does_not_have_yet_is_written_as_its_own_empty(
     written = results(row)
     assert written['best_shot_id'] == ''
     assert written['stopped'] == ''
-    assert list(written['best_params']) == []
+    assert written['best_params'] == []
     assert math.isnan(written['best_cost'])
 
 
@@ -866,74 +878,84 @@ def test_every_key_written_onto_a_shot_has_an_empty_to_stand_in_for_it(config):
     assert set(routine_module.NO_VALUE_YET) == set(routine_module.SHOT_RESULTS)
 
 
+def test_the_status_is_saved_to_the_dataframe_alone(monkeypatch):
+    """The dataframe is where the status is read. Writing it into the shot
+    file as well would open the file, and take its h5 lock, once for every
+    shot the session took, inline in lyse.
+    """
+    calls = []
+
+    class Run:
+        def __init__(self, filepath):
+            pass
+
+        def set_group(self, group):
+            pass
+
+        def open(self, mode):
+            calls.append(('open', mode))
+            return contextlib.nullcontext()
+
+        def save_result(self, name, value, **kwargs):
+            calls.append(('save_result', name, kwargs))
+
+    monkeypatch.setitem(sys.modules, 'lyse', types.SimpleNamespace(Run=Run))
+    routine_module.save_status('shot.h5', status(phase='main'))
+    assert calls == [
+        ('save_result', name, {'save_to_h5': False})
+        for name in routine_module.SHOT_RESULTS
+    ]
+
+
 @pytest.fixture
 def lyse_column(shot, results):
-    """Drive both halves of lyse that stand between a status and a column.
+    """Drive lyse from the statuses saved against a run's shots to the column
+    they make.
 
-    ``dataframe_utilities`` is what turns the attributes of the shots already
-    on disk into columns, and so what fixes a column's dtype. Then
-    ``lyse.Run.save_result`` records the value it wrote in ``_updated_data``,
-    the analysis subprocess hands that dict back to the file box, and
-    ``FileBox.update_row`` sets each value with ``dataframe.at``. That
-    assignment is the line the lab's traceback ends on. It is spelt out here
-    rather than called because ``update_row`` is welded to the Qt model, but
-    everything either side of it is lyse's own code.
+    ``dataframe_utilities`` turns the shot files into rows, as lyse does when
+    each file appears, and they carry nothing of the optimiser's: the status is
+    saved to the dataframe alone. Then, a shot at a time,
+    ``lyse.Run.save_result`` records each value in ``_updated_data``, the
+    analysis subprocess hands that dict back to the file box, and
+    ``FileBox.update_row`` sets each value with ``dataframe.at``. So the first
+    shot's values make the columns and fix their dtypes, and every later value
+    has to go into them. That assignment is the line the lab's traceback ends
+    on. It is spelt out here rather than called because ``update_row`` is
+    welded to the Qt model, but everything either side of it is lyse's own
+    code.
 
-    Its recovery is spelt out with it: lyse widens the column to ``object`` and
-    retries when the assignment raises ``ValueError``, which is what a list
-    into a float column raises, so leaving it out would fail a case lyse
-    survives. It does not catch ``TypeError``, which is what a string into a
-    float column raises, and that is the crash.
+    Its recovery is spelt out with it: when the assignment raises
+    ``ValueError``, which is what a list raises, lyse makes the column if it is
+    missing and widens it to ``object`` if not, and retries, so leaving it out
+    would fail a case lyse survives. It does not catch ``TypeError``, which is
+    what a string into a float column raises, and that is the crash.
 
     Takes the number of shots the session has nothing to report on and the
     status it finally has, and returns the column they produce.
     """
-    pytest.importorskip('lyse')
-    from lyse import utils as lyse_utils
     from lyse.dataframe_utilities import get_dataframe_from_shots
 
     def build(empty_shots, reported):
         rows = [shot() for _ in range(empty_shots + 1)]
-        # What a shot carries: the session's status, and its own phase.
-        for row in rows[:-1]:
-            routine_module.save_status(row['filepath'], status(phase='main'))
-
-        # The shots on disk when the last one is analysed. Its own row is
-        # there -- lyse adds a row when the file appears -- and carries
-        # nothing of the optimiser's yet.
         frame = get_dataframe_from_shots([r['filepath'] for r in rows])
-
-        lyse_utils.worker.spinning_top = True
-        lyse_utils.worker._updated_data = {}
-        routine_module.save_status(
-            rows[-1]['filepath'], status(phase='main', **reported)
-        )
-        updated = lyse_utils.worker._updated_data[rows[-1]['filepath']]
-
         depth = frame.columns.nlevels
-        row_number = len(rows) - 1
-        for (group, name), value in updated.items():
-            column = (group, name) + ('',) * (depth - 2)
-            try:
-                frame.at[row_number, column] = value
-            except ValueError:
-                frame[column] = frame[column].astype('object')
-                frame.at[row_number, column] = value
+        for row_number, row in enumerate(rows):
+            # What a shot carries: the session's status, and its own phase.
+            answer = reported if row_number == empty_shots else {}
+            routine_module.save_status(row['filepath'], status(phase='main', **answer))
+            for name, value in results(row).items():
+                column = ('labscript_optimization', name) + ('',) * (depth - 2)
+                try:
+                    frame.at[row_number, column] = value
+                except ValueError:
+                    if column not in frame.columns:
+                        frame.at[row_number, column] = None
+                    else:
+                        frame[column] = frame[column].astype('object')
+                    frame.at[row_number, column] = value
         return frame
 
     return build
-
-
-def plain(value):
-    """A column entry as the status wrote it.
-
-    h5 gives a list back as an array, and a column of arrays holds arrays, so
-    the one key whose value is a vector needs saying which it is before it can
-    be compared with what was reported. Anything scalar is left alone, so a
-    column holding the wrong type is reported by the assertion rather than
-    raising here.
-    """
-    return list(value) if np.ndim(value) else value
 
 
 @pytest.mark.parametrize(
@@ -960,25 +982,27 @@ def test_the_shot_that_first_has_a_value_can_be_written_into_its_column(
     column is established across several rows before the value arrives.
     """
     frame = lyse_column(empty_shots, {key: reported})
-    column = [plain(value) for value in frame[('labscript_optimization', key)]]
+    column = list(frame[('labscript_optimization', key)])
     assert column[-1] == reported
     assert column[:-1] == [empty] * empty_shots
 
 
-def test_a_shot_carrying_no_identifier_is_not_written_to(session, analysed, shot):
+def test_a_shot_carrying_no_identifier_is_not_written_to(
+    session, analysed, shot, results
+):
     """One of runmanager's default shots. There is no id to send an observation
     under, so the session has nothing to take and nothing of the optimiser's
-    belongs on the shot.
+    belongs on the shot, whatever it took from the shots beside it.
     """
-    row = shot(shot_id=None)
-    session.worker.replies.append(('status', ((), status())))
-    analysed(row)
-    with h5py.File(row['filepath'], 'r') as f:
-        assert 'results' not in f
+    default, ours = shot(shot_id=''), shot(shot_id='row-1')
+    session.worker.replies.append(('status', (('main',), status())))
+    analysed(default, ours)
+    assert results(default) == {}
+    assert results(ours)['phase'] == 'main'
 
 
 def test_a_shot_the_session_never_proposed_is_handed_over_and_not_written_to(
-    session, analysed, shot
+    session, analysed, shot, results
 ):
     """runmanager mints a shot id for every queue row it compiles, so a user's
     own shot, engaged alongside the optimisation, arrives carrying one exactly
@@ -992,8 +1016,7 @@ def test_a_shot_the_session_never_proposed_is_handed_over_and_not_written_to(
     session.worker.replies.append(('status', ((None,), status())))
     analysed(row)
     assert ids_sent(session.worker) == [['someone-elses-shot']]
-    with h5py.File(row['filepath'], 'r') as f:
-        assert 'results' not in f
+    assert results(row) == {}
 
 
 def test_the_status_is_written_onto_each_shot_the_session_took(
@@ -1007,8 +1030,7 @@ def test_the_status_is_written_onto_each_shot_the_session_took(
     session.worker.replies.append(('status', (('main', None), status())))
     analysed(ours, theirs)
     assert results(ours)['phase'] == 'main'
-    with h5py.File(theirs['filepath'], 'r') as f:
-        assert 'results' not in f
+    assert results(theirs) == {}
 
 
 def test_a_status_the_routine_gave_up_waiting_for_is_written_onto_its_own_shots(
@@ -1043,17 +1065,19 @@ def test_a_status_the_routine_gave_up_waiting_for_is_written_onto_its_own_shots(
 
 
 def test_a_status_that_cannot_be_written_does_not_stop_the_session(
-    session, analysed, shot, capsys
+    session, analysed, shot, capsys, monkeypatch
 ):
-    """The shot can go between the routine reading it and the status being
-    written, because the routine waits for the worker in between. A progress
-    report that cannot be saved is worth saying so about and nothing more.
+    """A progress report lyse refuses is worth saying so about and nothing
+    more: the session goes on, and its answer is still returned.
     """
-    pytest.importorskip('lyse')
+
+    class Refusing:
+        def __init__(self, filepath):
+            raise RuntimeError('lyse refused the status')
+
+    monkeypatch.setitem(sys.modules, 'lyse', types.SimpleNamespace(Run=Refusing))
     row = shot()
     session.worker.replies.append(('status', (('main',), status())))
-    sending = session.worker.put
-    session.worker.put = lambda item: (os.unlink(row['filepath']), sending(item))
 
     answer = analysed(row)
 
@@ -1255,10 +1279,6 @@ def test_each_status_reaches_the_shot_that_earned_it_behind_slow_trailing_work(
         def shot_status(self, shot_ids):
             return {i: {'pending': True, 'state': 'running'} for i in shot_ids}
 
-    def has_results(row):
-        with h5py.File(row['filepath'], 'r') as f:
-            return 'results/labscript_optimization' in f
-
     session = running(SlowToSubmit)
 
     def invoke(*rows):
@@ -1275,14 +1295,13 @@ def test_each_status_reaches_the_shot_that_earned_it_behind_slow_trailing_work(
 
     ours = ['shot-0', 'shot-1', 'shot-2']
     for _ in range(40):
-        if all(has_results(rows[shot_id]) for shot_id in ours):
+        if all(results(rows[shot_id]) for shot_id in ours):
             break
         # Nothing new to hand over, and the worker catches up behind it.
         invoke()
 
     assert [results(rows[shot_id])['best_shot_id'] for shot_id in ours] == ours
-    with h5py.File(rows['someone-elses']['filepath'], 'r') as f:
-        assert 'results' not in f
+    assert results(rows['someone-elses']) == {}
 
 
 def test_shots_handed_over_together_each_carry_their_own_phase(

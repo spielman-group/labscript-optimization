@@ -6,10 +6,10 @@ A lab analysis routine is two lines::
     optimisation.optimise('optimisation_config.toml')
 
 Adding the routine to lyse starts the session; removing it, restarting it, or
-reaching the run budget stops it. :data:`SHOT_RESULTS` is written onto each
-shot the session proposed, as lyse results under :data:`RESULTS_GROUP`, so
-the best cost, where the search has got to, and what proposed each shot are
-columns of the dataframe.
+reaching the run budget stops it. :data:`SHOT_RESULTS` is saved into lyse's
+dataframe, as lyse results under :data:`RESULTS_GROUP` in the row of each
+shot the session proposed, so the best cost, where the search has got to, and
+what proposed each shot are columns of it.
 
 The routine itself does almost nothing: it reads the costs of the shots lyse
 has analysed since it last ran, hands them to the worker, and waits for the
@@ -65,12 +65,11 @@ RESULTS_GROUP = "labscript_optimization"
 #: finished run.
 SHOT_RESULTS = ("phase", "best_cost", "best_params", "best_shot_id", "stopped")
 
-#: What each of :data:`SHOT_RESULTS` is written as while the session has
+#: What each of :data:`SHOT_RESULTS` is saved as while the session has
 #: nothing to report for it.
 #:
-#: An h5 attribute cannot be ``None``, so a key without a value needs a stand
-#: in. lyse gives a dataframe column one dtype, and the shots already written
-#: fix it: a stand in of a different type than the value it holds a place for
+#: lyse gives a dataframe column one dtype, and the shots already saved fix
+#: it: a stand in of a different type than the value it holds a place for
 #: types the column against that value, and the shot that finally has one
 #: cannot be written into it. So each empty here carries the type of the value
 #: that replaces it -- ``""`` for the string-valued keys, an empty list for the
@@ -170,36 +169,35 @@ def extract(shots, config):
 
 
 def save_status(filepath, status) -> None:
-    """Write :data:`SHOT_RESULTS` of ``status`` onto one shot, as lyse results.
+    """Save :data:`SHOT_RESULTS` of ``status`` against one shot, as lyse results.
 
     ``status`` is what this shot is to carry: the session's status, with the
     shot's own ``phase`` beside it.
 
-    lyse reads the attributes of ``/results/<group>`` back as dataframe
-    columns, so each key written becomes ``df[(RESULTS_GROUP, key)]`` against
-    that shot. Only attributes are read that way, which is why ``best_params``
-    is saved with ``save_result`` although it is a list --
-    ``save_result_array`` would write it as a dataset, into a part of the file
-    the dataframe never looks at. A value the session does not have yet is
-    written as its :data:`NO_VALUE_YET` stand in, which has the type of the
-    value it holds a place for, so that the column is one dtype from the first
-    shot onwards.
+    Each key becomes ``df[(RESULTS_GROUP, key)]`` in that shot's row of lyse's
+    dataframe, and is saved there alone, with ``save_to_h5=False``: lyse sets
+    it into the row, and the shot file is not opened. The dataframe is where
+    the status is read, and writing it into the file as well would take the
+    file's h5 lock once per shot, inline in lyse. ``best_params`` is saved
+    with ``save_result`` although it is a list, because ``save_result`` is
+    what reaches the dataframe; ``save_result_array`` writes a dataset into
+    the file and nothing more. A value the session does not have yet is saved
+    as its :data:`NO_VALUE_YET` stand in, which has the type of the value it
+    holds a place for, so that the column is one dtype from the first shot
+    onwards.
 
-    A write that fails is reported to lyse's output and otherwise passed over.
+    A save that fails is reported to lyse's output and otherwise passed over.
     """
     try:
         import lyse
 
         run = lyse.Run(filepath)
         run.set_group(RESULTS_GROUP)
-        # One open for the whole status. Left to itself each save_result opens
-        # and locks the file again, and this runs inline in lyse.
-        with run.open("r+"):
-            for name in SHOT_RESULTS:
-                reported = status[name]
-                if reported is None:
-                    reported = NO_VALUE_YET[name]
-                run.save_result(name, reported)
+        for name in SHOT_RESULTS:
+            reported = status[name]
+            if reported is None:
+                reported = NO_VALUE_YET[name]
+            run.save_result(name, reported, save_to_h5=False)
     except Exception as exc:
         print(
             f"could not write the optimisation status to {filepath}: {exc!r}",
@@ -304,7 +302,7 @@ def _drain(from_worker, popen, request, pending, timeout=None):
     read as the answer to the shots it is holding now.
 
     ``pending`` maps a request number to the shot files that request handed
-    over. A status is written onto the files held against its own number, for
+    over. A status is written onto the shots held against its own number, for
     each shot the session took, whichever drain it arrives in, and its number
     is dropped from ``pending`` once it has been. Each of those shots is
     written with its own ``phase``, the source its verdict carries. A status

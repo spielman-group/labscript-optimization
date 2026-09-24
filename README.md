@@ -66,18 +66,20 @@ optimisation.optimise('optimisation_config.toml')
 ```
 
 Adding the routine starts the session; removing it, restarting it, or reaching
-the run budget stops it. Progress is saved onto each shot the session proposed,
-under the results group `labscript_optimization`, so it comes back as
-dataframe columns: `df[('labscript_optimization', 'best_cost')]` is the best
-cost so far, beside the parameters and the shot that produced it, and why the
-session stopped. `phase` is the shot's own: what proposed that shot, which is
-the source the learner gave it when it proposed it, or `start` for the
-configured start, however far the run has moved on since. A value the session
-does not have yet is empty — `NaN` for the best cost, an empty string or list
-for the rest. Shots that are not the optimiser's own — yours, and
-runmanager's default shots — are left alone: runmanager mints a shot id for
-every queue row it compiles, so carrying one does not make a shot the
-optimiser's, and the session writes onto an id it proposed and no other.
+the run budget stops it. Progress is saved into lyse's dataframe, in the row
+of each shot the session proposed, under the results group
+`labscript_optimization`, so it is dataframe columns:
+`df[('labscript_optimization', 'best_cost')]` is the best cost so far, beside
+the parameters and the shot that produced it, and why the session stopped. It
+is saved to the dataframe alone and not into the shot files, so shots loaded
+into lyse afresh come without it. `phase` is the shot's own: what proposed
+that shot, which is the source the learner gave it when it proposed it, or
+`start` for the configured start, however far the run has moved on since. A
+value the session does not have yet is empty — `NaN` for the best cost, an
+empty string or list for the rest. Shots that are not the optimiser's own —
+yours, and runmanager's default shots — are left alone: runmanager mints a
+shot id for every queue row it compiles, so carrying one does not make a shot
+the optimiser's, and the session writes onto an id it proposed and no other.
 
 The session's own counters are one answer for the whole run rather than
 anything about a shot, so they are not written onto every shot of it.
@@ -419,9 +421,9 @@ Needs Python 3.11 or newer, numpy, scipy and scikit-learn. The lyse routine
 additionally needs `lyse`, `runmanager` and `labscript_utils`, which a labscript
 suite installation already provides. It asks lyse's dataframe for the rows of
 the shots lyse names in `lyse.paths`, in one `lyse.data(where=...)` request,
-each with its `shot_id`, and submits with `submit_shots`'s `sequence`, so it
-needs a lyse and a runmanager that have them; an older one fails at the first
-use and says so.
+each with its `shot_id`, saves its progress with `save_result`'s `save_to_h5`,
+and submits with `submit_shots`'s `sequence`, so it needs a lyse and a
+runmanager that have them; an older one fails at the first use and says so.
 
 ## Tests
 

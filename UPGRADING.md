@@ -348,12 +348,13 @@ goes out whole.
 
 ## What the routine reports
 
-Where the search has got to is written onto each shot the session proposed, so
-it comes back as dataframe columns under `labscript_optimization` —
-`df[('labscript_optimization', 'best_cost')]` and so on. The keys are `phase`,
-`best_cost`, `best_params`, `best_shot_id` and `stopped`. `phase` is the shot's
-own: what proposed that shot, which is `start` for the configured start and,
-under `gaussian_process`, `warmup`, `main` or `explore`. A key
+Where the search has got to is saved into lyse's dataframe, in the row of each
+shot the session proposed, as columns under `labscript_optimization` —
+`df[('labscript_optimization', 'best_cost')]` and so on. It is not written into
+the shot files, so shots loaded into lyse afresh come without it. The keys are
+`phase`, `best_cost`, `best_params`, `best_shot_id` and `stopped`. `phase` is
+the shot's own: what proposed that shot, which is `start` for the configured
+start and, under `gaussian_process`, `warmup`, `main` or `explore`. A key
 the session has nothing to report for yet is empty — `NaN` for `best_cost`, an
 empty string or list for the rest.
 
