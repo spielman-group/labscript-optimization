@@ -1,4 +1,4 @@
-"""The seam against runmanager.remote.
+"""The seam against runmanager.client.
 
 These use a fake client returning the shapes the real one documents, so a
 change to those shapes shows up here rather than in the lab.
@@ -31,13 +31,7 @@ args = ["y"]
 
 
 class FakeClient:
-    """The shape of ``runmanager.remote.Client``, answers and all.
-
-    ``timeout`` is the real client's own: every request waits that long for an
-    answer, and it comes from labconfig's ``communication_timeout``. Each call
-    is recorded with the timeout in force when it was made, because how long a
-    question is allowed to go unanswered is part of what this seam promises.
-    """
+    """The shape of ``runmanager.client.RunmanagerClient``, answers and all."""
 
     def __init__(self, labscript='/lab/expt.py'):
         self.labscript = labscript
@@ -46,24 +40,23 @@ class FakeClient:
         self.sequences = []
         self.states = {}
         self.refuse = None
-        self.timeout = 60.0
         self.silent = False
         self.asked = []
         self.scan_enabled = {}
         self.jit_enabled = {}
 
-    def say_hello(self):
-        self.asked.append(('say_hello', self.timeout))
+    def say_hello(self, timeout=None):
+        self.asked.append('say_hello')
         if self.silent:
             raise TimeoutError('no response from server')
         return 'hello'
 
     def error_in_globals(self):
-        self.asked.append(('error_in_globals', self.timeout))
+        self.asked.append('error_in_globals')
         return self.broken_globals
 
     def get_labscript_file(self):
-        self.asked.append(('get_labscript_file', self.timeout))
+        self.asked.append('get_labscript_file')
         return self.labscript
 
     def get_scan_enabled(self):
@@ -130,25 +123,7 @@ def test_a_runmanager_that_does_not_answer_is_reported_as_the_cause(interface, c
     client.silent = True
     with pytest.raises(RuntimeError, match='runmanager did not answer'):
         interface.check_ready()
-    assert [call for call, _ in client.asked] == ['say_hello']
-
-
-def test_the_greeting_is_asked_first_and_is_the_only_short_wait(interface, client):
-    """A runmanager that is not there is found out by the greeting rather than
-    by whichever question happened to be asked first, and found out in seconds
-    rather than in the minute the client would spend on a question.
-
-    Only the greeting is shortened. A submission compiles shots, which takes
-    as long as it takes, and holding it to a few seconds would end a healthy
-    session; the routine's allowance for configuring is summed to cover the
-    questions at their full length.
-    """
-    interface.check_ready()
-    assert client.asked == [
-        ('say_hello', 5.0),
-        ('error_in_globals', 60.0),
-        ('get_labscript_file', 60.0),
-    ]
+    assert client.asked == ['say_hello']
 
 
 def test_the_deadline_is_summed_over_as_many_requests_as_are_made(

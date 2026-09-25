@@ -15,7 +15,6 @@ from zprocess import Process
 
 from . import config as config_module
 from .runmanager_interface import RunmanagerInterface
-from .session import Session
 
 
 class Worker(Process):
@@ -78,6 +77,11 @@ class Worker(Process):
             recorded = ()
             try:
                 if command == "configure":
+                    # Not at the top: session imports runmanager, whose h5_lock
+                    # connects to zlock on import, and the child imports this
+                    # module before zprocess has connected it.
+                    from .session import Session
+
                     config = config_module.load(payload)
                     interface = self.interface_factory(config)
                     interface.check_ready()

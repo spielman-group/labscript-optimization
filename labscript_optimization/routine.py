@@ -225,7 +225,7 @@ def configure_timeout():
     * :data:`CONFIGURE_MARGIN`, for the worker's own startup work.
 
     The client's deadline is labconfig's ``timeouts/communication_timeout``,
-    read here as ``runmanager.remote.Client.__init__`` reads it, fallback and
+    read here as ``runmanager.client.RunmanagerClient`` reads it, fallback and
     all, because that is the number the worker's client will wait. With the
     fallback the sum is a little over two minutes, which is a long time for a
     stalled lyse routine -- and affordable because :func:`_drain` looks at the

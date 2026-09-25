@@ -9,19 +9,6 @@ written into the shot file: that is what a cost is matched to a proposal by.
 
 from typing import Iterable, Sequence
 
-#: The state runmanager reports for a shot id it has no row for.
-UNKNOWN_SHOT_STATE = "unknown"
-
-#: A shot behind a row runmanager will not hand over -- a rejected head, or
-#: one whose compile failed. Nothing further happens to it until an operator
-#: moves what is in front of it.
-BLOCKED_SHOT_STATE = "blocked"
-
-#: How runmanager's reason begins when it will not add shots to the sequence
-#: a submission names: it has no record of it, as after a restart. Nothing is
-#: queued.
-REFUSED_SEQUENCE = "Cannot add shots to sequence "
-
 #: Seconds runmanager is given to answer the greeting that opens a session.
 #: Short, so that a runmanager which is not running is named as the cause in a
 #: few seconds rather than a minute later by whichever question happened to be
@@ -54,17 +41,16 @@ class RunmanagerInterface:
 
     Args:
         config: The session configuration.
-        client: A ``runmanager.remote`` client, or ``None`` to make the default
-            one. Injected so the session can be tested without runmanager. Its
-            ``timeout`` is how long each request waits, and is held down to
-            :data:`GREETING_TIMEOUT` for the greeting.
+        client: A ``runmanager.client.RunmanagerClient``, or ``None`` to make
+            the default one. Injected so the session can be tested without
+            runmanager.
     """
 
     def __init__(self, config, client=None):
         if client is None:
-            from runmanager import remote
+            from runmanager.client import RunmanagerClient
 
-            client = remote.Client()
+            client = RunmanagerClient()
         self.config = config
         self.client = client
         self.labscript_file = None
@@ -96,27 +82,14 @@ class RunmanagerInterface:
         what :meth:`check_unchanged` compares against for the rest of the
         session.
         """
-        # The deadline goes on the client, not on the question, because
-        # ``runmanager.remote.Client`` takes its timeout at construction and
-        # ``request`` reads ``self.timeout`` on every call: there is no
-        # per-request deadline to ask for. So the caller's client is
-        # reconfigured for the length of one greeting and put back. This is an
-        # interim waiting on one specific change: ``Client.with_timeout`` in
-        # runmanager, returning a sibling client for the same host and port
-        # with a different deadline. The greeting then becomes
-        # ``self.client.with_timeout(GREETING_TIMEOUT).say_hello()`` and
-        # nothing here touches an object it does not own.
-        patient, self.client.timeout = self.client.timeout, GREETING_TIMEOUT
         try:
-            self.client.say_hello()
+            self.client.say_hello(timeout=GREETING_TIMEOUT)
         except Exception as exc:
             raise RuntimeError(
                 f"runmanager did not answer within {GREETING_TIMEOUT:g} "
                 f"seconds ({exc!r}); an optimisation session cannot start "
                 f"without it"
             ) from exc
-        finally:
-            self.client.timeout = patient
 
         if self.client.error_in_globals():
             raise RuntimeError(
