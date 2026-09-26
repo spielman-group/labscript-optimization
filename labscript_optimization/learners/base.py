@@ -14,21 +14,25 @@ learner believes. That rule is what keeps the out-of-order arrival of costs out
 of the learners.
 """
 
-from abc import ABC, abstractmethod
 from typing import Sequence
 
 import numpy as np
 
-from ..observations import Observation
+from ..observations import PENDING, Observation
 from ..space import ParameterSpace
 
 
-class Learner(ABC):
+class Learner:
     """Proposes the next parameters to try.
 
     This is the whole of what a session drives. A learner that wraps other
     learners is one of these too, so anything holding a learner can hold a
     wrapped one without knowing it.
+
+    Pacing is written once, in :meth:`propose`. A learner supplies
+    ``ask(history, k)``, its method without the pacing, which returns ``k``
+    points as a ``(k, num_params)`` array; one with more than one way of
+    proposing overrides :meth:`acquire` instead.
 
     Inheriting is not what makes an object usable -- a session proposes from
     anything carrying these two members -- but everything this package calls
@@ -63,35 +67,79 @@ class Learner(ABC):
 
     #: How many proposals this learner makes at a time, or ``None`` for any
     #: number. A learner that declares one proposes only whole groups of that
-    #: many, and only when nothing of the last group is outstanding, which it
-    #: reads off the history like anything else. A declaration, not a
-    #: delivery policy: the learner holds its own barrier, and what reads this
+    #: many, and only when nothing of the last group is outstanding: declaring
+    #: it is what makes :meth:`propose` hold that barrier. What else reads it
     #: is the budget refused below two of them, the ``num_buffered_runs``
     #: refused beside one, and the session's count of starved refills, which
     #: skips a learner whose queue empties once a generation by design.
     generation: int | None = None
 
-    @abstractmethod
     def propose(
         self, history: Sequence[Observation], hint: int
     ) -> list[tuple[np.ndarray, str]]:
         """Return what this learner's method allows it to propose now.
 
-        Args:
-            history: Every proposal made so far, in the order they were made,
-                each with what became of it. The ones still pending are the
-                run's shots in flight.
-            hint: How many of the run's shots to keep in flight -- the
-                session's ``num_buffered_runs`` -- honoured as far as the
-                learner's method allows.
+        A learner declaring no ``generation`` tops the run's shots in flight up
+        to ``hint``, counting every pending record whoever proposed it. One
+        declaring a generation proposes the rest of the block of
+        ``generation`` positions its next proposal falls in when nothing of the
+        last is pending, and nothing otherwise. The number settled on is
+        handed to :meth:`acquire`.
 
-        Returns:
+        Parameters
+        ----------
+        history : sequence of Observation
+            Every proposal made so far, in the order they were made, each with
+            what became of it. The ones still pending are the run's shots in
+            flight.
+        hint : int
+            How many of the run's shots to keep in flight: the session's
+            ``num_buffered_runs``. A learner declaring a generation does not
+            read it.
+
+        Returns
+        -------
+        list of (numpy.ndarray, str)
             Zero or more ``(params, source)`` pairs, in the order they are to
             be run, so that what the run budget has no room for is cut from
             the end: every ``params`` inside the bounds, and every ``source`` a
             string naming which of the learner's ways of proposing made it,
             which is what that shot reads in the ``phase`` column.
         """
+        if self.generation is None:
+            k = hint - sum(o.state == PENDING for o in history)
+        else:
+            # The configured start, on the call that places it, is pending with
+            # no shot id yet: it founds slot 0 and goes out with the rest of its
+            # generation rather than being waited for alone.
+            if any(o.state == PENDING and o.shot_id is not None for o in history):
+                return []
+            k = self.generation - len(history) % self.generation
+        if k <= 0:
+            return []
+        return self.acquire(history, k)
+
+    def acquire(
+        self, history: Sequence[Observation], k: int
+    ) -> list[tuple[np.ndarray, str]]:
+        """Return ``k`` proposals, each beside its source.
+
+        The step a learner with more than one way of proposing overrides. By
+        default it is ``ask(history, k)``'s points, each sourced ``"main"``.
+
+        Parameters
+        ----------
+        history : sequence of Observation
+            As :meth:`propose` was handed it.
+        k : int
+            How many proposals :meth:`propose` settled on, at least one.
+
+        Returns
+        -------
+        list of (numpy.ndarray, str)
+            As :meth:`propose` returns them.
+        """
+        return [(params, "main") for params in self.ask(history, k)]
 
 
 class ParameterSpaceLearner(Learner):

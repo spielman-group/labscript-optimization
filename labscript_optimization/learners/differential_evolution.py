@@ -8,9 +8,10 @@ order.
 This is textbook generational differential evolution -- scipy's deferred
 updating. A whole population is proposed at once and none of its trials is
 judged until the generation is complete, so the incumbent a trial competes
-against is the one it was bred from. The barrier that keeps it so is this
-learner's own: it proposes nothing while any shot of the run is pending, which
-it reads off the history like everything else.
+against is the one it was bred from. The barrier that keeps it so is the one
+:meth:`~labscript_optimization.learners.base.Learner.propose` holds for every
+learner declaring a generation: nothing is proposed while any shot of the run
+is pending, read off the history like everything else.
 
 The population is not carried between calls. It is rebuilt by walking the
 history, where a proposal's position is its role: the first ``population_size``
@@ -27,7 +28,7 @@ from typing import Sequence
 import numpy as np
 
 from .. import knobs
-from ..observations import PENDING, Observation
+from ..observations import Observation
 from ..space import ParameterSpace
 from .base import ParameterSpaceLearner
 
@@ -195,35 +196,6 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         )[0]
         outside = (trial < self.space.minimum) | (trial > self.space.maximum)
         return np.where(outside, fallback, trial)
-
-    def propose(
-        self, history: Sequence[Observation], hint: int
-    ) -> list[tuple[np.ndarray, str]]:
-        """A whole generation when none of the last one is pending, and nothing
-        otherwise.
-
-        The hint is not read: a generation is judged as a whole, so its size is
-        the population's and not the queue's. The generation is the rest of
-        the block of ``population_size`` positions the next proposal falls in,
-        because a proposal's position is its role. That is a whole block
-        except where one has already begun: at the configured start the
-        session places at position 0, which founds slot 0, and after a block
-        the run budget cut short.
-
-        Outstanding means submitted and still pending, whoever proposed it: in
-        a run of this learner that is its own proposals and the configured
-        start, which is a founder like any other and is waited for like one.
-        The one pending record not waited for is the start on the call that
-        places it, which carries no shot id because it has not been submitted
-        yet: it goes out in the same batch as the rest of its generation, and
-        waiting for it would send it out as a generation of one, with the
-        queue drained behind it and the population founded a slot short of the
-        generation bred from it.
-        """
-        if any(o.state == PENDING and o.shot_id is not None for o in history):
-            return []
-        remaining = self.population_size - len(history) % self.population_size
-        return [(trial, "main") for trial in self.ask(history, remaining)]
 
     def ask(self, history: Sequence[Observation], k: int) -> np.ndarray:
         """The next ``k`` proposals, each for the slot its position names.

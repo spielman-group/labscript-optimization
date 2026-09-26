@@ -35,7 +35,6 @@ from labscript_optimization.learners import (
     DirectedRandomLearner,
     GaussianProcessLearner,
     InsufficientData,
-    Learner,
     ParameterSpaceLearner,
     RandomLearner,
     build,
@@ -148,21 +147,6 @@ def test_a_learner_handed_its_two_arguments_backwards_is_refused(space, rng):
     for cls in learners.LEARNERS.values():
         with pytest.raises(TypeError, match='in that order'):
             cls(rng, space)
-
-
-def test_a_learner_that_does_not_propose_cannot_be_built(space, rng):
-    """At either level, and when it is built rather than mid-experiment."""
-
-    class Forgetful(Learner):
-        pass
-
-    class ForgetfulOverASpace(ParameterSpaceLearner):
-        pass
-
-    with pytest.raises(TypeError, match='propose'):
-        Forgetful()
-    with pytest.raises(TypeError, match='propose'):
-        ForgetfulOverASpace(space, rng)
 
 
 def test_a_proposal_without_a_source_is_refused_rather_than_recorded(space, rng):

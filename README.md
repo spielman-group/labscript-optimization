@@ -287,8 +287,11 @@ its method allows — the random learners keep exactly that many in flight,
 `differential_evolution` does not read it, proposing a whole generation when
 none of the last is pending and nothing otherwise, and `gaussian_process`
 queues it as explorer shots behind each batch — and the session submits what
-comes back, in order, cut from the end to what `max_num_runs` has room for. So
-a learner can be used on its own against any cost function:
+comes back, in order, cut from the end to what `max_num_runs` has room for.
+Both pacings are `Learner.propose`, which every learner here but
+`gaussian_process` inherits: a learner declaring no `generation` tops the shots
+in flight up to the hint, and one declaring a generation waits for the whole
+of the last. So a learner can be used on its own against any cost function:
 
 ```python
 import numpy as np
@@ -307,8 +310,11 @@ for step in range(100):
         )
 ```
 
-The learners here also answer `ask(history, k)`: exactly `k` points from the
-same method, with no pacing and no sources.
+A learner's method is `ask(history, k)`: exactly `k` points, with no pacing
+and no sources. `propose` hands the number it settles on to
+`acquire(history, k)`, which by default asks `ask` for them and sources each
+`main`; a learner with more than one way of proposing overrides `acquire`
+instead.
 
 Each proposal comes back beside its source, a string naming which of the
 learner's ways of proposing made it. The session records it when it submits

@@ -8,11 +8,11 @@ near the best one, which biases it towards exploring the space instead of
 refining a single minimum. It is the explorer the Gaussian process runs unless
 told otherwise.
 
-Both keep exactly the hint of the run's shots in flight: each proposes as many
-as the hint leaves room for beside the history's pending records, whoever
-proposed them, so a configured start the session has placed takes one of
-their places. How a point is drawn is :meth:`RandomLearner.ask`, which is the
-whole of what the two differ in.
+Both keep exactly the hint of the run's shots in flight, as every learner
+declaring no generation does: each proposes as many as the hint leaves room for
+beside the history's pending records, whoever proposed them, so a configured
+start the session has placed takes one of their places. How a point is drawn
+is :meth:`RandomLearner.ask`, which is the whole of what the two differ in.
 """
 
 from typing import Sequence
@@ -20,7 +20,7 @@ from typing import Sequence
 import numpy as np
 
 from .. import knobs
-from ..observations import PENDING, Observation, costs_array, params_array, usable
+from ..observations import Observation, costs_array, params_array, usable
 from ..space import ParameterSpace
 from .base import ParameterSpaceLearner
 
@@ -32,20 +32,6 @@ class RandomLearner(ParameterSpaceLearner):
         space: The parameter space to search.
         rng: Source of randomness.
     """
-
-    def propose(
-        self, history: Sequence[Observation], hint: int
-    ) -> list[tuple[np.ndarray, str]]:
-        """Top the run's shots in flight up to ``hint``, and propose no more.
-
-        Every pending record counts, not only this learner's own: the hint is
-        how many shots to keep queued, and a shot is queued whoever proposed
-        it. Below a hint of one nothing is ever proposed.
-        """
-        wanted = hint - sum(o.state == PENDING for o in history)
-        if wanted <= 0:
-            return []
-        return [(params, "main") for params in self.ask(history, wanted)]
 
     def ask(self, history: Sequence[Observation], k: int) -> np.ndarray:
         """The next ``k`` points, as a ``(k, num_params)`` array.
