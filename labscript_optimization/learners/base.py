@@ -176,7 +176,7 @@ class InsufficientData(RuntimeError):
 
     Raised rather than quietly proposing on some other basis, so that a caller
     given a proposal knows which learner made it. Nothing here catches it: the
-    Gaussian process raises it from ``ask`` short of its warmup, and its own
-    ``propose`` hands warmup to its explorer and never asks the search until
-    warmup is over, so a session does not reach it.
+    Gaussian process's model raises it from ``ask`` short of its warmup, and
+    the learner running it hands warmup to its explorer and never asks the
+    model until warmup is over, so a session does not reach it.
     """

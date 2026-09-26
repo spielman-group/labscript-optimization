@@ -152,7 +152,7 @@ def test_an_explorer_and_its_gaussian_process_each_take_their_own_value_of_a_kno
     tight = config.space.absolute_trust_region(0.05)
     assert not np.allclose(wide, tight)
     np.testing.assert_allclose(built.explorer.trust_region, wide)
-    np.testing.assert_allclose(built.trust_region, tight)
+    np.testing.assert_allclose(built.model.trust_region, tight)
 
 
 @pytest.mark.parametrize(
@@ -941,20 +941,6 @@ def test_the_cycle_is_set_in_the_gaussian_process_table():
     assert (unwritten.batch_size, unwritten.explore_runs) == (4, 1)
 
 
-@pytest.mark.parametrize('learner', ['random', 'directed_random'])
-def test_a_learner_that_proposes_nothing_at_a_depth_of_zero_is_refused_it(learner):
-    """The random learners keep exactly num_buffered_runs in flight, so at zero
-    they never propose, and the session would sit empty with nothing said.
-    The configured start does not rescue it: the learner meets the start as a
-    shot in flight and proposes nothing beside it or after it.
-    """
-    written = MINIMAL + f'[GENERAL]\nlearner = "{learner}"\n'
-    with pytest.raises(ValueError, match='num_buffered_runs is 0') as raised:
-        config_module.loads(written + 'num_buffered_runs = 0\n')
-    assert 'at least 1' in str(raised.value)
-    assert config_module.loads(written + 'num_buffered_runs = 1\n').num_buffered_runs == 1
-
-
 # --- the budget and the population -----------------------------------------
 
 
@@ -1122,10 +1108,9 @@ def test_a_string_setting_written_as_a_number_is_refused(setting):
 @pytest.mark.parametrize(
     'setting, refused, accepted, alongside',
     [
-        # Zero is a floor the dataclass holds, and a file reaches it beside
-        # the Gaussian process MINIMAL builds; a random learner at zero is
-        # refused for proposing nothing, below.
-        ('num_buffered_runs', -1, 0, ''),
+        # Every learner declaring no generation keeps this many in flight, so
+        # at zero it would never propose.
+        ('num_buffered_runs', 0, 1, ''),
         ('seed', -1, 0, ''),
         ('max_num_runs', 0, 1, ''),
         ('max_num_runs_without_better_params', 0, 1, ''),

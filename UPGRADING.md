@@ -69,7 +69,7 @@ Delete these from your configuration:
 | `[ANALYSIS]` | `ignore_bad` | A shot whose cost is `NaN` is now recorded as a bad observation: counted as a completed run, left out of the fits. Nothing waits for it, so there is nothing to switch off. |
 | `[ANALYSIS]` | `analysislib_console_log_level`, `analysislib_file_log_level` | The plugin's own logging configuration. It has no logging of its own to configure. |
 | `[GENERAL]` | `session` | A label. Nothing read it but the status `optimise` returns, where it was one more key in the printed dictionary; it was never written onto a shot and never matched on. A shot is attributed by the id runmanager mints for its queue row, which lyse reads as the `shot_id` column. |
-| `[GENERAL]` | `no_delay` | The Gaussian process runs in a worker process that never blocks the routine, so there is no delay to avoid. |
+| `[GENERAL]` | `no_delay` | The Gaussian process always behaves as M-LOOP's `no_delay = true`: while it computes a batch its explorer keeps the queue topped up, and each of its points goes out as soon as it is ready. |
 | `[GENERAL]` | `visualisations` | No plots and no GUI. Progress comes back as the routine's results. |
 | `[GENERAL]` | `console_log_level`, `console_log_string` | As above. |
 | `[LEARNER.random]`, `[LEARNER.directed_random]`, `[LEARNER.differential_evolution]` | `first_params` | Where a run begins is written on the parameters, as each one's `start` beside its own `min` and `max`, and the session proposes that point first and once, whichever learner is running. `first_params` was a second way to say the same thing, and only three of the four learners took it, so the file's answer to where a run starts depended on which learner had been chosen. As a bare vector it could not be checked against the parameter tables it stood for either: reorder them and it silently meant a different experiment, which is not an error but a different run. Write `start` on the parameters instead. |
@@ -92,9 +92,9 @@ Gaussian process, which runs its warmup and its explorer itself:
 The last four appear only in a file already written for this package; an
 analysislib-mloop file carries none of them. The last six are each
 **refused** naming the key that replaces it and the table it goes in, and none
-is read as its replacement: `explore_runs`, for one, counts the explorer shots
-behind each batch, where `num_runs_between_trainer_runs` was a period between
-one of them and the next. *What changed in the algorithms*, below, says what
+is read as its replacement: `explore_runs`, for one, is the least number of
+explorer shots in each batch cycle, where `num_runs_between_trainer_runs` was
+a period between one of them and the next. *What changed in the algorithms*, below, says what
 each knob does.
 
 `generation_size` set two things at once: how often the Gaussian process
@@ -194,15 +194,16 @@ run roughly every second shot is a default one. Those shots go to BLACS
 already compiled, so runmanager never writes a shot id into them.
 
 The status counts a `starved` for each time the routine found nothing of its
-own queued. If it keeps climbing, the fit is taking longer than a shot: raise
-`num_buffered_runs`.
+own queued. If it keeps climbing, raise `num_buffered_runs`.
 
-**Under `gaussian_process` it is the explorer shots behind each batch.** The
-number queued behind a batch is the larger of `num_buffered_runs` and
-`explore_runs`, so raising it to cover a slow fit also raises the share of
-explorer shots. Zero is accepted there and queues `explore_runs` alone. The
-random learners keep exactly `num_buffered_runs` in flight and so refuse zero,
-which would be a run that never proposes.
+Every learner that takes it keeps exactly `num_buffered_runs` in flight, so
+zero, which would be a run that never proposes, is refused. **Under
+`gaussian_process` it also sets the share of explorer shots:** while a batch
+is computed the explorer keeps that many shots queued, and the batch's points
+take their places as they become ready. The next batch waits for every point
+of the last to come back, and the queue is refilled from the explorer while
+they do, so each batch cycle holds about `num_buffered_runs` explorer shots
+even when a fit is instant, and more while it is slow.
 
 **`differential_evolution` refuses the key.** It proposes one whole population
 at a time and nothing more until every member has been answered for, so its
@@ -279,24 +280,38 @@ goes out whole.
   `directed_random`, and `directed_random` by default — proposes a warmup of
   `warmup_observations` usable observations, which defaults to twice the
   number of searched parameters and never fewer than five. After that the
-  Gaussian process proposes `batch_size` points at a time, 4 by default, each
-  conditioned on the ones before it, and behind each batch go
-  max(`explore_runs`, `num_buffered_runs`) explorer shots; `explore_runs`
-  defaults to 1. The next batch goes out when every point of the last is back
-  or given up on, and the explorer shots never hold it up. Warmup counts
-  observations a fit can use, not shots, and ends at the count: explorer shots
-  already queued then still run. The `phase` column reads `warmup`, `main` or
-  `explore` for the three kinds of shot.
+  Gaussian process computes `batch_size` points at a time in the background,
+  4 by default, each conditioned on the ones before it, and each point goes
+  out as soon as it is ready; while a batch is computed, the explorer keeps the
+  queue topped up. Each batch cycle, from one batch's first point to the
+  next's, holds at least `explore_runs` explorer shots, 1 by default, and in
+  practice about `num_buffered_runs` of them: see step 5. The next
+  batch is computed once every point of the last is back or given up on, and
+  the explorer shots never hold it up. Warmup counts observations a fit can
+  use, not shots, and ends at the count: explorer shots already queued then
+  still run. The `phase` column reads `warmup`, `main` or `explore` for the
+  three kinds of shot.
 
-  With `num_buffered_runs = 1` those defaults are M-LOOP's own cycle: its
-  machine-learning controller ran `generation_num` machine-learner runs, fixed
-  at 4, at the four exploration weights `[0, 1, 2, 3]` that are `uncer_bias`
-  here, and then one run from its training source, round and round
-  (`mloop/controllers.py`, `mloop/learners.py`). At the default of 2, two
-  explorer shots follow each batch rather than one. The other half of M-LOOP's
-  condition — take a training point whenever the machine learner has none
-  ready — was `no_delay`, which step 2 above deletes: the explorer shots queued
-  behind each batch are what keep the apparatus busy while it is fitted.
+  This is M-LOOP's cycle with `no_delay = true`, as the lab's fork of
+  analysislib-mloop ran it. M-LOOP's machine-learning controller ran
+  `generation_num` machine-learner runs, fixed at 4, at the four exploration
+  weights `[0, 1, 2, 3]` that are `uncer_bias` here, then one run from its
+  training source, round and round, and under `no_delay = true` also took a
+  training run whenever the machine learner had no point ready
+  (`mloop/controllers.py`, `mloop/learners.py`). The lab's fork, the
+  `no_delay` branch's `mloop_controller.py`, kept `num_buffered_runs` shots
+  queued and trained with its own random learner alone, the forerunner of
+  `directed_random`. It never took the run after each generation: one counter
+  decides both that run and when to ask for the next generation, and asking
+  resets it before the run is due. So a training run went out only when no
+  machine-learner point was ready, which is what the explorer does here. Two
+  things differ. The fork asked for the next generation as soon as the last
+  point of this one had gone out; here it waits until every point is back, so
+  each batch has every answer it asked for, and the queue refilled from the
+  explorer while its points come back puts about `num_buffered_runs`
+  explorer shots in every cycle. And `explore_runs` restores a floor of
+  explorer shots per cycle, which that filling already meets at its default
+  of 1.
 
   **The explorer's default is not what M-LOOP trained with.** Its
   machine-learning controllers took `training_type`, defaulting to
@@ -349,7 +364,9 @@ goes out whole.
   out: over four analytic test functions at four parameters it is nothing
   measurable at 120 shots and a factor of 1.6 in the best cost found at 600.
   The name has to be true.
-- **`seed`** in `[GENERAL]` makes a run reproducible.
+- **`seed`** in `[GENERAL]` makes a run reproducible, except under
+  `gaussian_process`, where which shots its points take depends on how long
+  each fit takes.
 
 ## What the routine reports
 

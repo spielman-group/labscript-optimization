@@ -5,6 +5,8 @@ import os
 # so a real run is untouched; setdefault leaves an explicit choice alone.
 os.environ.setdefault('LABSCRIPT_NO_ERROR_DIALOG', '1')
 
+from concurrent.futures import wait
+
 import numpy as np
 import pytest
 
@@ -111,3 +113,15 @@ def run_loop(learner, space, cost_function, batches, k, rng, history=None):
 @pytest.fixture
 def loop():
     return run_loop
+
+
+def settle(learner):
+    """Wait for the batch a Gaussian process learner is computing, if it is.
+
+    It computes on a thread of its own, so a test that wants the batch in hand
+    at the next refill waits for it here. Bounded, so that a batch that never
+    finishes fails the test rather than hanging it.
+    """
+    if learner.computation is not None:
+        done, _ = wait([learner.computation], timeout=60)
+        assert done, 'the batch did not finish computing'
