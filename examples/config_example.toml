@@ -80,9 +80,10 @@ explore_fraction = 0.0
 
 [LEARNER.gaussian_process]
 # The learner that runs the warmup and fills the queue while each batch is
-# computed: random or directed_random, on the knobs of its own table above.
-# differential_evolution cannot explore, because it proposes a whole
-# population at a time, and neither can gaussian_process itself.
+# computed: random, directed_random or differential_evolution, on the knobs of
+# its own table. differential_evolution explores a point or two at a time over
+# its own shots, with no generation barrier; gaussian_process itself cannot
+# explore.
 explorer = "directed_random"
 
 # How many usable observations the explorer gathers before the Gaussian

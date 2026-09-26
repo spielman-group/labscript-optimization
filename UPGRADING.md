@@ -276,8 +276,9 @@ goes out whole.
 - **The learners are named** `random`, `directed_random`,
   `differential_evolution` and `gaussian_process`, in `[GENERAL] learner`.
 - **The Gaussian process runs its own cycle**, set in
-  `[LEARNER.gaussian_process]`. Its `explorer` — `random` or
-  `directed_random`, and `directed_random` by default — proposes a warmup of
+  `[LEARNER.gaussian_process]`. Its `explorer` — `random`,
+  `directed_random` or `differential_evolution`, and `directed_random` by
+  default — proposes a warmup of
   `warmup_observations` usable observations, which defaults to twice the
   number of searched parameters and never fewer than five. After that the
   Gaussian process computes `batch_size` points at a time in the background,
@@ -325,11 +326,15 @@ goes out whole.
   M-LOOP never showed. That is what a run against the dummy apparatus looks
   like.
 
-  `differential_evolution` cannot be the explorer: it proposes a whole
-  population at a time and only when none of its proposals is outstanding, so
-  it can neither open a warmup shot by shot nor fill the buffer behind a
-  batch, and a file naming it is refused. To explore nearer the best points,
-  narrow the explorer's own band — `trust_range = [0.9, 1.0]` in
+  `explorer = "differential_evolution"` is nearest what M-LOOP trained with.
+  As the explorer it is asked for a point or two at a time over its own
+  shots, with no generation barrier: an asynchronous differential evolution,
+  whose own generation and budget apply only when it is the learner selected.
+  Until enough of its slots hold usable costs to breed from, its shots are
+  founder draws over the whole space — about its first eight, with the
+  default population — so it starts wider than `directed_random`. To explore
+  nearer the best points with `directed_random` instead, narrow its own band
+  — `trust_range = [0.9, 1.0]` in
   `[LEARNER.directed_random]` centres on the best point rather than on
   middling ones, and `[1, 1]` is the best point alone. `explorer = "random"`
   is the plain uniform spread over the whole space.

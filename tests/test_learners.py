@@ -1426,6 +1426,56 @@ def test_the_explorer_proposes_the_warmup_and_the_shots_that_fill_the_queue(spac
     assert not any((p == 4.5).all() for p in by_source['main'])
 
 
+class Recording(DifferentialEvolutionLearner):
+    """Differential evolution, keeping every history it is handed."""
+
+    def ask(self, history, k):
+        self.handed.append(list(history))
+        return super().ask(history, k)
+
+
+def recording(space):
+    explorer = Recording(space, np.random.default_rng(2), population_size=4)
+    explorer.handed = []
+    return explorer
+
+
+def test_differential_evolution_explores_over_its_own_shots_alone():
+    """A proposal's role is its position among its own proposals, so it is
+    handed those and nothing else: not the configured start, and not the
+    batches. The model is handed every record."""
+    space = ParameterSpace(
+        [Parameter('x', -5.0, 5.0, start=1.0), Parameter('y', -5.0, 5.0, start=1.0)]
+    )
+    explorer, model = recording(space), Model(space)
+    session = driven(space, model, explorer=explorer)
+    past_warmup(session)
+    for _ in range(8):
+        step(session)
+    handed = {o.source for history in explorer.handed for o in history}
+    assert handed == {'warmup', 'explore'}
+    assert {o.source for o in model.handed[-1]} == {
+        'start', 'warmup', 'main', 'explore'
+    }
+
+
+def test_a_dropped_explorer_shot_keeps_its_place_in_the_explorers_history(space):
+    """It spent a position, and positions are roles to differential
+    evolution, so it stays where it was; the model is handed it too."""
+    explorer, model = recording(space), Model(space)
+    session = driven(space, model, explorer=explorer)
+    step(session, back=0)
+    lost = session.awaiting[0]
+    session.interface.lose(lost)
+    session.reconcile()
+    sources = step(session, back=0)
+    first = explorer.handed[-1][0]
+    assert (first.shot_id, first.state) == (lost, DROPPED)
+    while 'warmup' in sources:
+        sources = step(session)
+    assert lost in [o.shot_id for o in model.handed[0]]
+
+
 def test_a_batch_does_not_condition_on_the_explorer_shots_in_flight(space):
     """A random draw is a weaker thing to fold in as a fantasy than a point of
     the Gaussian process's own, and conditioning on pending points is measured
@@ -1447,23 +1497,19 @@ def test_a_batch_does_not_condition_on_the_explorer_shots_in_flight(space):
 def test_the_explorer_is_one_of_the_learners_that_draw_without_fitting(space, rng):
     """By name, built from its defaults, or handed over built.
 
-    Differential evolution proposes only whole generations and a Gaussian
-    process only once it has warmed up, so neither can keep a warmup topped up
-    shot by shot or fill a buffer on demand.
+    A Gaussian process proposes nothing until it has warmed up, so it can
+    neither keep a warmup topped up shot by shot nor fill a queue on demand.
     """
     assert type(GaussianProcessLearner(space, rng).explorer) is DirectedRandomLearner
     assert type(GaussianProcessLearner(space, rng, explorer='random').explorer) is (
         RandomLearner
     )
-    mine = DirectedRandomLearner(space, rng, trust_region=0.3)
+    evolving = GaussianProcessLearner(space, rng, explorer='differential_evolution')
+    assert type(evolving.explorer) is DifferentialEvolutionLearner
+    mine = DifferentialEvolutionLearner(space, rng, population_size=4)
     assert GaussianProcessLearner(space, rng, explorer=mine).explorer is mine
 
-    for other in (
-        DifferentialEvolutionLearner(space, rng, population_size=4),
-        GaussianProcessLearner(space, rng),
-        'differential_evolution',
-        'gaussian_process',
-    ):
+    for other in (GaussianProcessLearner(space, rng), 'gaussian_process'):
         with pytest.raises(ValueError, match='explorer must be one of'):
             GaussianProcessLearner(space, rng, explorer=other)
 
@@ -1687,15 +1733,16 @@ MISWRITTEN = [
     (
         'gaussian_process',
         'explorer',
-        'differential_evolution',
-        "explorer must be one of ('random', 'directed_random'), got "
-        "'differential_evolution'",
+        'gaussian_process',
+        "explorer must be one of ('random', 'directed_random', "
+        "'differential_evolution'), got 'gaussian_process'",
     ),
     (
         'gaussian_process',
         'explorer',
         ['random'],
-        "explorer must be one of ('random', 'directed_random'), got ['random']",
+        "explorer must be one of ('random', 'directed_random', "
+        "'differential_evolution'), got ['random']",
     ),
     (
         'directed_random',

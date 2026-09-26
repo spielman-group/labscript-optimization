@@ -727,7 +727,9 @@ def test_the_budget_keeps_the_first_proposals_a_learner_offers(runmanager):
     assert [p[0] for p in session.proposals.values()] == [0.1, 0.2]
 
 
-@pytest.mark.parametrize('explorer', ['random', 'directed_random'])
+@pytest.mark.parametrize(
+    'explorer', ['random', 'directed_random', 'differential_evolution']
+)
 def test_a_gaussian_process_session_runs_end_to_end_with_each_explorer(
     runmanager, explorer
 ):

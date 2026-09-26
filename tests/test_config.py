@@ -257,6 +257,20 @@ def test_the_explorer_is_named_in_the_gaussian_process_table():
     np.testing.assert_allclose(unnamed.explorer.trust_region, [0.4])
 
 
+@pytest.mark.parametrize(
+    'explorer', ['random', 'directed_random', 'differential_evolution']
+)
+def test_a_configuration_naming_each_explorer_loads(explorer):
+    """Beside a queue depth and a budget, which hold only the learner selected:
+    differential evolution's generation of eight would refuse both."""
+    config = config_module.loads(
+        MINIMAL
+        + '[GENERAL]\nnum_buffered_runs = 2\nmax_num_runs = 10\n'
+        + f'[LEARNER.gaussian_process]\nexplorer = "{explorer}"\n'
+    )
+    assert type(learners.build(config).explorer) is learners.LEARNERS[explorer]
+
+
 def test_an_unknown_explorer_is_refused_at_load():
     """Rather than at worker configure, with the apparatus already running."""
     with pytest.raises(ValueError) as raised:
@@ -264,8 +278,8 @@ def test_an_unknown_explorer_is_refused_at_load():
             MINIMAL + '[LEARNER.gaussian_process]\nexplorer = "directed_randon"\n'
         )
     assert str(raised.value) == (
-        "explorer must be one of ('random', 'directed_random'), got "
-        "'directed_randon'"
+        "explorer must be one of ('random', 'directed_random', "
+        "'differential_evolution'), got 'directed_randon'"
     )
 
 

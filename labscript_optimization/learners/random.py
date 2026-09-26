@@ -33,6 +33,9 @@ class RandomLearner(ParameterSpaceLearner):
         rng: Source of randomness.
     """
 
+    #: It draws without reading the history.
+    history_scope = "none"
+
     def ask(self, history: Sequence[Observation], k: int) -> np.ndarray:
         """The next ``k`` points, as a ``(k, num_params)`` array.
 
@@ -68,6 +71,9 @@ class DirectedRandomLearner(RandomLearner):
         explore_fraction: Share of proposals that ignore the trust region and
             draw from the whole space.
     """
+
+    #: It centres its draws on the shots seen, whoever proposed them.
+    history_scope = "all"
 
     def __init__(
         self,

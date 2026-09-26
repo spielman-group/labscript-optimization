@@ -74,6 +74,12 @@ class Learner:
     #: skips a learner whose queue empties once a generation by design.
     generation: int | None = None
 
+    #: Which records of the history this learner reads when another runs it:
+    #: ``"all"``, ``"mine"`` -- the shots it proposed -- or ``"none"``. Read
+    #: only by a learner that runs others, as the Gaussian process runs its
+    #: explorer.
+    history_scope: str = "all"
+
     def propose(
         self, history: Sequence[Observation], hint: int
     ) -> list[tuple[np.ndarray, str]]:

@@ -176,7 +176,7 @@ sit side by side and be switched between by changing `[GENERAL] learner`.
 | `random` | Uniform draws. The reference the others are measured against. |
 | `directed_random` | Draws near a previously seen point, chosen from a band of middling costs rather than from the best one, so it explores rather than refines. |
 | `differential_evolution` | Evolves a population, one whole generation at a time: it proposes `population_size` shots together and nothing more until all of them have been answered for. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds — around eight searches well and a budget over a thousand shots is worth sixteen, measured over four analytic test functions at two to eight parameters (`benchmarks/README.md`, "What the sweep found", has the tables, the caveats and the harness that produced them) — and it is the queue depth too, so `num_buffered_runs` is not accepted beside it. |
-| `gaussian_process` | Fits a Gaussian process and searches its posterior, in batches computed in the background, while an explorer keeps the queue topped up. It warms up on the explorer alone, and `explorer` — `random` or `directed_random`, defaulting to `directed_random` — is its own knob; see below. |
+| `gaussian_process` | Fits a Gaussian process and searches its posterior, in batches computed in the background, while an explorer keeps the queue topped up. It warms up on the explorer alone, and `explorer` — `random`, `directed_random` or `differential_evolution`, defaulting to `directed_random` — is its own knob; see below. |
 
 ### The Gaussian process's cycle
 
@@ -186,7 +186,7 @@ points, and fitting it is slow. It runs its own cycle around both, set in
 
 | Knob | Default | What it does |
 | --- | --- | --- |
-| `explorer` | `directed_random` | The learner that proposes the warmup and fills the queue while each batch is computed, on the knobs of its own `[LEARNER.<name>]` table. `random` or `directed_random`: `differential_evolution` proposes only whole generations and `gaussian_process` only once warmed up, so neither can keep a warmup topped up shot by shot or fill a buffer on demand. |
+| `explorer` | `directed_random` | The learner that proposes the warmup and fills the queue while each batch is computed, on the knobs of its own `[LEARNER.<name>]` table: `random`, `directed_random` or `differential_evolution`. `gaussian_process` proposes nothing until warmed up, so it cannot. |
 | `warmup_observations` | max(5, 2 × parameters) | How many usable observations the explorer gathers before the Gaussian process proposes. |
 | `batch_size` | 4 | How many points the Gaussian process computes at a time, each conditioned on the ones before it. |
 | `explore_runs` | 1 | How many explorer shots each batch cycle holds at the least. |
@@ -211,6 +211,14 @@ defaults, one pass of 0, 1, 2, 3 across the four points, opening greedily. The
 batch does not condition on explorer shots in flight. A `max_num_runs` with
 room for less than a refill cuts the explorer shots first, and a point of the
 batch it cuts is not proposed again.
+
+**Differential evolution as the explorer** is asked for a point or two at a
+time over its own shots, with no generation barrier: an asynchronous
+differential evolution, whose generation and budget apply only when it is the
+learner selected. Until enough of its slots hold usable costs to breed from —
+three with the default `best1` — its shots are founder draws over the whole
+space, which with the default population of eight is about its first eight.
+That makes it a wider explorer than `directed_random`.
 
 **Exploring.** `explore_runs` is the least number of explorer shots in each
 batch cycle, from one batch's first point to the next's: a ready batch's first
@@ -318,6 +326,13 @@ and no sources. `propose` hands the number it settles on to
 `acquire(history, k)`, which by default asks `ask` for them and sources each
 `main`; a learner with more than one way of proposing overrides `acquire`
 instead, as `gaussian_process` does.
+
+A learner run inside another, as `gaussian_process` runs its explorer, is
+handed the part of the history its `history_scope` names: `"all"` of it,
+`"mine"`, the shots it proposed, or `"none"`. `differential_evolution` reads
+its own, since a proposal's role is its position among them;
+`directed_random` reads all of it, since it centres its draws on every shot
+seen; `random` reads none. The Gaussian process's model is handed all of it.
 
 Each proposal comes back beside its source, a string naming which of the
 learner's ways of proposing made it. The session records it when it submits

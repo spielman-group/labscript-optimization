@@ -26,6 +26,9 @@ The cycle, which :meth:`GaussianProcessLearner.acquire` is the whole of:
   shots have gone out since the previous batch's first point, wherever in that
   cycle they fell.
 
+The explorer is handed the part of the history its ``history_scope`` names:
+all of it, its own shots, or none. The model is always handed all of it.
+
 The hint is the session's ``num_buffered_runs``, and it also sets roughly how
 many explorer shots a cycle holds: while the last of a batch's points come
 back, each shot that returns is replaced from the explorer, so a cycle holds
@@ -89,6 +92,7 @@ from ..observations import (
     usable,
 )
 from .base import InsufficientData, ParameterSpaceLearner
+from .differential_evolution import DifferentialEvolutionLearner
 from .random import DirectedRandomLearner, RandomLearner
 from ..space import ParameterSpace
 
@@ -105,9 +109,13 @@ LENGTH_SCALE_AT_BOUND = (
 )
 
 #: The learners a Gaussian process may explore with, by the name its
-#: ``explorer`` knob takes. Both draw without fitting anything, so an explorer
-#: proposes from the first shot of a run and never waits on a fit.
-EXPLORERS = {"random": RandomLearner, "directed_random": DirectedRandomLearner}
+#: ``explorer`` knob takes. None of them fits anything, so an explorer proposes
+#: from the first shot of a run and never waits on a fit.
+EXPLORERS = {
+    "random": RandomLearner,
+    "directed_random": DirectedRandomLearner,
+    "differential_evolution": DifferentialEvolutionLearner,
+}
 
 #: The source of an explorer's shot proposed during warmup.
 WARMUP_SOURCE = "warmup"
@@ -585,9 +593,9 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         the count, and explorer shots already queued then still run.
     explorer : str or learner
         The learner whose shots run the warmup and fill the queue after it:
-        ``"random"`` or ``"directed_random"``, built from its defaults, or an
-        instance of either. A configuration names it, and
-        :func:`~labscript_optimization.learners.build` hands over the
+        ``"random"``, ``"directed_random"`` or ``"differential_evolution"``,
+        built from its defaults, or an instance of one. A configuration names
+        it, and :func:`~labscript_optimization.learners.build` hands over the
         instance built from that learner's own ``[LEARNER.<name>]`` table.
     explore_runs : int
         How many explorer shots each batch cycle holds at the least, from one
@@ -609,7 +617,7 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         batch_size: int = 4,
         trust_region=None,
         warmup_observations: int | None = None,
-        explorer: str | RandomLearner = "directed_random",
+        explorer: str | ParameterSpaceLearner = "directed_random",
         explore_runs: int = 1,
     ):
         super().__init__(space, rng)
@@ -663,9 +671,16 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         The model is read only through the future of its computation, and
         only once that is done, so a refill never waits on a fit.
         """
+        # "mine" is the explorer's own shots, which excludes the configured
+        # start and the batches.
+        scoped = {
+            "all": history,
+            "mine": [o for o in history if o.source in (WARMUP_SOURCE, EXPLORE_SOURCE)],
+            "none": [],
+        }[self.explorer.history_scope]
         if len(usable(history)) < self.warmup_observations:
             return [
-                (params, WARMUP_SOURCE) for params in self.explorer.ask(history, k)
+                (params, WARMUP_SOURCE) for params in self.explorer.ask(scoped, k)
             ]
 
         if self.computation is not None and self.computation.done():
@@ -700,6 +715,6 @@ class GaussianProcessLearner(ParameterSpaceLearner):
             *((params, BATCH_SOURCE) for params in released),
             *(
                 (params, EXPLORE_SOURCE)
-                for params in self.explorer.ask(history, k - len(released))
+                for params in self.explorer.ask(scoped, k - len(released))
             ),
         ]

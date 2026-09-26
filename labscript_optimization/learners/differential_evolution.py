@@ -21,6 +21,11 @@ A slot's member is the best usable result that slot has produced, so a cost
 arriving after the generation that would have used it still competes for its
 own slot and disturbs no other -- which is what textbook differential
 evolution would have done with it had it arrived in time.
+
+As the Gaussian process's explorer it is asked for a point or two at a time
+over its own shots alone, with no barrier: asynchronous differential
+evolution. Its generation, and the budget that generation asks for, apply
+only when it is the learner selected.
 """
 
 from typing import Sequence
@@ -58,8 +63,10 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
             of the setting.
         evolution_strategy: Which mutation to use, one of :data:`STRATEGIES`.
         mutation_scale: ``(low, high)`` bounds on the differential weight,
-            which is drawn once per generation and shared by every trial in
-            it.
+            which is drawn once per ``ask`` call and shared by every trial it
+            makes: once per generation when this learner is selected, and once
+            per trial or two as the Gaussian process's explorer, the variant
+            known as dither.
         cross_over_probability: Chance that a given coordinate comes from the
             mutant rather than the incumbent.
         trust_region: Restrict sampling to this distance around the best member.
@@ -113,6 +120,9 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
                 f"{self.cross_over_probability}"
             )
         self.trust_region = space.absolute_trust_region(trust_region)
+
+    #: A proposal's role is its position among this learner's own proposals.
+    history_scope = "mine"
 
     @property
     def generation(self) -> int:
@@ -205,13 +215,10 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         no barrier asks for at any history length and any ``k``.
         """
         params, costs = self.replay(history)
-        # One differential weight for the call. ``propose`` makes one call per
-        # generation, which is how textbook differential evolution, scipy's
-        # included, draws it: once per generation rather than once per trial.
-        # The calls that fall short of a generation are the rest of a block
-        # already begun. After the configured start every proposal is a
-        # founder, which uses no weight; after a block the budget cut short,
-        # the trials that finish it share a weight of their own.
+        # One differential weight per call: once per generation when this
+        # learner is selected, as textbook differential evolution and scipy
+        # draw it, and per trial or two as the Gaussian process's explorer,
+        # which is the variant known as dither.
         scale = self.rng.uniform(*self.mutation_scale)
         proposals = np.empty((k, self.space.num_params))
         for i in range(k):
