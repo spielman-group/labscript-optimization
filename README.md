@@ -96,10 +96,10 @@ so a queue holding only one of our shots is empty at precisely that moment,
 and runmanager hands BLACS a default shot instead. At one buffered run roughly
 every second shot is a default one. The status counts a `starved` for each
 time the routine found nothing of its own queued; raise `num_buffered_runs` if
-it keeps climbing. The random learners keep exactly that many in flight, so
-they refuse zero. For `gaussian_process` it is the number of explorer shots
-queued behind each batch, when that is more than `explore_runs`, and zero is
-allowed: see [The Gaussian process's cycle](#the-gaussian-processs-cycle).
+it keeps climbing. Every learner that takes it keeps exactly that many in
+flight, so zero is refused. For `gaussian_process` it also sets roughly how
+many explorer shots each batch holds: see
+[The Gaussian process's cycle](#the-gaussian-processs-cycle).
 
 A learner that proposes whole generations sets its own depth and does not take
 that setting — `differential_evolution` refuses it, because the depth is the
@@ -112,13 +112,14 @@ Those default shots are also what keeps the routine running while the optimiser
 waits. They go to BLACS already compiled, so runmanager never writes a shot id
 into them, and the routine passes them over.
 
-`gaussian_process` waits the same way for its batch: the next goes out when
-every shot of the last has come back or been given up on. A shot is given up
-on when the routine asks runmanager about it, which happens only when a shot
-reaches lyse, so a batch whose shots were all deleted is released only by a
-shot arriving — an explorer shot still queued, or a default shot. With nothing
-of the run's left queued and runmanager sending nothing in its place, the
-apparatus idles and the cycle waits with it.
+`gaussian_process` computes its next batch only once every shot of the last
+has come back or been given up on, and its explorer keeps the queue topped up
+meanwhile. A shot is given up on when the routine asks runmanager about it,
+which happens only when a shot reaches lyse, so a batch whose points were all
+deleted is followed by the next only once a shot arrives — an explorer shot or
+a default shot. The apparatus idles in one case: with nothing of the run's left
+queued and runmanager sending nothing in its place, nothing reaches lyse, so no
+refill runs.
 
 You compute the cost yourself, in your own lyse routine, into the column named
 by `cost_key`. A shot whose cost is `NaN` is recorded as a bad observation
@@ -175,7 +176,7 @@ sit side by side and be switched between by changing `[GENERAL] learner`.
 | `random` | Uniform draws. The reference the others are measured against. |
 | `directed_random` | Draws near a previously seen point, chosen from a band of middling costs rather than from the best one, so it explores rather than refines. |
 | `differential_evolution` | Evolves a population, one whole generation at a time: it proposes `population_size` shots together and nothing more until all of them have been answered for. Good on rough landscapes with no useful gradient. `population_size` is how many members it holds — around eight searches well and a budget over a thousand shots is worth sixteen, measured over four analytic test functions at two to eight parameters (`benchmarks/README.md`, "What the sweep found", has the tables, the caveats and the harness that produced them) — and it is the queue depth too, so `num_buffered_runs` is not accepted beside it. |
-| `gaussian_process` | Fits a Gaussian process and searches its posterior, in batches, with an explorer's shots queued behind each. It warms up on the explorer alone, and `explorer` — `random` or `directed_random`, defaulting to `directed_random` — is its own knob; see below. |
+| `gaussian_process` | Fits a Gaussian process and searches its posterior, in batches computed in the background, while an explorer keeps the queue topped up. It warms up on the explorer alone, and `explorer` — `random`, `directed_random` or `differential_evolution`, defaulting to `directed_random` — is its own knob; see below. |
 
 ### The Gaussian process's cycle
 
@@ -185,45 +186,55 @@ points, and fitting it is slow. It runs its own cycle around both, set in
 
 | Knob | Default | What it does |
 | --- | --- | --- |
-| `explorer` | `directed_random` | The learner that proposes the warmup and the shots behind each batch, on the knobs of its own `[LEARNER.<name>]` table. `random` or `directed_random`: `differential_evolution` proposes only whole generations and `gaussian_process` only once warmed up, so neither can keep a warmup topped up shot by shot or fill a buffer on demand. |
+| `explorer` | `directed_random` | The learner that proposes the warmup and fills the queue while each batch is computed, on the knobs of its own `[LEARNER.<name>]` table: `random`, `directed_random` or `differential_evolution`. `gaussian_process` proposes nothing until warmed up, so it cannot. |
 | `warmup_observations` | max(5, 2 × parameters) | How many usable observations the explorer gathers before the Gaussian process proposes. |
-| `batch_size` | 4 | How many points the Gaussian process proposes at a time, each conditioned on the ones before it. |
-| `explore_runs` | 1 | How many explorer shots follow each batch at the least. |
+| `batch_size` | 4 | How many points the Gaussian process computes at a time, each conditioned on the ones before it. |
+| `explore_runs` | 1 | How many explorer shots each batch cycle holds at the least. |
 
 **Warmup.** Below `warmup_observations`, the explorer alone keeps
-max(`explore_runs`, `num_buffered_runs`, 1) shots queued. It counts
+`num_buffered_runs` shots queued. It counts
 observations a fit can use, not shots: a shot whose cost is `NaN`, or one that
 was given up on, does not move it on. Warmup ends at the count, and the
 explorer shots already queued at that moment still run, which is the design:
 nothing takes a queued shot back, and their costs join the fit when they land.
 
-**The cycle.** After warmup the Gaussian process proposes a batch, and behind
-it max(`explore_runs`, `num_buffered_runs`) explorer shots. The next batch
-goes out when every shot of this one has come back or been given up on; the
-explorer shots never hold it up. The kernel's hyperparameters are refit once
-per batch, and the exploration schedule `uncer_bias` is walked from its first
-weight at every batch — with the defaults, one pass of 0, 1, 2, 3 across the
-four points, opening greedily. The batch does not condition on explorer shots
-in flight. A `max_num_runs` with room for less than a whole cycle cuts the
-explorer shots first and the batch last.
+**Batches.** After warmup the Gaussian process computes a batch in the
+background, from the history as it stands when the computation begins, and
+every refill keeps `num_buffered_runs` shots queued: with the batch's points as
+soon as they are ready, and with explorer shots while it computes or once its
+points have gone out. The apparatus does not wait on a fit. The next batch is
+computed once every point of the last has come back or been given up on, so it
+has every answer it asked for; the explorer shots never hold it up. The
+kernel's hyperparameters are refit once per batch, and the exploration schedule
+`uncer_bias` is walked from its first weight at every batch — with the
+defaults, one pass of 0, 1, 2, 3 across the four points, opening greedily. The
+batch does not condition on explorer shots in flight. A `max_num_runs` with
+room for less than a refill cuts the explorer shots first, and a point of the
+batch it cuts is not proposed again.
 
-| `explore_runs` | `num_buffered_runs` | explorer shots behind each batch |
-| --- | --- | --- |
-| 2 | 0, 1 or 2 | 2 |
-| 2 | 5 | 5 |
+**Differential evolution as the explorer** is asked for a point or two at a
+time over its own shots, with no generation barrier: an asynchronous
+differential evolution, whose generation and budget apply only when it is the
+learner selected. Until enough of its slots hold usable costs to breed from —
+three with the default `best1` — its shots are founder draws over the whole
+space, which with the default population of eight is about its first eight.
+That makes it a wider explorer than `directed_random`.
 
-Computing a batch is slow, so the next cannot go out the moment the last comes
-back; the explorer shots queued behind it are what keep the apparatus busy
-through that fit, which is what `num_buffered_runs` asks for. Raising
-`num_buffered_runs` to cover a slow fit also raises the share of explorer
-shots. `explore_runs` is the exploring the Gaussian process does regardless,
-and the buffer only ever adds to it. Both at zero is a Gaussian process with
-nothing behind its batches: it idles the apparatus during every fit, and
-`starved` counts each time.
+**Exploring.** `explore_runs` is the least number of explorer shots in each
+batch cycle, from one batch's first point to the next's: a ready batch's first
+point waits until that many have gone out, counting the ones that filled the
+queue. Filling alone usually meets it. The next batch waits for every point of
+the last to come back, and each shot that returns meanwhile is replaced from
+the explorer, so a cycle holds about `num_buffered_runs` explorer shots even
+when a fit is instant, and more while it is slow. `explore_runs` adds only
+what that leaves short, so at its default of 1 it adds nothing.
+
+Which slots the batch's points take depends on how long each fit takes, so a
+run under `gaussian_process` is not reproducible from its `seed`.
 
 Each shot says which part of the cycle proposed it in the `phase` column:
 `warmup` for the explorer's shots during warmup, `main` for the Gaussian
-process's own, `explore` for the explorer's shots behind a batch, and `start`
+process's own, `explore` for the explorer's shots after warmup, and `start`
 for the configured start, which takes the first warmup shot's place.
 
 ### A cost with noise in it
@@ -286,9 +297,12 @@ shots in flight are the history's pending records, and the hint is
 its method allows — the random learners keep exactly that many in flight,
 `differential_evolution` does not read it, proposing a whole generation when
 none of the last is pending and nothing otherwise, and `gaussian_process`
-queues it as explorer shots behind each batch — and the session submits what
-comes back, in order, cut from the end to what `max_num_runs` has room for. So
-a learner can be used on its own against any cost function:
+tops them up with its batch's points and its explorer's shots — and the
+session submits what comes back, in order, cut from the end to what
+`max_num_runs` has room for. Both pacings are `Learner.propose`, which every
+learner here inherits: a learner declaring no `generation` tops the shots in
+flight up to the hint, and one declaring a generation waits for the whole of
+the last. So a learner can be used on its own against any cost function:
 
 ```python
 import numpy as np
@@ -307,8 +321,18 @@ for step in range(100):
         )
 ```
 
-The learners here also answer `ask(history, k)`: exactly `k` points from the
-same method, with no pacing and no sources.
+A learner's method is `ask(history, k)`: exactly `k` points, with no pacing
+and no sources. `propose` hands the number it settles on to
+`acquire(history, k)`, which by default asks `ask` for them and sources each
+`main`; a learner with more than one way of proposing overrides `acquire`
+instead, as `gaussian_process` does.
+
+A learner run inside another, as `gaussian_process` runs its explorer, is
+handed the part of the history its `history_scope` names: `"all"` of it,
+`"mine"`, the shots it proposed, or `"none"`. `differential_evolution` reads
+its own, since a proposal's role is its position among them;
+`directed_random` reads all of it, since it centres its draws on every shot
+seen; `random` reads none. The Gaussian process's model is handed all of it.
 
 Each proposal comes back beside its source, a string naming which of the
 learner's ways of proposing made it. The session records it when it submits
@@ -332,9 +356,8 @@ wrapper can hold what that value promises; or refuse to be built, where it
 cannot. Leaving one unanswered is none of the three — the reader's own default
 becomes the answer, and the wrapped learner's declaration is dropped with
 nothing said. The Gaussian process, which runs its explorer inside its own
-cycle, answers for itself: it declares no generation, because it proposes as
-many as its cycle calls for and holds the barrier on its own batch, and so its
-starved refills are counted.
+cycle, answers for itself: it declares no generation, because it tops the
+queue up as the random learners do, and so its starved refills are counted.
 
 Those declarations are facts about an instance. Nothing outside a learner reads
 one from a class, a signature, a registry entry or a count — it builds a

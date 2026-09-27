@@ -7,6 +7,8 @@ from labscript_optimization import config as config_module
 from labscript_optimization.observations import COMPLETE, DROPPED, PENDING, usable
 from labscript_optimization.session import Session
 
+from conftest import settle
+
 BASE = """
 [ANALYSIS]
 cost_key = ["r", "c"]
@@ -605,8 +607,10 @@ def test_each_shot_carries_the_phase_of_the_learner_that_proposed_it(runmanager)
     """The routine's order of events, one shot at a time: the oldest shot
     outstanding reports its cost, the reply carries what is written onto it,
     and the refill comes after. Warmup hands over to the Gaussian process part
-    way through the run, each batch goes out with explorer shots behind it,
-    and the budget ends the run with shots in flight.
+    way through the run, each batch's points go out among the explorer shots
+    that keep the queue topped up, and the budget ends the run with shots in
+    flight. Each batch is waited for before the next shot reports, so the run
+    reaches the Gaussian process's points however long a fit takes.
 
     What is written onto a shot is the phase the learner gave it when it
     proposed it. The phase of the latest proposal is another shot's whenever
@@ -635,6 +639,7 @@ def test_each_shot_carries_the_phase_of_the_learner_that_proposed_it(runmanager)
         # The session submits the answer in order, cut to the budget's room.
         for shot_id, (_, source) in zip(session.refill(), answer):
             proposed_by[shot_id] = source
+        settle(session.learner)
 
     refill()
     while session.awaiting:
@@ -722,56 +727,35 @@ def test_the_budget_keeps_the_first_proposals_a_learner_offers(runmanager):
     assert [p[0] for p in session.proposals.values()] == [0.1, 0.2]
 
 
-def test_the_budget_cuts_explorer_shots_before_any_of_the_batch(runmanager):
-    """The Gaussian process offers its batch first and the explorer shots
-    behind it, and the budget cuts from the end, so a budget with room for
-    less than both spends it on the batch.
-
-    Offered the other way round, the budget would cut into the batch, and the
-    points the Gaussian process chose each conditioned on the ones before it
-    would go out without the ones they were chosen beside.
+@pytest.mark.parametrize(
+    'explorer', ['random', 'directed_random', 'differential_evolution']
+)
+def test_a_gaussian_process_session_runs_end_to_end_with_each_explorer(
+    runmanager, explorer
+):
+    """Warmup, then the model's points and explorer shots, every one of them
+    costed: the real model, computing on its own thread, driven as the routine
+    drives a session. Each batch is waited for before the next shot reports,
+    so the run reaches the model's points however long a fit takes.
     """
     session = Session(
-        gaussian_process_config('max_num_runs = 9', 'warmup_observations = 3'),
+        gaussian_process_config(
+            'max_num_runs = 16',
+            f'explorer = "{explorer}"\nwarmup_observations = 4\nbatch_size = 2',
+        ),
         runmanager,
     )
-    # Warmup at the default depth of two, until three usable observations are
-    # in hand with one warmup shot still queued.
-    for shot_id in session.refill():
-        session.record(shot_id, 1.0, None, False)
-    first, _ = session.refill()
-    session.record(first, 2.0, None, False)
-    # Three completed and one awaited leave room for five of the six offered:
-    # a batch of four and two explorer shots behind it.
-    submitted = session.refill()
-    assert [session.sources[shot_id] for shot_id in submitted] == (
-        ['main'] * 4 + ['explore']
-    )
+    session.refill()
+    while session.awaiting:
+        shot_id = session.awaiting[0]
+        x = session.proposals[shot_id][0]
+        session.record(shot_id, float((x - 0.3) ** 2), None, False)
+        session.refill()
+        settle(session.learner)
 
-
-def test_a_gaussian_process_with_no_buffer_counts_its_starvation(runmanager):
-    """A pure Gaussian process -- no buffer and no explorer shots -- leaves the
-    queue empty while it waits for a shot, and while each batch is fitted, and
-    every refill that finds it so is counted. It declares no generation, so
-    nothing exempts it: the queue running dry is a cost of the settings, not
-    of the method, and ``starved`` is how a lab sees it.
-    """
-    session = Session(
-        gaussian_process_config('num_buffered_runs = 0', 'explore_runs = 0'),
-        runmanager,
-    )
-    assert session.learner.generation is None
-    sizes = []
-    for _ in range(7):
-        submitted = session.refill()
-        sizes.append(len(submitted))
-        for shot_id in submitted:
-            session.record(shot_id, float(len(runmanager.submitted)), None, False)
-    # Warmup one shot at a time until its five, then batches of four with
-    # nothing behind them.
-    assert sizes == [1, 1, 1, 1, 1, 4, 4]
-    # Every refill but the first found nothing of ours queued.
-    assert session.status()['starved'] == 6
+    assert {o.source for o in session.history} == {'warmup', 'main', 'explore'}
+    assert all(o.state == COMPLETE for o in session.history)
+    assert session.stopped == 'reached max_num_runs (16)'
 
 
 def test_a_generational_run_counts_no_starvation(runmanager):

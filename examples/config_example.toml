@@ -39,22 +39,24 @@ learner = "gaussian_process"
 # only one of our shots is empty at exactly that moment and runmanager gives
 # BLACS a default shot instead. At one buffered run roughly every second shot
 # is a default one. Raise it if the "starved" count the routine returns keeps
-# climbing: the fit is taking longer than a shot.
+# climbing.
 #
-# For gaussian_process it is how many explorer shots are queued behind each
-# batch, if that is more than explore_runs, so raising it to cover a slow fit
-# also raises the share of explorer shots; zero is allowed there, and queues
-# explore_runs alone. random and directed_random keep exactly this many in
-# flight, so they refuse zero. Not accepted at all with
-# differential_evolution, which proposes one whole population at a time and
-# waits for all of it: its queue depth is population_size.
+# Every learner that takes it keeps exactly this many in flight, so zero is
+# refused. For gaussian_process that is its batch's points as they become
+# ready and its explorer's shots otherwise, so a slow fit never empties the
+# queue, and each batch cycle holds about this many explorer shots. Not
+# accepted at all with differential_evolution, which proposes one whole
+# population at a time and waits for all of it: its queue depth is
+# population_size.
 num_buffered_runs = 2
 
 # Stop conditions. Omit either to let the session run until removed from lyse.
 max_num_runs = 400
 max_num_runs_without_better_params = 80
 
-# Set for a reproducible run; omit for a different sequence each time.
+# Set for a reproducible run; omit for a different sequence each time. A
+# gaussian_process run is not reproducible either way: which shots its points
+# take depends on how long each fit takes.
 # seed = 12345
 
 # Every learner knob goes in the table of the learner that takes it. A knob in
@@ -77,29 +79,32 @@ trust_range = [0.1, 0.25]
 explore_fraction = 0.0
 
 [LEARNER.gaussian_process]
-# The learner that runs the warmup and the explorer shots behind each batch:
-# random or directed_random, on the knobs of its own table above.
-# differential_evolution cannot explore, because it proposes a whole
-# population at a time, and neither can gaussian_process itself.
+# The learner that runs the warmup and fills the queue while each batch is
+# computed: random, directed_random or differential_evolution, on the knobs of
+# its own table. differential_evolution explores a point or two at a time over
+# its own shots, with no generation barrier; gaussian_process itself cannot
+# explore.
 explorer = "directed_random"
 
 # How many usable observations the explorer gathers before the Gaussian
-# process proposes, counting observations a fit can use rather than shots: a
+# process computes, counting observations a fit can use rather than shots: a
 # NaN cost does not count. Defaults to twice the number of searched
 # parameters, and never fewer than five. Warmup ends at the count, and the
 # explorer shots already queued then still run.
 warmup_observations = 20
 
-# How many points the Gaussian process proposes at a time, each conditioned on
-# the ones before it. The kernel's hyperparameters are refit once per batch,
-# which is the expensive part, and the next batch goes out when every point of
-# this one has come back or been given up on.
+# How many points the Gaussian process computes at a time, each conditioned on
+# the ones before it, and sends out as soon as they are ready. The kernel's
+# hyperparameters are refit once per batch, which is the expensive part, and
+# the next batch is computed once every point of this one has come back or
+# been given up on.
 batch_size = 4
 
-# How many explorer shots follow each batch at the least. num_buffered_runs
-# above raises it and never lowers it: the number queued is the larger of the
-# two. Zero here, beside num_buffered_runs = 0, is a Gaussian process with no
-# explorer shots after warmup, which idles the apparatus during each fit.
+# The least number of explorer shots in each batch cycle, from one batch's
+# first point to the next's, counting the ones that filled the queue. The next
+# batch waits for every point of this one, and the queue is refilled from the
+# explorer meanwhile, so a cycle already holds about num_buffered_runs explorer
+# shots: this adds only what that leaves short.
 explore_runs = 1
 
 # The same knob as the explorer's, with its own value: the search refines

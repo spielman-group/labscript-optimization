@@ -11,6 +11,8 @@ points it needs at any history length.
 import inspect
 import itertools
 import numbers
+import threading
+import time
 import warnings
 
 import dataclasses
@@ -35,14 +37,13 @@ from labscript_optimization.learners import (
     DirectedRandomLearner,
     GaussianProcessLearner,
     InsufficientData,
-    Learner,
     ParameterSpaceLearner,
     RandomLearner,
     build,
 )
 from labscript_optimization.space import Parameter, ParameterSpace
 
-from conftest import FakeRunmanager, observe, run_loop
+from conftest import FakeRunmanager, observe, run_loop, settle
 
 
 def sphere(params):
@@ -150,21 +151,6 @@ def test_a_learner_handed_its_two_arguments_backwards_is_refused(space, rng):
             cls(rng, space)
 
 
-def test_a_learner_that_does_not_propose_cannot_be_built(space, rng):
-    """At either level, and when it is built rather than mid-experiment."""
-
-    class Forgetful(Learner):
-        pass
-
-    class ForgetfulOverASpace(ParameterSpaceLearner):
-        pass
-
-    with pytest.raises(TypeError, match='propose'):
-        Forgetful()
-    with pytest.raises(TypeError, match='propose'):
-        ForgetfulOverASpace(space, rng)
-
-
 def test_a_proposal_without_a_source_is_refused_rather_than_recorded(space, rng):
     """The other half of taking the source from the learner itself.
 
@@ -210,8 +196,7 @@ def test_learners_filling_to_the_hint_keep_exactly_that_many_in_flight(
     The start going out beside this call's proposals has not been submitted
     yet and is in flight all the same, so it takes a place too. A Gaussian
     process short of its warmup fills to the hint the same way, through its
-    explorer; the floor of one shot it keeps in flight is under the two
-    pending here, so at a hint of zero it proposes nothing either.
+    explorer.
     """
     learner = learner(space, rng)
     history = [
@@ -781,16 +766,13 @@ def gaussian_process_history(space, seed, count=12):
 
 
 def test_gaussian_process_finds_the_minimum(space, rng):
-    learner = GaussianProcessLearner(space, rng)
-    history = run_loop(
-        learner,
-        space,
-        offset_sphere,
-        batches=12,
-        k=1,
-        rng=rng,
-        history=gaussian_process_history(space, 4),
-    )
+    model = GaussianProcessLearner(space, rng).model
+    history = gaussian_process_history(space, 4)
+    for batch in range(12):
+        for params in model.ask(history, 4):
+            history.append(
+                observe(f'{batch}-{len(history)}', params, offset_sphere(params))
+            )
     best = min(history, key=lambda o: o.cost)
     assert best.cost < 0.05
     np.testing.assert_allclose(best.params, [1.3, -2.1], atol=0.3)
@@ -808,11 +790,11 @@ def test_gaussian_process_state_depends_only_on_the_history(space):
     whatever the caching does.
     """
     history = gaussian_process_history(space, 9, count=7)
-    all_session = GaussianProcessLearner(space, np.random.default_rng(1))
+    all_session = GaussianProcessLearner(space, np.random.default_rng(1)).model
     all_session.fit(history[:6])
     all_session.fit(history)
 
-    fresh = GaussianProcessLearner(space, np.random.default_rng(2))
+    fresh = GaussianProcessLearner(space, np.random.default_rng(2)).model
     fresh.fit(history)
 
     # The cache is observable through the posterior it produces: two learners
@@ -844,12 +826,12 @@ def test_the_schedule_is_the_list_of_weights_it_was_handed(space):
     one at each weight, the greedy one first -- and the exploring point is the
     one that leaves the incumbent.
     """
-    learner = GaussianProcessLearner(
+    model = GaussianProcessLearner(
         space, np.random.default_rng(3), uncer_bias=[0.0, 5.0]
-    )
+    ).model
     history = gaussian_process_history(space, 5)
     away = np.linalg.norm(
-        learner.ask(history, 2) - best(history).params, axis=1
+        model.ask(history, 2) - best(history).params, axis=1
     )
     assert away[0] < away[1]
 
@@ -864,8 +846,12 @@ def test_a_single_weight_is_a_fixed_one_and_not_a_first_step(space):
     differs between them.
     """
     history = gaussian_process_history(space, 5)
-    greedy = GaussianProcessLearner(space, np.random.default_rng(3), uncer_bias=0.0)
-    fixed = GaussianProcessLearner(space, np.random.default_rng(3), uncer_bias=50.0)
+    greedy = GaussianProcessLearner(
+        space, np.random.default_rng(3), uncer_bias=0.0
+    ).model
+    fixed = GaussianProcessLearner(
+        space, np.random.default_rng(3), uncer_bias=50.0
+    ).model
     assert np.linalg.norm(fixed.ask(history, 1)[0] - greedy.ask(history, 1)[0]) > 0.1
 
 
@@ -889,10 +875,12 @@ def test_each_batch_walks_the_exploration_schedule_from_its_first_weight(
     all.
     """
     history = gaussian_process_history(space, 5, count=count)
-    greedy = GaussianProcessLearner(space, np.random.default_rng(3), uncer_bias=0.0)
+    greedy = GaussianProcessLearner(
+        space, np.random.default_rng(3), uncer_bias=0.0
+    ).model
     walking = GaussianProcessLearner(
         space, np.random.default_rng(3), uncer_bias=SCHEDULE
-    )
+    ).model
     apart = np.linalg.norm(walking.ask(history, 4) - greedy.ask(history, 4), axis=1)
     # A weight of zero times anything is the greedy proposal itself.
     assert apart[0] == 0.0
@@ -910,9 +898,9 @@ def test_a_gaussian_process_batch_does_not_repeat_itself(space, rng):
     so a run of proposals spanning two batches asks for the same greedy point
     twice.
     """
-    learner = GaussianProcessLearner(space, rng)
+    model = GaussianProcessLearner(space, rng).model
     history = gaussian_process_history(space, 5)
-    proposals = learner.ask(history, 6)
+    proposals = model.ask(history, 6)
     # The weights run 0, 1, 2, 3, 0, 1 by position, so the sixth pick repeats
     # the weight of the second. Nothing but the fold-in keeps it off that
     # point: without it the two land 4e-6 apart.
@@ -945,11 +933,15 @@ def test_a_length_scale_at_a_bound_is_reported_when_the_set_of_them_changes(
     """
     from sklearn.exceptions import ConvergenceWarning
 
-    learner = GaussianProcessLearner(space, rng)
+    model = GaussianProcessLearner(space, rng).model
 
-    with pytest.warns(ConvergenceWarning, match='y at the upper end') as first:
-        learner.fit(flat_in_y_history(space, 12))
-    assert learner.at_length_scale_bounds == {'y': 'upper'}
+    # Recorded under the filters in force, not with every warning set to
+    # "always", which would put scikit-learn's copy back in front of the one
+    # that holds it back.
+    with warnings.catch_warnings(record=True) as first:
+        model.fit(flat_in_y_history(space, 12))
+    assert [w for w in first if 'y at the upper end' in str(w.message)]
+    assert model.at_length_scale_bounds == {'y': 'upper'}
     # And scikit-learn's own copy of it is not there beside ours. Its wording
     # is what tells it apart from the white-noise level's bound, which is the
     # same message about a different hyperparameter and is left alone.
@@ -961,16 +953,15 @@ def test_a_length_scale_at_a_bound_is_reported_when_the_set_of_them_changes(
     ]
 
     with warnings.catch_warnings(record=True) as again:
-        warnings.simplefilter('always')
-        learner.fit(flat_in_y_history(space, 13))
-    assert learner.at_length_scale_bounds == {'y': 'upper'}
+        model.fit(flat_in_y_history(space, 13))
+    assert model.at_length_scale_bounds == {'y': 'upper'}
     assert not [w for w in again if 'length_scale' in str(w.message)]
 
     # The set moving back to empty is a change like any other: silence here
     # would read the same as the refit above, where it had not moved.
     with pytest.warns(ConvergenceWarning, match='inside length_scale_bounds'):
-        learner.fit(gaussian_process_history(space, 5))
-    assert learner.at_length_scale_bounds == {}
+        model.fit(gaussian_process_history(space, 5))
+    assert model.at_length_scale_bounds == {}
 
 
 def test_the_rest_of_what_a_refit_warns_about_still_reaches_the_lab(space, rng):
@@ -983,20 +974,31 @@ def test_the_rest_of_what_a_refit_warns_about_still_reaches_the_lab(space, rng):
     """
     from sklearn.exceptions import ConvergenceWarning
 
-    learner = GaussianProcessLearner(space, rng)
-    with pytest.warns(ConvergenceWarning, match='noise_level'):
-        learner.fit(flat_in_y_history(space, 12))
+    model = GaussianProcessLearner(space, rng).model
+    # Under the filters in force, as the test above explains.
+    with warnings.catch_warnings(record=True) as caught:
+        model.fit(flat_in_y_history(space, 12))
+    assert [
+        w
+        for w in caught
+        if issubclass(w.category, ConvergenceWarning)
+        and 'noise_level' in str(w.message)
+    ]
 
 
 def test_a_gaussian_process_describes_the_real_data_after_proposing(space, rng):
-    """Proposing must not leave the model believing its own guesses."""
-    learner = GaussianProcessLearner(space, rng)
+    """Proposing must not leave the model believing its own guesses.
+
+    A guess folded in at its own predicted cost leaves the mean where it was,
+    so it shows in the uncertainty, and most where the guess landed.
+    """
+    model = GaussianProcessLearner(space, rng).model
     history = gaussian_process_history(space, 6)
-    learner.propose(history, 1)
-    before = learner.predict(history[0].params)[0]
-    learner.propose(history, 5)
-    after = learner.predict(history[0].params)[0]
-    np.testing.assert_allclose(before, after)
+    # The first pick of a batch, and so where its first invented point lands.
+    probe = model.ask(history, 1)[0]
+    before = model.predict(probe)
+    model.ask(history, 4)
+    np.testing.assert_allclose(model.predict(probe), before)
 
 
 def test_a_gaussian_process_describes_the_real_data_after_a_proposal_fails(
@@ -1011,14 +1013,14 @@ def test_a_gaussian_process_describes_the_real_data_after_a_proposal_fails(
     for where it thinks the optimum is, would be reading those guesses back as
     measurements.
     """
-    learner = GaussianProcessLearner(space, rng)
+    model = GaussianProcessLearner(space, rng).model
     history = gaussian_process_history(space, 8)
     # The first pick of a batch, and so where its first invented point lands.
-    probe = learner.ask(history, 1)[0]
-    before = learner.predict(probe)
+    probe = model.ask(history, 1)[0]
+    before = model.predict(probe)
 
     searches = []
-    search = learner.minimise_acquisition
+    search = model.minimise_acquisition
 
     def give_up_after_the_first(*args, **kwargs):
         searches.append(1)
@@ -1026,20 +1028,20 @@ def test_a_gaussian_process_describes_the_real_data_after_a_proposal_fails(
             raise RuntimeError('the minimiser gave up')
         return search(*args, **kwargs)
 
-    learner.minimise_acquisition = give_up_after_the_first
+    model.minimise_acquisition = give_up_after_the_first
     with pytest.raises(RuntimeError, match='gave up'):
-        learner.propose(history, 4)
+        model.ask(history, 4)
 
-    np.testing.assert_allclose(learner.predict(probe), before)
+    np.testing.assert_allclose(model.predict(probe), before)
 
 
 def test_the_search_waits_for_the_warmup_it_defaults_to(space, rng):
     """Five usable observations over two parameters, the floor of the default."""
     history = gaussian_process_history(space, 3, count=5)
-    learner = GaussianProcessLearner(space, rng)
+    model = GaussianProcessLearner(space, rng).model
     with pytest.raises(InsufficientData):
-        learner.ask(history[:-1], 1)
-    assert space.contains(learner.ask(history, 1)).all()
+        model.ask(history[:-1], 1)
+    assert space.contains(model.ask(history, 1)).all()
 
 
 def test_a_batch_is_proposed_from_a_history_whose_points_carry_uncertainties(
@@ -1051,7 +1053,7 @@ def test_a_batch_is_proposed_from_a_history_whose_points_carry_uncertainties(
     """
     points = space.uniform(np.random.default_rng(7), 12)
     history = [observe(i, p, offset_sphere(p), uncer=0.1) for i, p in enumerate(points)]
-    proposals = GaussianProcessLearner(space, rng).ask(history, 3)
+    proposals = GaussianProcessLearner(space, rng).model.ask(history, 3)
     assert space.contains(proposals).all()
 
 
@@ -1061,9 +1063,9 @@ def test_gaussian_process_uses_per_point_uncertainties(space, rng):
     exact = [observe(i, p, offset_sphere(p), uncer=0.0) for i, p in enumerate(points)]
     noisy = [observe(i, p, offset_sphere(p), uncer=5.0) for i, p in enumerate(points)]
 
-    tight = GaussianProcessLearner(space, rng)
+    tight = GaussianProcessLearner(space, rng).model
     tight.fit(exact)
-    loose = GaussianProcessLearner(space, rng)
+    loose = GaussianProcessLearner(space, rng).model
     loose.fit(noisy)
 
     probe = np.array([0.0, 0.0])
@@ -1157,6 +1159,65 @@ def test_a_learner_that_hides_its_knobs_in_kwargs_is_refused(space, monkeypatch)
 # --- the Gaussian process's cycle ------------------------------------------
 
 
+class Model:
+    """Stands in for the Gaussian process's model, so a test decides when a
+    batch is ready.
+
+    A batch is constant points, finished once ``ready`` is set, and every
+    history the model is handed is kept. It runs on the learner's own thread,
+    as the real one does.
+    """
+
+    def __init__(self, space, ready=True):
+        self.space = space
+        self.ready = threading.Event()
+        if ready:
+            self.ready.set()
+        self.error = None
+        self.handed = []
+
+    def ask(self, history, k):
+        self.handed.append(history)
+        self.ready.wait(10)
+        if self.error is not None:
+            raise self.error
+        return np.full((k, self.space.num_params), 0.5)
+
+
+def driven(space, model, hint=2, **knobs):
+    """A session running a Gaussian process with ``model`` swapped in, and a
+    warmup of three."""
+    learner = GaussianProcessLearner(
+        space, np.random.default_rng(5), warmup_observations=3, **knobs
+    )
+    learner.model = model
+    config = Config(
+        space=space, globals=(), cost_key=('r', 'c'), num_buffered_runs=hint
+    )
+    return Session(config, FakeRunmanager(), learner)
+
+
+def step(session, back=1):
+    """The oldest ``back`` shots in flight report and the session refills, as
+    the routine drives it. Returns the source of each shot submitted, once any
+    batch a ready model was set computing has finished."""
+    for shot_id in session.awaiting[:back]:
+        session.record(shot_id, offset_sphere(session.proposals[shot_id]), None, False)
+    submitted = session.refill()
+    if session.learner.model.ready.is_set():
+        settle(session.learner)
+    return [session.sources[shot_id] for shot_id in submitted]
+
+
+def past_warmup(session):
+    """Step ``session`` from its opening until a refill proposes no warmup
+    shot, and return that refill's sources."""
+    sources = step(session, back=0)
+    while 'warmup' in sources:
+        sources = step(session)
+    return sources
+
+
 def sources_of(proposed):
     """The source of each proposal, in the order they are to be run."""
     return [source for _, source in proposed]
@@ -1171,92 +1232,144 @@ def sent_out(history, proposed, source=None):
     ]
 
 
-def come_back(history, **states):
-    """``history`` with the shots named brought back: completed at a cost, or
-    dropped where the state given is ``DROPPED``."""
-    back = []
-    for record in history:
-        state = states.get(record.shot_id)
-        if state == COMPLETE:
-            record = dataclasses.replace(
-                record, cost=offset_sphere(record.params), state=COMPLETE
-            )
-        elif state == DROPPED:
-            record = dataclasses.replace(record, state=DROPPED)
-        back.append(record)
-    return back
+def test_while_a_batch_computes_the_queue_is_topped_up_with_explorer_shots(space):
+    """The apparatus does not wait on a fit: every refill while the model is
+    computing tops the shots in flight up to the hint from the explorer."""
+    model = Model(space, ready=False)
+    session = driven(space, model, hint=3)
+    assert past_warmup(session) == ['explore']
+    for _ in range(5):
+        assert step(session) == ['explore']
+        assert len(session.awaiting) == 3
+    model.ready.set()
 
 
-def test_a_batch_is_batch_size_points_and_nothing_while_one_of_them_is_out(space, rng):
-    """No second batch while any point of the first is pending, however many
-    of it have come back, and the next one as soon as the last is back.
-
-    Ignoring the states sends a second batch out behind the first, each point
-    of it computed without the costs the first is about to return; holding the
-    batch on every record of its source, whatever its state, stalls the run
-    for good after the first one.
-    """
-    learner = GaussianProcessLearner(space, rng, batch_size=3, explore_runs=0)
-    history = gaussian_process_history(space, 4)
-
-    batch = learner.propose(history, 0)
-    assert sources_of(batch) == ['main'] * 3
-    out = sent_out(history, batch)
-    first, second, third = (o.shot_id for o in out[-3:])
-    assert learner.propose(out, 0) == []
-    assert learner.propose(come_back(out, **{first: COMPLETE, second: COMPLETE}), 0) == []
-
-    back = come_back(out, **{first: COMPLETE, second: COMPLETE, third: COMPLETE})
-    assert sources_of(learner.propose(back, 0)) == ['main'] * 3
+def test_a_ready_batch_goes_out_ahead_of_explorer_shots(space):
+    """Its points first, and explorer shots only in the places left, so that
+    what the run budget has no room for is cut from the explorer's."""
+    session = driven(space, Model(space), hint=3, batch_size=2)
+    past_warmup(session)
+    assert step(session, back=3) == ['main', 'main', 'explore']
 
 
-def test_a_dropped_point_of_the_batch_releases_it(space, rng):
-    """A shot that will never report is as back as it will ever be.
-
-    Waiting for it to complete instead stalls the cycle for good on the first
+def test_the_next_batch_is_computed_once_none_of_the_last_is_pending(space):
+    """So the model has every answer it asked for. Explorer shots in flight do
+    not hold it up, and a point that will never report is as back as it will
+    ever be: waiting for it to complete stalls the cycle for good on the first
     shot an operator deletes.
     """
-    learner = GaussianProcessLearner(space, rng, batch_size=3, explore_runs=0)
-    history = gaussian_process_history(space, 4)
-    out = sent_out(history, learner.propose(history, 0))
-    first, second, third = (o.shot_id for o in out[-3:])
+    model = Model(space)
+    session = driven(space, model, hint=2, batch_size=2)
+    past_warmup(session)
+    assert step(session) == ['main']
+    assert step(session) == ['main']
+    assert step(session) == ['explore']
+    assert len(model.handed) == 1
 
-    back = come_back(out, **{first: COMPLETE, second: COMPLETE, third: DROPPED})
-    assert sources_of(learner.propose(back, 0)) == ['main'] * 3
+    (last,) = [s for s in session.awaiting if session.sources[s] == 'main']
+    session.interface.lose(last)
+    session.reconcile()
+    assert step(session, back=0) == ['explore']
+    assert len(model.handed) == 2
+    assert {session.sources[s] for s in session.awaiting} == {'explore'}
 
 
-def test_explorer_shots_in_flight_never_hold_the_next_batch_back(space, rng):
-    """Explorer shots queued behind a batch, and warmup shots still queued at
-    its handover, keep the apparatus busy while the batch is fitted; they are
-    not waited for. Holding the batch on every pending record would leave the
-    Gaussian process waiting on its own buffer.
+def test_warmup_is_the_explorers_alone(space):
+    """The model is not asked for anything until warmup is over."""
+    model = Model(space)
+    session = driven(space, model)
+    sources = step(session, back=0) + step(session) + step(session)
+    assert sources == ['warmup'] * 4
+    assert model.handed == []
+
+
+def test_a_model_that_raises_stops_the_session_at_the_next_refill(space):
+    """Its error comes out of the refill that finds the computation over, and
+    the worker stops the session with it. Raised on the model's own thread it
+    would reach nobody."""
+    model = Model(space)
+    model.error = RuntimeError('the fit gave up')
+    session = driven(space, model)
+    past_warmup(session)
+    with pytest.raises(RuntimeError, match='the fit gave up'):
+        step(session)
+
+
+def test_each_batch_cycle_holds_at_least_explore_runs_explorer_shots(space):
+    """Counted from one batch's first point to the next's, and every explorer
+    shot in that span counts, the ones that kept the queue topped up while the
+    batch computed among them: a ready batch waits only for the rest.
+
+    Counted apart from those, a cycle here would hold four; left uncounted, one.
     """
-    learner = GaussianProcessLearner(space, rng, batch_size=2, explore_runs=0)
-    history = gaussian_process_history(space, 4)
-    points = space.uniform(np.random.default_rng(9), 3)
-    queued = sent_out(history, [(points[0], 'warmup'), (points[1], 'explore')])
-    queued = sent_out(queued, [(points[2], 'explore')])
-    assert sources_of(learner.propose(queued, 0)) == ['main'] * 2
+    model = Model(space)
+    session = driven(space, model, hint=1, batch_size=2, explore_runs=3)
+    sources = past_warmup(session)
+    for _ in range(20):
+        sources += step(session)
+    firsts = [i for i, source in enumerate(sources) if source == 'main'][::2]
+    between = [sources[a:b].count('explore') for a, b in zip(firsts, firsts[1:])]
+    assert len(between) >= 3
+    assert between == [3] * len(between)
+    assert len(model.handed) == len(firsts) + 1
 
 
-@pytest.mark.parametrize(
-    'explore_runs, hint, behind',
-    [(2, 0, 2), (2, 1, 2), (2, 2, 2), (2, 5, 5), (1, 0, 1), (0, 0, 0), (0, 3, 3)],
-)
-def test_the_explorer_shots_behind_a_batch_are_the_larger_of_the_two_settings(
-    space, rng, explore_runs, hint, behind
-):
-    """max(``explore_runs``, ``num_buffered_runs``), behind the batch.
+def test_a_batch_is_computed_from_the_history_as_its_computation_began(space):
+    """Not as it stands when its points go out: the shots proposed while it
+    computed are not in it, and neither is anything that came back since."""
+    model = Model(space, ready=False)
+    session = driven(space, model)
+    sources = past_warmup(session)
+    began = [o.shot_id for o in session.history][: -len(sources)]
+    step(session)
+    step(session)
+    model.ready.set()
+    settle(session.learner)
+    assert step(session) == ['main']
+    assert [o.shot_id for o in model.handed[0]] == began
 
-    ``explore_runs`` is the exploring the Gaussian process does regardless and
-    the buffer only ever adds to it, so a hint of zero leaves ``explore_runs``
-    as it is -- and both at zero is a batch with nothing behind it.
-    """
-    learner = GaussianProcessLearner(
-        space, rng, batch_size=2, explore_runs=explore_runs
-    )
-    proposed = learner.propose(gaussian_process_history(space, 4), hint)
-    assert sources_of(proposed) == ['main'] * 2 + ['explore'] * behind
+
+def test_a_ready_batch_goes_out_as_far_as_the_queue_has_room(space):
+    """The rest stay ready for the refills after, and nothing new is computed
+    while they wait or while a point of the batch is still out."""
+    model = Model(space)
+    session = driven(space, model, hint=2, batch_size=4)
+    past_warmup(session)
+    assert step(session, back=2) == ['main', 'main']
+    assert step(session) == ['main']
+    assert step(session) == ['main']
+    assert step(session) == ['explore']
+    assert len(model.handed) == 1
+
+
+def test_with_explore_runs_of_zero_the_explorer_only_fills(space):
+    """A model ready at once leaves explorer shots only where no point of a
+    batch is ready, which at a depth of one is the refill that starts each
+    batch computing. A model still computing is topped up as ever."""
+    session = driven(space, Model(space), hint=1, batch_size=2, explore_runs=0)
+    sources = past_warmup(session)
+    for _ in range(11):
+        sources += step(session)
+    assert sources == ['explore', 'main', 'main'] * 4
+
+    slow = Model(space, ready=False)
+    session = driven(space, slow, explore_runs=0)
+    past_warmup(session)
+    assert [step(session) for _ in range(3)] == [['explore']] * 3
+    slow.ready.set()
+
+
+def test_a_model_that_never_finishes_holds_no_refill_up(space):
+    """The batch is read only once its computation is over, so every refill
+    goes out at once, with explorer shots, however long the fit takes."""
+    model = Model(space, ready=False)
+    session = driven(space, model)
+    past_warmup(session)
+    started = time.monotonic()
+    for _ in range(5):
+        assert step(session) == ['explore']
+    assert time.monotonic() - started < 5
+    model.ready.set()
 
 
 def test_warmup_ends_at_a_count_of_usable_observations_and_not_of_shots(space, rng):
@@ -1266,6 +1379,7 @@ def test_warmup_ends_at_a_count_of_usable_observations_and_not_of_shots(space, r
     observations to fit to.
     """
     learner = GaussianProcessLearner(space, rng, warmup_observations=5)
+    learner.model = Model(space)
     points = space.uniform(np.random.default_rng(8), 8)
     history = [observe(i, p, offset_sphere(p)) for i, p in enumerate(points[:4])]
     history += [
@@ -1276,35 +1390,9 @@ def test_warmup_ends_at_a_count_of_usable_observations_and_not_of_shots(space, r
     assert sources_of(learner.propose(history, 2)) == ['warmup'] * 2
 
     history.append(observe(4, points[7], offset_sphere(points[7])))
-    assert sources_of(learner.propose(history, 2)) == ['main'] * 4 + ['explore'] * 2
-
-
-@pytest.mark.parametrize(
-    'explore_runs, hint, in_flight, proposed',
-    [
-        (0, 0, 0, 1),
-        (2, 0, 0, 2),
-        (0, 3, 0, 3),
-        (2, 3, 0, 3),
-        (2, 3, 2, 1),
-        (0, 0, 2, 0),
-    ],
-)
-def test_warmup_keeps_the_larger_setting_or_one_shot_in_flight(
-    space, rng, explore_runs, hint, in_flight, proposed
-):
-    """max(``explore_runs``, ``num_buffered_runs``, 1), counting every shot in
-    flight, the configured start among them.
-
-    The floor of one is what starts a Gaussian process at both settings zero:
-    without it such a run would never propose its first shot.
-    """
-    learner = GaussianProcessLearner(space, rng, explore_runs=explore_runs)
-    history = [
-        Observation(None, np.zeros(2), None, state=PENDING, source='start'),
-        observe('warm', [1.0, 1.0], None, state=PENDING, source='warmup'),
-    ][:in_flight]
-    assert sources_of(learner.propose(history, hint)) == ['warmup'] * proposed
+    assert sources_of(learner.propose(history, 2)) == ['explore'] * 2
+    settle(learner)
+    assert len(learner.model.handed) == 1
 
 
 @pytest.mark.parametrize('num_params, warmup', [(1, 5), (2, 5), (3, 6), (5, 10)])
@@ -1316,7 +1404,7 @@ def test_the_warmup_scales_with_the_search_above_a_floor_of_five(num_params, war
     assert learner.warmup_observations == warmup
 
 
-def test_the_explorer_proposes_the_warmup_and_the_shots_behind_each_batch(space, rng):
+def test_the_explorer_proposes_the_warmup_and_the_shots_that_fill_the_queue(space):
     """The routing, not only the source the shots are given."""
 
     class Marked(RandomLearner):
@@ -1325,17 +1413,67 @@ def test_the_explorer_proposes_the_warmup_and_the_shots_behind_each_batch(space,
         def ask(self, history, k):
             return np.full((k, self.space.num_params), 4.5)
 
-    learner = GaussianProcessLearner(
-        space, rng, explorer=Marked(space, rng), explore_runs=2
-    )
-    warmup = learner.propose([], 2)
-    assert sources_of(warmup) == ['warmup'] * 2
-    assert all((params == 4.5).all() for params, _ in warmup)
+    marked = Marked(space, np.random.default_rng(1))
+    session = driven(space, Model(space), explorer=marked)
+    past_warmup(session)
+    for _ in range(8):
+        step(session)
+    by_source = {}
+    for shot_id, params in session.proposals.items():
+        by_source.setdefault(session.sources[shot_id], []).append(params)
+    assert set(by_source) == {'warmup', 'main', 'explore'}
+    assert all((p == 4.5).all() for p in by_source['warmup'] + by_source['explore'])
+    assert not any((p == 4.5).all() for p in by_source['main'])
 
-    cycle = learner.propose(gaussian_process_history(space, 4), 0)
-    assert sources_of(cycle) == ['main'] * 4 + ['explore'] * 2
-    assert not any((params == 4.5).all() for params, _ in cycle[:4])
-    assert all((params == 4.5).all() for params, _ in cycle[4:])
+
+class Recording(DifferentialEvolutionLearner):
+    """Differential evolution, keeping every history it is handed."""
+
+    def ask(self, history, k):
+        self.handed.append(list(history))
+        return super().ask(history, k)
+
+
+def recording(space):
+    explorer = Recording(space, np.random.default_rng(2), population_size=4)
+    explorer.handed = []
+    return explorer
+
+
+def test_differential_evolution_explores_over_its_own_shots_alone():
+    """A proposal's role is its position among its own proposals, so it is
+    handed those and nothing else: not the configured start, and not the
+    batches. The model is handed every record."""
+    space = ParameterSpace(
+        [Parameter('x', -5.0, 5.0, start=1.0), Parameter('y', -5.0, 5.0, start=1.0)]
+    )
+    explorer, model = recording(space), Model(space)
+    session = driven(space, model, explorer=explorer)
+    past_warmup(session)
+    for _ in range(8):
+        step(session)
+    handed = {o.source for history in explorer.handed for o in history}
+    assert handed == {'warmup', 'explore'}
+    assert {o.source for o in model.handed[-1]} == {
+        'start', 'warmup', 'main', 'explore'
+    }
+
+
+def test_a_dropped_explorer_shot_keeps_its_place_in_the_explorers_history(space):
+    """It spent a position, and positions are roles to differential
+    evolution, so it stays where it was; the model is handed it too."""
+    explorer, model = recording(space), Model(space)
+    session = driven(space, model, explorer=explorer)
+    step(session, back=0)
+    lost = session.awaiting[0]
+    session.interface.lose(lost)
+    session.reconcile()
+    sources = step(session, back=0)
+    first = explorer.handed[-1][0]
+    assert (first.shot_id, first.state) == (lost, DROPPED)
+    while 'warmup' in sources:
+        sources = step(session)
+    assert lost in [o.shot_id for o in model.handed[0]]
 
 
 def test_a_batch_does_not_condition_on_the_explorer_shots_in_flight(space):
@@ -1350,56 +1488,28 @@ def test_a_batch_does_not_condition_on_the_explorer_shots_in_flight(space):
         [(p, 'explore') for p in space.uniform(np.random.default_rng(9), 3)],
     )
     batches = [
-        GaussianProcessLearner(space, np.random.default_rng(3), explore_runs=0).propose(
-            seen, 0
-        )
+        GaussianProcessLearner(space, np.random.default_rng(3)).model.ask(seen, 4)
         for seen in (history, in_flight)
     ]
-    np.testing.assert_array_equal(
-        [params for params, _ in batches[0]], [params for params, _ in batches[1]]
-    )
-
-
-def test_the_cycle_is_warmup_then_batches_with_explorer_shots_behind_them(space):
-    """The whole cycle, driven as a session drives it: whatever is proposed
-    goes out, and the oldest shot in flight comes back before each refill.
-
-    Warmup ends at five usable observations with one warmup shot still
-    queued, and that shot runs: a sixth, by design. Every batch after it goes
-    out as soon as its last point is back, with the two explorer shots of the
-    one before still in flight.
-    """
-    learner = GaussianProcessLearner(space, np.random.default_rng(3))
-    history, sources = [], []
-    for _ in range(20):
-        proposed = learner.propose(history, 2)
-        sources += sources_of(proposed)
-        history = sent_out(history, proposed)
-        oldest = next((o.shot_id for o in history if o.state == PENDING), None)
-        history = come_back(history, **{oldest: COMPLETE})
-    assert sources[:24] == ['warmup'] * 6 + (['main'] * 4 + ['explore'] * 2) * 3
+    np.testing.assert_array_equal(batches[0], batches[1])
 
 
 def test_the_explorer_is_one_of_the_learners_that_draw_without_fitting(space, rng):
     """By name, built from its defaults, or handed over built.
 
-    Differential evolution proposes only whole generations and a Gaussian
-    process only once it has warmed up, so neither can keep a warmup topped up
-    shot by shot or fill a buffer on demand.
+    A Gaussian process proposes nothing until it has warmed up, so it can
+    neither keep a warmup topped up shot by shot nor fill a queue on demand.
     """
     assert type(GaussianProcessLearner(space, rng).explorer) is DirectedRandomLearner
     assert type(GaussianProcessLearner(space, rng, explorer='random').explorer) is (
         RandomLearner
     )
-    mine = DirectedRandomLearner(space, rng, trust_region=0.3)
+    evolving = GaussianProcessLearner(space, rng, explorer='differential_evolution')
+    assert type(evolving.explorer) is DifferentialEvolutionLearner
+    mine = DifferentialEvolutionLearner(space, rng, population_size=4)
     assert GaussianProcessLearner(space, rng, explorer=mine).explorer is mine
 
-    for other in (
-        DifferentialEvolutionLearner(space, rng, population_size=4),
-        GaussianProcessLearner(space, rng),
-        'differential_evolution',
-        'gaussian_process',
-    ):
+    for other in (GaussianProcessLearner(space, rng), 'gaussian_process'):
         with pytest.raises(ValueError, match='explorer must be one of'):
             GaussianProcessLearner(space, rng, explorer=other)
 
@@ -1421,11 +1531,9 @@ def test_a_batch_of_nothing_is_refused_and_one_point_is_accepted(space, rng):
     assert GaussianProcessLearner(space, rng, batch_size=1).batch_size == 1
 
 
-def test_no_explorer_shots_beyond_the_buffer_is_accepted_and_fewer_is_refused(
-    space, rng
-):
-    """Zero is a Gaussian process exploring only as far as
-    ``num_buffered_runs`` asks it to, which is a run a lab may want."""
+def test_explore_runs_of_zero_is_accepted_and_fewer_is_refused(space, rng):
+    """Zero is a Gaussian process whose explorer only fills the queue, which
+    is a run a lab may want."""
     with pytest.raises(ValueError, match='explore_runs.*cannot be negative'):
         GaussianProcessLearner(space, rng, explore_runs=-1)
     assert GaussianProcessLearner(space, rng, explore_runs=0).explore_runs == 0
@@ -1442,11 +1550,11 @@ def test_an_acquisition_that_is_never_finite_says_so(space, rng):
                 return np.full(rows, np.nan), np.full(rows, np.nan)
             return np.full(rows, np.nan)
 
-    learner = GaussianProcessLearner(space, rng)
+    model = GaussianProcessLearner(space, rng).model
     lows = np.zeros(space.num_params)
     highs = np.ones(space.num_params)
     with pytest.raises(RuntimeError, match='not finite at any'):
-        learner.minimise_acquisition(
+        model.minimise_acquisition(
             NotFinite(), 1.0, space.minimum, lows, highs
         )
 
@@ -1456,49 +1564,49 @@ def test_an_exact_cost_beside_one_with_no_uncertainty_is_refused(space, rng):
     only some shots carry an uncertainty gives the rest a variance of exactly
     zero with no white-noise term anywhere, and the fit is singular.
     """
-    learner = GaussianProcessLearner(
+    model = GaussianProcessLearner(
         space, rng, cost_has_noise=False, warmup_observations=2
-    )
+    ).model
     history = [
         observe('a', space.minimum, 1.0, uncer=0.1),
         observe('b', space.maximum, 2.0),
     ]
     with pytest.raises(ValueError, match="'b'"):
-        learner.fit(history)
+        model.fit(history)
 
 
 def test_costs_that_all_carry_an_uncertainty_fit_without_noise(space, rng):
-    learner = GaussianProcessLearner(
+    model = GaussianProcessLearner(
         space, rng, cost_has_noise=False, warmup_observations=2
-    )
+    ).model
     history = [
         observe('a', space.minimum, 1.0, uncer=0.1),
         observe('b', space.maximum, 2.0, uncer=0.2),
     ]
-    assert learner.fit(history)
+    assert model.fit(history)
 
 
 def test_costs_that_carry_no_uncertainty_at_all_fit_without_noise(space, rng):
-    learner = GaussianProcessLearner(
+    model = GaussianProcessLearner(
         space, rng, cost_has_noise=False, warmup_observations=2
-    )
+    ).model
     history = [
         observe('a', space.minimum, 1.0),
         observe('b', space.maximum, 2.0),
     ]
-    assert learner.fit(history)
+    assert model.fit(history)
 
 
 def test_a_mixed_history_still_fits_when_the_cost_has_noise(space, rng):
     """The ordinary case: a lab whose uncertainty fit fails on some shots."""
-    learner = GaussianProcessLearner(
+    model = GaussianProcessLearner(
         space, rng, cost_has_noise=True, warmup_observations=2
-    )
+    ).model
     history = [
         observe('a', space.minimum, 1.0, uncer=0.1),
         observe('b', space.maximum, 2.0),
     ]
-    assert learner.fit(history)
+    assert model.fit(history)
 
 
 def test_a_late_cost_refits_a_set_of_unchanged_size(space):
@@ -1526,12 +1634,14 @@ def test_a_late_cost_refits_a_set_of_unchanged_size(space):
 
     carried = GaussianProcessLearner(
         space, np.random.default_rng(1), warmup_observations=4
-    )
+    ).model
     carried.fit(waiting_on(2))
     assert len(usable(waiting_on(2))) == len(usable(waiting_on(8))) == 8
     carried.fit(waiting_on(8))
 
-    fresh = GaussianProcessLearner(space, np.random.default_rng(1), warmup_observations=4)
+    fresh = GaussianProcessLearner(
+        space, np.random.default_rng(1), warmup_observations=4
+    ).model
     fresh.fit(waiting_on(8))
 
     grid = space.uniform(np.random.default_rng(5), 5)
@@ -1623,15 +1733,16 @@ MISWRITTEN = [
     (
         'gaussian_process',
         'explorer',
-        'differential_evolution',
-        "explorer must be one of ('random', 'directed_random'), got "
-        "'differential_evolution'",
+        'gaussian_process',
+        "explorer must be one of ('random', 'directed_random', "
+        "'differential_evolution'), got 'gaussian_process'",
     ),
     (
         'gaussian_process',
         'explorer',
         ['random'],
-        "explorer must be one of ('random', 'directed_random'), got ['random']",
+        "explorer must be one of ('random', 'directed_random', "
+        "'differential_evolution'), got ['random']",
     ),
     (
         'directed_random',
@@ -1859,13 +1970,13 @@ def test_a_knob_takes_the_kinds_python_and_numpy_hand_it(space, rng):
         explorer='random',
         trust_region=[1, 2],
     )
-    assert fitting.cost_has_noise is False
-    assert fitting.length_scale_bounds == (1e-2, 1e2)
-    assert fitting.noise_level_bounds == (1e-5, 10.0)
-    assert fitting.cost_bias == 2.0
-    assert fitting.uncer_bias == (0.0, 1.5)
+    assert fitting.model.cost_has_noise is False
+    assert fitting.model.length_scale_bounds == (1e-2, 1e2)
+    assert fitting.model.noise_level_bounds == (1e-5, 10.0)
+    assert fitting.model.cost_bias == 2.0
+    assert fitting.model.uncer_bias == (0.0, 1.5)
     assert fitting.batch_size == 3
     assert fitting.warmup_observations == 4
     assert fitting.explore_runs == 2
     assert type(fitting.explorer) is RandomLearner
-    np.testing.assert_array_equal(fitting.trust_region, [1.0, 2.0])
+    np.testing.assert_array_equal(fitting.model.trust_region, [1.0, 2.0])

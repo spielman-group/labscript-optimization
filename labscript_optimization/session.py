@@ -208,12 +208,12 @@ class Session:
 
         The learner is handed the history and ``num_buffered_runs`` as a hint,
         and answers with whatever its method allows it to propose now, each
-        proposal beside its source: the random learners top the shots in
-        flight up to the hint, a learner declaring a generation proposes a
-        whole one when nothing of the last is outstanding and nothing
-        otherwise, and the Gaussian process proposes a batch with explorer
-        shots behind it when nothing of its last batch is outstanding. The
-        session holds no barrier of its own. It submits what
+        proposal beside its source: a learner declaring no generation tops the
+        shots in flight up to the hint -- the Gaussian process with its batch's
+        points once they are ready, and with explorer shots otherwise -- and
+        one declaring a generation proposes a whole one when nothing of the
+        last is outstanding and nothing otherwise. The session holds no
+        barrier of its own. It submits what
         comes back and records each proposal with its source, which nothing
         changes after; a proposal without one is refused rather than recorded
         as anyone's.
