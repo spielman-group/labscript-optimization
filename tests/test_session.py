@@ -727,6 +727,35 @@ def test_the_budget_keeps_the_first_proposals_a_learner_offers(runmanager):
     assert [p[0] for p in session.proposals.values()] == [0.1, 0.2]
 
 
+def test_the_budget_cuts_explorer_shots_before_any_of_the_batch(runmanager):
+    """A ready batch is offered ahead of the explorer shots, so a budget with
+    room for less than a refill cuts the explorer shots, not points each chosen
+    beside the rest of the batch."""
+    session = Session(
+        gaussian_process_config(
+            'max_num_runs = 10\nnum_buffered_runs = 4',
+            'warmup_observations = 3\nbatch_size = 2',
+        ),
+        runmanager,
+    )
+
+    def report(count):
+        for shot_id in session.awaiting[:count]:
+            x = session.proposals[shot_id][0]
+            session.record(shot_id, float((x - 0.3) ** 2), None, False)
+
+    # Warmup ends with one of its four shots out, and the refill that sets the
+    # batch computing tops the queue up with explorer shots.
+    session.refill()
+    report(3)
+    session.refill()
+    settle(session.learner)
+    # Seven completed leave room for three of the four offered.
+    report(4)
+    submitted = session.refill()
+    assert [session.sources[s] for s in submitted] == ['main', 'main', 'explore']
+
+
 @pytest.mark.parametrize(
     'explorer', ['random', 'directed_random', 'differential_evolution']
 )

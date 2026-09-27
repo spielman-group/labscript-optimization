@@ -1,8 +1,8 @@
 """Machine-learning online optimisation of labscript suite experiments.
 
 A lyse routine proposes shots, runmanager runs them, and the costs come back
-through lyse. The learners are ordinary objects, driven through one method
-and running no threads, so they can be used on their own::
+through lyse. The learners are ordinary objects, driven through one method,
+so they can be used on their own::
 
     from labscript_optimization.learners import GaussianProcessLearner
     from labscript_optimization.space import Parameter, ParameterSpace

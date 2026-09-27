@@ -670,13 +670,9 @@ def from_dict(raw: dict) -> Config:
     # tables. Import lazily so importing this module alone stays lightweight.
     from .learners import build
 
-    # Build the selected learner and ask it, rather than predicting from its
-    # class or its constructor what an instance would say. How many proposals
-    # a learner makes at a time is a fact about the object, and nothing here
-    # knows how it arrives at one. Construction is all this costs: no learner
-    # fits anything before its history holds observations, and the built
-    # learner is discarded -- a session builds its own, from this same
-    # configuration.
+    # Build the learner and ask it how many it proposes at a time, a fact about
+    # the object rather than its class. Construction fits nothing, and this one
+    # is discarded: a session builds its own from the same configuration.
     learner = build(config)
     if "num_buffered_runs" in general and learner.generation is not None:
         raise ValueError(

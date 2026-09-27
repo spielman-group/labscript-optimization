@@ -151,6 +151,16 @@ def test_a_learner_handed_its_two_arguments_backwards_is_refused(space, rng):
             cls(rng, space)
 
 
+def test_a_learner_with_no_way_to_propose_is_refused_when_built(space, rng):
+    """Refused at construction rather than at its first proposal, mid-run."""
+
+    class Empty(ParameterSpaceLearner):
+        pass
+
+    with pytest.raises(TypeError):
+        Empty(space, rng)
+
+
 def test_a_proposal_without_a_source_is_refused_rather_than_recorded(space, rng):
     """The other half of taking the source from the learner itself.
 

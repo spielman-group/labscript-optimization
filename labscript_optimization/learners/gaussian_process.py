@@ -243,9 +243,8 @@ class GaussianProcess:
         #: see :meth:`report_length_scale_bounds`.
         self.at_length_scale_bounds: dict[str, str] = {}
 
-        # Process-wide rather than around each refit: catch_warnings is not
-        # thread-safe, and on this model's thread it would filter, and on exit
-        # reset, warnings raised on the main thread. Here rather than at
+        # Process-wide, since catch_warnings on this model's thread would also
+        # filter, and on exit reset, the main thread's warnings. Here, not at
         # import, where a catch_warnings around the import would drop it.
         warnings.filterwarnings(
             "ignore", message=LENGTH_SCALE_AT_BOUND, category=UserWarning
@@ -728,9 +727,10 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         released = []
         if self.ready:
             # Only a whole batch waits, for explore_runs explorer shots since
-            # the first point of the batch before it, or since the run began.
+            # the run began or the last batch's first point. A batch goes out
+            # unbroken, so its last point will do, however many the budget cut.
             mains = [i for i, o in enumerate(history) if o.source == BATCH_SOURCE]
-            since = (mains[-self.batch_size :] or [0])[0]
+            since = (mains or [0])[-1]
             explored = sum(
                 o.source in (WARMUP_SOURCE, EXPLORE_SOURCE) for o in history[since:]
             )
