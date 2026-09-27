@@ -95,9 +95,8 @@ warmup_observations = 20
 
 # How many points the Gaussian process computes at a time, each conditioned on
 # the ones before it, and sends out as soon as they are ready. The kernel's
-# hyperparameters are refit once per batch, which is the expensive part, and
-# the next batch is computed once every point of this one has come back or
-# been given up on.
+# hyperparameters are refit once per batch, and the next batch is computed
+# once every point of this one has come back or been given up on.
 batch_size = 4
 
 # The least number of explorer shots in each batch cycle, from one batch's

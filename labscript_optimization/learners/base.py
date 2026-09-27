@@ -11,7 +11,8 @@ instance handed the same history for the first time would compute. The one
 thing a learner carries that the history does not fix is the position of its
 own rng stream, which decides where a draw lands and nothing about what the
 learner believes. That rule is what keeps the out-of-order arrival of costs out
-of the learners.
+of the learners. The Gaussian process's kernel is an exception, for speed: each
+refit starts from where the last one ended.
 """
 
 from typing import Sequence

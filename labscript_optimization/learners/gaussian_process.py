@@ -61,9 +61,10 @@ The Gaussian process does not condition on the explorer's shots in flight: a
 random draw is a weaker thing to fold in as a fantasy than a point of its own,
 and conditioning on pending points is measured to make the answer worse.
 
-Refitting the kernel hyperparameters is the expensive part, so it happens once
-per batch, on the usable observations in hand when the batch is computed; the
-posterior is refit to all of them with those hyperparameters held.
+The kernel hyperparameters are refit once per batch, on the usable
+observations in hand when the batch is computed, starting from the last
+refit's; the posterior is refit to all of them with those hyperparameters
+held.
 
 scikit-learn and scipy are imported where they are used rather than at the top
 of this module, and nothing here reaches a point of use until a batch is
@@ -152,9 +153,10 @@ def in_background(function, *args) -> Future:
 class GaussianProcess:
     """A Gaussian process fit to the history, and a search of its posterior.
 
-    A function of the history it is handed, apart from its own rng: what it
-    keeps between calls is a cache of the kernel. :class:`GaussianProcessLearner`
-    runs :meth:`ask` on a thread of its own and reads nothing else of it. Past
+    What it keeps between calls is the kernel of its last refit, which the
+    next refit starts from, so its fit depends on the histories it was handed
+    before as well as the one in hand. :class:`GaussianProcessLearner` runs
+    :meth:`ask` on a thread of its own and reads nothing else of it. Past
     ``space`` and ``rng`` it takes, by keyword, the knobs of the same names
     that :class:`GaussianProcessLearner` documents.
 
@@ -299,10 +301,10 @@ class GaussianProcess:
 
         The scaling belongs with them because it sets the units the noise level
         is measured in: restandardising as each observation arrived would leave
-        a cached kernel describing units that had since moved. The restart
-        draws are seeded from the number of observations in ``seen``, not from
-        the learner's rng, which would make the search depend on how much this
-        instance had already proposed.
+        a cached kernel describing units that had since moved. The fit starts
+        from the kernel of the last refit, or from :meth:`new_kernel` at the
+        first, and runs no restarts, so a refit is one descent from where the
+        last one ended.
 
         scikit-learn warns once per length scale left at a bound on every fit,
         which is a real diagnostic said too often to be read. That one message
@@ -319,11 +321,9 @@ class GaussianProcess:
         costs = costs_array(seen).reshape(-1, 1)
         scaler = StandardScaler().fit(costs)
         regressor = GaussianProcessRegressor(
-            kernel=self.new_kernel(),
+            kernel=self.new_kernel() if self._kernel is None else self._kernel,
             alpha=self.point_variances(seen, scaler),
             normalize_y=False,
-            n_restarts_optimizer=self.num_restarts,
-            random_state=len(seen),
         )
         regressor.fit(
             self.space.scale(params_array(seen)),
@@ -390,9 +390,7 @@ class GaussianProcess:
 
         The hyperparameters are fitted to the usable observations in hand and
         kept for as long as those are the observations handed over, which
-        within a session is the one call per batch that computes it. What an
-        instance keeps is a cache: it holds the kernel a fresh instance handed
-        the same history computes, however much this one has fitted before.
+        within a session is the one call per batch that computes it.
         """
         from sklearn.gaussian_process import GaussianProcessRegressor
 
