@@ -74,8 +74,8 @@ RENAMED_TABLES = {"MLOOP": "GENERAL", "MLOOP_PARAMS": "PARAMETERS"}
 #: refused by name, in ``[GENERAL]`` or in that table, rather than aliased: an
 #: old file would go on loading with its settings read as something they do
 #: not say. ``num_runs_between_trainer_runs`` is a period between one
-#: explorer shot and the next, for one, where ``explore_runs`` counts the
-#: explorer shots behind each batch.
+#: explorer shot and the next, for one, where ``explore_runs`` is the least
+#: number of explorer shots in each batch cycle.
 RENAMED_KEYS = {
     "trainer": "explorer",
     "num_training_runs": "warmup_observations",
@@ -109,7 +109,11 @@ GENERAL_KEYS = frozenset(
 #: because ``check_stop`` is reached only from ``record`` and nothing is ever
 #: recorded to reach it with.
 INTEGER_SETTINGS = {
-    "num_buffered_runs": (0, "a queue cannot hold fewer than none of our shots"),
+    "num_buffered_runs": (
+        1,
+        "a learner topping up a queue asked to hold none of the session's "
+        "shots never proposes one",
+    ),
     "seed": (0, "numpy's generator is seeded from a non-negative integer"),
     "max_num_runs": (
         1,
@@ -238,15 +242,13 @@ class Config:
     #: values of the same knob.
     learner_options: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: How many of this session's shots to keep in runmanager's queue: the
-    #: hint every learner is handed, honoured as far as its method allows. One
-    #: of the shots in flight is always the one BLACS is running, so at two one
-    #: is waiting whenever BLACS asks for the next. The random learners keep
-    #: exactly this many in flight, and so propose nothing at zero, which is
-    #: refused beside them. The Gaussian process queues max(``explore_runs``,
-    #: this) explorer shots behind each batch, so zero there is no buffer
-    #: beyond ``explore_runs``. A learner declaring a generation sets its own
-    #: depth from that declaration, and a file writing this beside one is
-    #: refused rather than left with two settings for the same number.
+    #: hint every learner is handed. One of the shots in flight is always the
+    #: one BLACS is running, so at two one is waiting whenever BLACS asks for
+    #: the next. Every learner declaring no generation keeps exactly this many
+    #: in flight, and so would propose nothing at zero. A learner declaring a
+    #: generation sets its own depth from that declaration, and a file writing
+    #: this beside one is refused rather than left with two settings for the
+    #: same number.
     num_buffered_runs: int = 2
     max_num_runs: int | None = None
     #: Stop after this many completed shots without a better cost. Every
@@ -668,13 +670,9 @@ def from_dict(raw: dict) -> Config:
     # tables. Import lazily so importing this module alone stays lightweight.
     from .learners import build
 
-    # Build the selected learner and ask it, rather than predicting from its
-    # class or its constructor what an instance would say. How many proposals
-    # a learner makes at a time is a fact about the object, and nothing here
-    # knows how it arrives at one. Construction, and the one proposal below
-    # from an empty history, are all this costs: no learner fits anything
-    # before its history holds observations, and the built learner is
-    # discarded -- a session builds its own, from this same configuration.
+    # Build the learner and ask it how many it proposes at a time, a fact about
+    # the object rather than its class. Construction fits nothing, and this one
+    # is discarded: a session builds its own from the same configuration.
     learner = build(config)
     if "num_buffered_runs" in general and learner.generation is not None:
         raise ValueError(
@@ -684,19 +682,5 @@ def from_dict(raw: dict) -> Config:
             f"queue depth is therefore that generation, and a second setting "
             f"for the same number is one that can disagree with it: delete "
             f"num_buffered_runs."
-        )
-    # Asked of the learner rather than predicted from its class: a learner
-    # that proposes nothing at the opening of a run is handed the same empty
-    # queue on every refill after it, and never proposes at all. A random
-    # learner at a depth of zero is one; the Gaussian process, whose warmup
-    # keeps one shot in flight whatever the depth, is not. The session places
-    # a configured start itself, so a start is no way out of it either: the
-    # learner meets the start as a shot in flight and still proposes nothing.
-    if not learner.propose([], config.num_buffered_runs):
-        raise ValueError(
-            f"num_buffered_runs is {config.num_buffered_runs}, and learner "
-            f"{config.learner!r} proposes nothing at that depth when a run "
-            f"opens, so the session would never submit a shot of its own. Set "
-            f"num_buffered_runs to at least 1."
         )
     return config
