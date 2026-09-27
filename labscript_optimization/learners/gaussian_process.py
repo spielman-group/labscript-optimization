@@ -435,6 +435,36 @@ class GaussianProcess:
             std * scale,
         )
 
+    def acquisition(self, u: np.ndarray, regressor, uncer_weight: float):
+        """The acquisition and its gradient at scaled parameters ``u``."""
+        from scipy.linalg import solve_triangular
+
+        # Assumes new_kernel's form, with no ConstantKernel, and normalize_y off.
+        kernel = regressor.kernel_
+        if self.cost_has_noise:
+            length_scale, noise = kernel.k1.length_scale, kernel.k2.noise_level
+        else:
+            length_scale, noise = kernel.length_scale, 0.0
+        scaled_distance = (u - regressor.X_train_) / length_scale
+        k = np.exp(-0.5 * np.sum(scaled_distance**2, axis=1))
+        dk = -k[:, None] * scaled_distance / length_scale
+        v = solve_triangular(regressor.L_, k, lower=True, check_finite=False)
+        variance = 1.0 + noise - v @ v
+        # Rounding takes the variance to zero or below at a training point, so
+        # it is floored there and the standard deviation held flat.
+        if variance > 1e-12:
+            std = np.sqrt(variance)
+            k_solved = solve_triangular(
+                regressor.L_, v, lower=True, trans="T", check_finite=False
+            )
+            dstd = -dk.T @ k_solved / std
+        else:
+            std, dstd = np.sqrt(1e-12), 0.0
+        return (
+            self.cost_bias * (k @ regressor.alpha_) - uncer_weight * std,
+            self.cost_bias * (dk.T @ regressor.alpha_) - uncer_weight * dstd,
+        )
+
     def minimise_acquisition(
         self, regressor, uncer_weight: float, best: np.ndarray, lows, highs
     ):
@@ -442,13 +472,10 @@ class GaussianProcess:
 
         ``uncer_weight`` is one weight, the step of the exploration schedule
         this proposal stands at, rather than the whole of ``uncer_bias``.
-        ``lows`` and ``highs`` are the search bounds, already scaled.
+        ``lows`` and ``highs`` are the search bounds, already scaled. Each
+        start descends on :meth:`acquisition`'s exact gradient.
         """
         from scipy.optimize import minimize
-
-        def acquisition(u):
-            mean, std = regressor.predict(np.atleast_2d(u), return_std=True)
-            return self.cost_bias * mean[0] - uncer_weight * std[0]
 
         starts = [self.space.scale(best)]
         starts.extend(self.rng.uniform(lows, highs, size=(self.num_restarts, len(lows))))
@@ -456,8 +483,10 @@ class GaussianProcess:
         winner, winning_value = None, np.inf
         for start in starts:
             result = minimize(
-                acquisition,
+                self.acquisition,
                 np.clip(start, lows, highs),
+                args=(regressor, uncer_weight),
+                jac=True,
                 method="L-BFGS-B",
                 bounds=list(zip(lows, highs)),
             )

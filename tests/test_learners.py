@@ -1072,6 +1072,43 @@ def test_gaussian_process_uses_per_point_uncertainties(space, rng):
     assert loose.predict(probe)[1][0] > tight.predict(probe)[1][0]
 
 
+@pytest.mark.parametrize('cost_has_noise', [True, False])
+@pytest.mark.parametrize('uncertain', [False, True])
+def test_the_search_is_handed_the_exact_gradient_of_the_acquisition(
+    space, cost_has_noise, uncertain
+):
+    """Checked against scikit-learn's own posterior and central differences of
+    it: with and without the white-noise term, with a scalar alpha and one per
+    point, and with a batch's points folded in.
+    """
+    points = space.uniform(np.random.default_rng(7), 12)
+    uncers = np.linspace(0.05, 0.2, 12) if uncertain else [None] * 12
+    history = [
+        observe(i, p, offset_sphere(p), uncer=uncers[i]) for i, p in enumerate(points)
+    ]
+    model = GaussianProcessLearner(
+        space, np.random.default_rng(3), cost_has_noise=cost_has_noise, cost_bias=2.0
+    ).model
+    model.fit(history)
+    folded = model.condition_on(model.regressor, np.array([0.3, 0.6]))
+    folded = model.condition_on(folded, np.array([0.7, 0.2]))
+
+    def predicted(regressor, u):
+        mean, std = regressor.predict(np.atleast_2d(u), return_std=True)
+        return 2.0 * mean[0] - 1.5 * std[0]
+
+    step = 1e-6
+    for regressor in (model.regressor, folded):
+        for u in np.random.default_rng(8).uniform(0, 1, size=(5, 2)):
+            value, gradient = model.acquisition(u, regressor, 1.5)
+            central = [
+                (predicted(regressor, u + h) - predicted(regressor, u - h)) / (2 * step)
+                for h in step * np.eye(2)
+            ]
+            assert value == pytest.approx(predicted(regressor, u))
+            np.testing.assert_allclose(gradient, central, rtol=1e-5, atol=1e-8)
+
+
 # --- building from a configuration -----------------------------------------
 
 
@@ -1543,19 +1580,14 @@ def test_an_acquisition_that_is_never_finite_says_so(space, rng):
     """Every start comes back NaN, so no comparison in the search is ever
     true and there is no winner to clip.
     """
-    class NotFinite:
-        def predict(self, u, return_std=False):
-            rows = np.atleast_2d(u).shape[0]
-            if return_std:
-                return np.full(rows, np.nan), np.full(rows, np.nan)
-            return np.full(rows, np.nan)
-
     model = GaussianProcessLearner(space, rng).model
+    model.fit(gaussian_process_history(space, 5))
+    model.regressor.alpha_[:] = np.nan
     lows = np.zeros(space.num_params)
     highs = np.ones(space.num_params)
     with pytest.raises(RuntimeError, match='not finite at any'):
         model.minimise_acquisition(
-            NotFinite(), 1.0, space.minimum, lows, highs
+            model.regressor, 1.0, space.minimum, lows, highs
         )
 
 
