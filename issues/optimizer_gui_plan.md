@@ -61,7 +61,8 @@ routine and commands from the window meet in one local queue:
   to the routine exactly as now.
   - After each item it hands the window a snapshot through `inmain_later`:
     the status dict, the paused flag, whether a batch is computing, and the
-    costs and sources so far.
+    costs and sources so far. A batch finishing on the model's thread puts an
+    item on the queue too (Q2), so that change is shown when it happens.
 - **The Qt event loop runs in the worker's main thread.** The window never
   calls into the session, so a slow submit, a round trip to runmanager,
   never freezes it, and the session never waits on the GUI.
@@ -142,16 +143,17 @@ Each new test is shown to fail against a mutation of what it covers.
   starts a session. That file is outside the repository; tell Ian rather than
   editing it.
 
-## Open questions, for Ian before building
-- **Q1: closing the window.** Hide it and keep the session running (the
-  recommendation), pause it, or end it? And how is it reopened if hidden? The
-  simplest answer is the routine's next pass bringing it back.
-- **Q2: refresh.** Refresh on each session event and when a batch finishes,
-  or on a timer as well? Recommendation: on events, plus a slow timer (about
-  1 s) for the "batch computing" indicator.
-- **Q3: pyqtgraph as a dependency.** Add it to pyproject.toml as an optional
-  "gui" extra, or as a hard dependency, since lab installs have the suite
-  anyway?
+## Settled after the first draft (Ian, 2026-09-27)
+- **Q1: closing the window hides it.** The session keeps running, and the
+  routine's next pass shows the window again.
+- **Q2: the window updates as any Qt window does,** when its values are set.
+  The one value that changes off the session thread is "batch computing". A
+  batch's future gets a done-callback that puts a request on the local queue,
+  so the session thread sends the window a fresh snapshot then too. No timer.
+- **Q3: the plot uses pyqtgraph,** which needs less code and redraws faster
+  than an embedded matplotlib figure. It is already installed with the suite,
+  since blacs devices need it, and it is added to pyproject.toml's
+  dependencies.
 
 ## Slices, each a commit passing the suite with its own docs
 1. **Session pause, and the worker's command queue, headless.** The session
