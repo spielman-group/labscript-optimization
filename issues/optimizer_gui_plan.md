@@ -1,5 +1,65 @@
 # Optimizer window: plan
 
+**Status: planned, not started.** This branch holds only this plan. Every
+decision below is Ian's and final. Build it in the slices at the end, after
+reading "Before you start".
+
+## Before you start
+- **Bring the branch up to date first.** `OptimizerGUI` was cut from
+  `Development` at `d1dc586`, before the ServerInterfaces effort merged. Once
+  Ian has merged `ServerInterfaces` into `Development`, merge `Development`
+  into this branch before writing code. From then on this branch uses
+  `runmanager.client`, not `runmanager.remote`. Ask Ian if that merge has not
+  happened.
+- **Ian's working rules for this repository:**
+  - Work on this branch only, and keep it checked out until it merges. Do
+    not push or merge without Ian's go.
+  - Read and follow two skills, found under the workspace's
+    `.claude/skills/`:
+    - `labscript-narrow-patch`: declare a patch budget per slice;
+    - `labscript-style`: rules 8 and 9 for Qt, rule 13 for tests, and rule
+      14's licence banner on new files, from `IDIOMS.md` §1.
+  - Ian expects small patches. The package's existing code is verbose, and is
+    not a style model.
+  - Tests: essential behaviour only, through the public surface, with no
+    message-shape tests. Show that each test fails against a mutation of what
+    it covers. Run the suite from inside the repository with
+    `~/miniforge3/envs/labscript/bin/python -m pytest tests -q`.
+  - Work in lyse, runmanager or blacs belongs to those repositories' own
+    sessions. This plan needs none.
+- **How the code is shaped today:**
+  - `routine.py`: `optimise()` is the lyse multishot entry point. Its first
+    call starts the worker with `start_worker()`, and every call hands over
+    the shots lyse names and waits up to `REPLY_TIMEOUT` = 2 s for a
+    numbered reply.
+  - `worker.py`: `Worker` is a zprocess `Process`. zprocess calls
+    `Worker.run()` in the child's **main thread**
+    (zprocess/process_class_wrapper.py). So the Qt event loop must take over
+    that thread, and the message loop must move to a thread of its own.
+    - `run()` answers each request, then reconciles and refills.
+    - On ServerInterfaces, `Session` is imported inside the configure
+      branch, on purpose: importing runmanager connects to zlock, which must
+      not happen while zprocess is still unpickling `Worker`.
+  - `session.py`: `Session` holds the history, the learner and the stop
+    reason.
+    - `status()` is the dict a snapshot starts from: `submitted`,
+      `completed`, `awaiting`, `dropped`, `blocked`, `starved`, `best_cost`,
+      `best_params`, `best_shot_id` and `stopped`.
+    - `history` gives every proposal with its `source`: `start`, `warmup`,
+      `main` or `explore`.
+  - `learners/gaussian_process.py`: `GaussianProcessLearner.computation` is
+    the `Future` of the batch being computed, or None. It is the "batch
+    computing" state, and where Q2's done-callback attaches.
+- **Packaging.** `pyproject.toml` has `include-package-data = true` with
+  setuptools_scm, so a committed `window.ui` ships with the package.
+  pyqtgraph and qtutils are added to its dependencies.
+- **Rendering tests.** `tests/conftest.py` does not yet set
+  `QT_QPA_PLATFORM`. Add
+  `os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')` there, as
+  `blacs/tests/conftest.py` does, before any test imports Qt.
+- **Trying it live** needs Ian: lyse's **Run multishot** button calls the
+  routine once with no shot, which should open the window, paused.
+
 The problem seen in the lab: the user cannot see what the optimizer is doing,
 and cannot start, pause or reset it except by running a shot through lyse or
 restarting lyse's analysis subprocess.
@@ -102,6 +162,12 @@ through `inmain`/`inmain_later`, with no QThread subclasses.
 - **Unchanged calling convention:** `optimise(config_path)`.
 - **Its first invocation** starts the worker as now. The worker now opens the
   window and waits paused.
+- **Every later request** also shows the window again if it was closed, which
+  hides it (Q1). The worker does this when it takes the routine's message; the
+  routine sends nothing new.
+- **The plot's costs are the session's,** which are sign-flipped under
+  `maximize`. The snapshot flips them back, as `Session.status()` does for
+  `best_cost`.
 - **Stopping the worker** is unchanged: the routine's restart, or lyse's
   quit, stops it, and the window goes with it.
 
@@ -111,9 +177,10 @@ The learners, config and session remain usable on their own, and in tests,
 without Qt.
 
 ### New files
-Each opens with the suite banner (labscript-style rule 14):
-- `labscript_optimization/window.py`, the window and its controller;
-- `labscript_optimization/window.ui`.
+- `labscript_optimization/window.py`: the window and its controller. It opens
+  with the suite banner (labscript-style rule 14).
+- `labscript_optimization/window.ui`: the layout, loaded with qtutils'
+  `UiLoader`.
 
 ## Tests (labscript-style rule 13)
 - **Session:** a new session is paused and submits nothing. `start` submits
