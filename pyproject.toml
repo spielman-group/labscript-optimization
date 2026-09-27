@@ -27,7 +27,7 @@ classifiers = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "numpy",
+    "numpy>=1.25",
     "scikit-learn",
     "scipy",
 ]

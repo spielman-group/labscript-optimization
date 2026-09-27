@@ -288,11 +288,15 @@ def propose(
 ) -> list[tuple[np.ndarray, str]]: ...
 ```
 
-It is handed the whole history every time, in the order the proposals were
-made, and holding every one of them: a shot still running and a shot that will
-never report are both in there as a position spent without a usable cost. That
-is what keeps the bookkeeping for shots in flight out of the algorithms. The
-shots in flight are the history's pending records, and the hint is
+The exception is `gaussian_process`, whose proposals also depend on how long
+its background fit takes: whether a batch is ready at a refill. A run under it
+is not reproducible from its `seed`.
+
+A learner is handed the whole history every time, in the order the proposals
+were made, and holding every one of them: a shot still running and a shot that
+will never report are both in there as a position spent without a usable cost.
+That is what keeps the bookkeeping for shots in flight out of the algorithms.
+The shots in flight are the history's pending records, and the hint is
 `num_buffered_runs`, how many of them to keep. A learner honours it as far as
 its method allows — the random learners keep exactly that many in flight,
 `differential_evolution` does not read it, proposing a whole generation when

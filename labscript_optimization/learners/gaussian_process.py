@@ -61,9 +61,10 @@ The Gaussian process does not condition on the explorer's shots in flight: a
 random draw is a weaker thing to fold in as a fantasy than a point of its own,
 and conditioning on pending points is measured to make the answer worse.
 
-Refitting the kernel hyperparameters is the expensive part, so it happens once
-per batch, on the usable observations in hand when the batch is computed; the
-posterior is refit to all of them with those hyperparameters held.
+The kernel hyperparameters are refit once per batch, on the usable
+observations in hand when the batch is computed, starting from the last
+refit's; the posterior is refit to all of them with those hyperparameters
+held.
 
 scikit-learn and scipy are imported where they are used rather than at the top
 of this module, and nothing here reaches a point of use until a batch is
@@ -152,9 +153,10 @@ def in_background(function, *args) -> Future:
 class GaussianProcess:
     """A Gaussian process fit to the history, and a search of its posterior.
 
-    A function of the history it is handed, apart from its own rng: what it
-    keeps between calls is a cache of the kernel. :class:`GaussianProcessLearner`
-    runs :meth:`ask` on a thread of its own and reads nothing else of it. Past
+    What it keeps between calls is the kernel of its last refit, which the
+    next refit starts from, so its fit depends on the histories it was handed
+    before as well as the one in hand. :class:`GaussianProcessLearner` runs
+    :meth:`ask` on a thread of its own and reads nothing else of it. Past
     ``space`` and ``rng`` it takes, by keyword, the knobs of the same names
     that :class:`GaussianProcessLearner` documents.
 
@@ -241,9 +243,8 @@ class GaussianProcess:
         #: see :meth:`report_length_scale_bounds`.
         self.at_length_scale_bounds: dict[str, str] = {}
 
-        # Process-wide rather than around each refit: catch_warnings is not
-        # thread-safe, and on this model's thread it would filter, and on exit
-        # reset, warnings raised on the main thread. Here rather than at
+        # Process-wide, since catch_warnings on this model's thread would also
+        # filter, and on exit reset, the main thread's warnings. Here, not at
         # import, where a catch_warnings around the import would drop it.
         warnings.filterwarnings(
             "ignore", message=LENGTH_SCALE_AT_BOUND, category=UserWarning
@@ -299,10 +300,10 @@ class GaussianProcess:
 
         The scaling belongs with them because it sets the units the noise level
         is measured in: restandardising as each observation arrived would leave
-        a cached kernel describing units that had since moved. The restart
-        draws are seeded from the number of observations in ``seen``, not from
-        the learner's rng, which would make the search depend on how much this
-        instance had already proposed.
+        a cached kernel describing units that had since moved. The fit starts
+        from the kernel of the last refit, or from :meth:`new_kernel` at the
+        first, and runs no restarts, so a refit is one descent from where the
+        last one ended.
 
         scikit-learn warns once per length scale left at a bound on every fit,
         which is a real diagnostic said too often to be read. That one message
@@ -319,11 +320,9 @@ class GaussianProcess:
         costs = costs_array(seen).reshape(-1, 1)
         scaler = StandardScaler().fit(costs)
         regressor = GaussianProcessRegressor(
-            kernel=self.new_kernel(),
+            kernel=self.new_kernel() if self._kernel is None else self._kernel,
             alpha=self.point_variances(seen, scaler),
             normalize_y=False,
-            n_restarts_optimizer=self.num_restarts,
-            random_state=len(seen),
         )
         regressor.fit(
             self.space.scale(params_array(seen)),
@@ -390,9 +389,7 @@ class GaussianProcess:
 
         The hyperparameters are fitted to the usable observations in hand and
         kept for as long as those are the observations handed over, which
-        within a session is the one call per batch that computes it. What an
-        instance keeps is a cache: it holds the kernel a fresh instance handed
-        the same history computes, however much this one has fitted before.
+        within a session is the one call per batch that computes it.
         """
         from sklearn.gaussian_process import GaussianProcessRegressor
 
@@ -435,6 +432,36 @@ class GaussianProcess:
             std * scale,
         )
 
+    def acquisition(self, u: np.ndarray, regressor, uncer_weight: float):
+        """The acquisition and its gradient at scaled parameters ``u``."""
+        from scipy.linalg import solve_triangular
+
+        # Assumes new_kernel's form, with no ConstantKernel, and normalize_y off.
+        kernel = regressor.kernel_
+        if self.cost_has_noise:
+            length_scale, noise = kernel.k1.length_scale, kernel.k2.noise_level
+        else:
+            length_scale, noise = kernel.length_scale, 0.0
+        scaled_distance = (u - regressor.X_train_) / length_scale
+        k = np.exp(-0.5 * np.sum(scaled_distance**2, axis=1))
+        dk = -k[:, None] * scaled_distance / length_scale
+        v = solve_triangular(regressor.L_, k, lower=True, check_finite=False)
+        variance = 1.0 + noise - v @ v
+        # Rounding takes the variance to zero or below at a training point, so
+        # it is floored there and the standard deviation held flat.
+        if variance > 1e-12:
+            std = np.sqrt(variance)
+            k_solved = solve_triangular(
+                regressor.L_, v, lower=True, trans="T", check_finite=False
+            )
+            dstd = -dk.T @ k_solved / std
+        else:
+            std, dstd = np.sqrt(1e-12), 0.0
+        return (
+            self.cost_bias * (k @ regressor.alpha_) - uncer_weight * std,
+            self.cost_bias * (dk.T @ regressor.alpha_) - uncer_weight * dstd,
+        )
+
     def minimise_acquisition(
         self, regressor, uncer_weight: float, best: np.ndarray, lows, highs
     ):
@@ -442,13 +469,10 @@ class GaussianProcess:
 
         ``uncer_weight`` is one weight, the step of the exploration schedule
         this proposal stands at, rather than the whole of ``uncer_bias``.
-        ``lows`` and ``highs`` are the search bounds, already scaled.
+        ``lows`` and ``highs`` are the search bounds, already scaled. Each
+        start descends on :meth:`acquisition`'s exact gradient.
         """
         from scipy.optimize import minimize
-
-        def acquisition(u):
-            mean, std = regressor.predict(np.atleast_2d(u), return_std=True)
-            return self.cost_bias * mean[0] - uncer_weight * std[0]
 
         starts = [self.space.scale(best)]
         starts.extend(self.rng.uniform(lows, highs, size=(self.num_restarts, len(lows))))
@@ -456,8 +480,10 @@ class GaussianProcess:
         winner, winning_value = None, np.inf
         for start in starts:
             result = minimize(
-                acquisition,
+                self.acquisition,
                 np.clip(start, lows, highs),
+                args=(regressor, uncer_weight),
+                jac=True,
                 method="L-BFGS-B",
                 bounds=list(zip(lows, highs)),
             )
@@ -701,9 +727,10 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         released = []
         if self.ready:
             # Only a whole batch waits, for explore_runs explorer shots since
-            # the first point of the batch before it, or since the run began.
+            # the run began or the last batch's first point. A batch goes out
+            # unbroken, so its last point will do, however many the budget cut.
             mains = [i for i, o in enumerate(history) if o.source == BATCH_SOURCE]
-            since = (mains[-self.batch_size :] or [0])[0]
+            since = (mains or [0])[-1]
             explored = sum(
                 o.source in (WARMUP_SOURCE, EXPLORE_SOURCE) for o in history[since:]
             )

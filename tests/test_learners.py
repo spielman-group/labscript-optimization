@@ -151,6 +151,16 @@ def test_a_learner_handed_its_two_arguments_backwards_is_refused(space, rng):
             cls(rng, space)
 
 
+def test_a_learner_with_no_way_to_propose_is_refused_when_built(space, rng):
+    """Refused at construction rather than at its first proposal, mid-run."""
+
+    class Empty(ParameterSpaceLearner):
+        pass
+
+    with pytest.raises(TypeError):
+        Empty(space, rng)
+
+
 def test_a_proposal_without_a_source_is_refused_rather_than_recorded(space, rng):
     """The other half of taking the source from the learner itself.
 
@@ -778,41 +788,6 @@ def test_gaussian_process_finds_the_minimum(space, rng):
     np.testing.assert_allclose(best.params, [1.3, -2.1], atol=0.3)
 
 
-def test_gaussian_process_state_depends_only_on_the_history(space):
-    """Two learners given the same history must hold the same model.
-
-    The kernel hyperparameters are cached between calls, so they have to be a
-    function of the history alone: an instance that has been fitting all
-    session must arrive at what a fresh one computes, not at a kernel fitted to
-    however much it happened to hold when the cache was last filled. One
-    observation arrives between the two fits, so the cache has to give way,
-    because a case where it does not cannot tell the two learners apart
-    whatever the caching does.
-    """
-    history = gaussian_process_history(space, 9, count=7)
-    all_session = GaussianProcessLearner(space, np.random.default_rng(1)).model
-    all_session.fit(history[:6])
-    all_session.fit(history)
-
-    fresh = GaussianProcessLearner(space, np.random.default_rng(2)).model
-    fresh.fit(history)
-
-    # The cache is observable through the posterior it produces: two learners
-    # that hold the same kernel predict the same thing everywhere, which is
-    # what "a cache holds what a fresh instance would compute" means.
-    grid = space.uniform(np.random.default_rng(4), 5)
-    carried_mean, carried_std = all_session.predict(grid)
-    fresh_mean, fresh_std = fresh.predict(grid)
-    np.testing.assert_allclose(carried_mean, fresh_mean)
-    np.testing.assert_allclose(carried_std, fresh_std)
-
-    # And so the same proposals, once the two stand at the same point in their
-    # own rng streams: that position is the one thing the history does not fix.
-    all_session.rng = np.random.default_rng(3)
-    fresh.rng = np.random.default_rng(3)
-    np.testing.assert_allclose(all_session.ask(history, 1), fresh.ask(history, 1))
-
-
 #: Four weights, the first of them greedy, so a batch of four walks the
 #: schedule once.
 SCHEDULE = [0.0, 50.0, 100.0, 150.0]
@@ -1070,6 +1045,43 @@ def test_gaussian_process_uses_per_point_uncertainties(space, rng):
 
     probe = np.array([0.0, 0.0])
     assert loose.predict(probe)[1][0] > tight.predict(probe)[1][0]
+
+
+@pytest.mark.parametrize('cost_has_noise', [True, False])
+@pytest.mark.parametrize('uncertain', [False, True])
+def test_the_search_is_handed_the_exact_gradient_of_the_acquisition(
+    space, cost_has_noise, uncertain
+):
+    """Checked against scikit-learn's own posterior and central differences of
+    it: with and without the white-noise term, with a scalar alpha and one per
+    point, and with a batch's points folded in.
+    """
+    points = space.uniform(np.random.default_rng(7), 12)
+    uncers = np.linspace(0.05, 0.2, 12) if uncertain else [None] * 12
+    history = [
+        observe(i, p, offset_sphere(p), uncer=uncers[i]) for i, p in enumerate(points)
+    ]
+    model = GaussianProcessLearner(
+        space, np.random.default_rng(3), cost_has_noise=cost_has_noise, cost_bias=2.0
+    ).model
+    model.fit(history)
+    folded = model.condition_on(model.regressor, np.array([0.3, 0.6]))
+    folded = model.condition_on(folded, np.array([0.7, 0.2]))
+
+    def predicted(regressor, u):
+        mean, std = regressor.predict(np.atleast_2d(u), return_std=True)
+        return 2.0 * mean[0] - 1.5 * std[0]
+
+    step = 1e-6
+    for regressor in (model.regressor, folded):
+        for u in np.random.default_rng(8).uniform(0, 1, size=(5, 2)):
+            value, gradient = model.acquisition(u, regressor, 1.5)
+            central = [
+                (predicted(regressor, u + h) - predicted(regressor, u - h)) / (2 * step)
+                for h in step * np.eye(2)
+            ]
+            assert value == pytest.approx(predicted(regressor, u))
+            np.testing.assert_allclose(gradient, central, rtol=1e-5, atol=1e-8)
 
 
 # --- building from a configuration -----------------------------------------
@@ -1543,19 +1555,14 @@ def test_an_acquisition_that_is_never_finite_says_so(space, rng):
     """Every start comes back NaN, so no comparison in the search is ever
     true and there is no winner to clip.
     """
-    class NotFinite:
-        def predict(self, u, return_std=False):
-            rows = np.atleast_2d(u).shape[0]
-            if return_std:
-                return np.full(rows, np.nan), np.full(rows, np.nan)
-            return np.full(rows, np.nan)
-
     model = GaussianProcessLearner(space, rng).model
+    model.fit(gaussian_process_history(space, 5))
+    model.regressor.alpha_[:] = np.nan
     lows = np.zeros(space.num_params)
     highs = np.ones(space.num_params)
     with pytest.raises(RuntimeError, match='not finite at any'):
         model.minimise_acquisition(
-            NotFinite(), 1.0, space.minimum, lows, highs
+            model.regressor, 1.0, space.minimum, lows, highs
         )
 
 
@@ -1610,18 +1617,15 @@ def test_a_mixed_history_still_fits_when_the_cost_has_noise(space, rng):
 
 
 def test_a_late_cost_refits_a_set_of_unchanged_size(space):
-    """The hyperparameter cache is keyed on *which* observations it was fitted
-    to, not on how many.
+    """The hyperparameters are refit when *which* observations are in hand
+    changes, not only how many.
 
     Costs arrive out of order and ``usable`` returns them in proposal order, so
     a cost that turns up late is inserted in the middle rather than appended.
     Of nine proposals, a history still waiting on the third and one still
     waiting on the last each hold eight usable observations, and a different
-    eight. Within one session the usable observations only accumulate, so a
-    count keeps pace with them there; but a cache must hold what a fresh
-    instance handed the same history computes, whatever history it saw
-    before, and keyed on a count it would answer the second of these with the
-    kernel it fitted to the first.
+    eight. Keyed on a count, the model would answer the second of these with
+    the kernel it fitted to the first.
     """
     history = gaussian_process_history(space, 11, count=9)
 
@@ -1644,9 +1648,12 @@ def test_a_late_cost_refits_a_set_of_unchanged_size(space):
     ).model
     fresh.fit(waiting_on(8))
 
+    # From the kernel fitted to the other eight, the refit here reaches the
+    # fresh fit's optimum to within the optimiser's tolerance; that kernel left
+    # in place would predict several times off.
     grid = space.uniform(np.random.default_rng(5), 5)
-    np.testing.assert_allclose(carried.predict(grid)[0], fresh.predict(grid)[0])
-    np.testing.assert_allclose(carried.predict(grid)[1], fresh.predict(grid)[1])
+    for carried_part, fresh_part in zip(carried.predict(grid), fresh.predict(grid)):
+        np.testing.assert_allclose(carried_part, fresh_part, rtol=1e-4)
 
 
 # --- what a knob may be written as ----------------------------------------

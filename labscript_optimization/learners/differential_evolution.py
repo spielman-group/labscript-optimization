@@ -215,10 +215,9 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         no barrier asks for at any history length and any ``k``.
         """
         params, costs = self.replay(history)
-        # One differential weight per call: once per generation when this
-        # learner is selected, as textbook differential evolution and scipy
-        # draw it, and per trial or two as the Gaussian process's explorer,
-        # which is the variant known as dither.
+        # One differential weight per call: per generation when selected, as
+        # textbook differential evolution and scipy draw it, and per trial or
+        # two as the Gaussian process's explorer, the variant known as dither.
         scale = self.rng.uniform(*self.mutation_scale)
         proposals = np.empty((k, self.space.num_params))
         for i in range(k):

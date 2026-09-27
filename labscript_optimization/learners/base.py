@@ -11,7 +11,10 @@ instance handed the same history for the first time would compute. The one
 thing a learner carries that the history does not fix is the position of its
 own rng stream, which decides where a draw lands and nothing about what the
 learner believes. That rule is what keeps the out-of-order arrival of costs out
-of the learners.
+of the learners. The Gaussian process's kernel is an exception, for speed: each
+refit starts from where the last one ended. So is its timing: whether a batch
+is ready at a refill depends on how long its fit took, and a run under it is
+not reproducible from a seed.
 """
 
 from typing import Sequence
@@ -172,6 +175,16 @@ class ParameterSpaceLearner(Learner):
             raise TypeError(
                 f"a learner takes a ParameterSpace and a Generator, in that "
                 f"order; got {type(space).__name__} and {type(rng).__name__}"
+            )
+        cls = type(self)
+        if (
+            cls.propose is Learner.propose
+            and cls.acquire is Learner.acquire
+            and not hasattr(self, "ask")
+        ):
+            raise TypeError(
+                f"{cls.__name__} cannot propose: it has no ask method and "
+                f"overrides neither acquire nor propose."
             )
         self.space = space
         self.rng = rng
