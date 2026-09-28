@@ -91,14 +91,15 @@ window.
   until **Start**. This is a behaviour change: today the first invocation
   submits the first shots.
 - **D4: the configuration still comes from the routine,**
-  `optimise(config_path)`, as now. Start does not reread it; Reset does, from
-  the same path.
+  `optimise(config_path)`, as now. It is loaded once when the session opens;
+  Start and Reset do not reread it. Restart the routine after editing the
+  file.
 - **D5: stopwatch controls.**
   - **Start** resumes submitting.
   - **Pause** stops submitting, and there is no separate Stop. Shots already
     in flight are still taken, and reconciling goes on.
-  - **Reset** discards the session and its history, rereads the
-    configuration, and builds a new session, paused.
+  - **Reset** discards the session and its history and builds a new session,
+    paused, from the configuration already loaded.
 - **D6: a session a limit has ended is not paused.** Limits are
   `max_num_runs`, the patience limit, a refused join, or an error. The window
   shows the reason. Start is disabled, because the limit would end it again at
@@ -188,7 +189,7 @@ without Qt.
   still recorded. Start after a limit has ended the session submits nothing.
 - **Worker, driven headless as now, against fakes:**
   - a `start` command submits without a routine message;
-  - `reset` rereads the configuration and yields a fresh paused session;
+  - `reset` yields a fresh paused session with the loaded configuration;
   - routine requests are answered exactly as before.
 - **Window, rendered offscreen:**
   - the snapshot sets the phase and counters shown;

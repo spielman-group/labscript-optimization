@@ -781,6 +781,7 @@ def status(**overrides):
         'best_cost': None,
         'best_params': None,
         'best_shot_id': None,
+        'paused': False,
         'stopped': None,
     } | overrides
 
@@ -1202,6 +1203,9 @@ def running(monkeypatch, tmp_path):
 
     def start(interface, reply_timeout=0.2, config=WORKER_CONFIG):
         from labscript_optimization import worker as worker_module
+        # The real child calls Worker.run on its main thread. This fixture
+        # needs that thread for the routine, so complete the deferred import here.
+        from labscript_optimization.session import Session  # noqa: F401
 
         to_worker, from_worker, child = Link(), Link(), Worker()
         worker = worker_module.Worker(None, interface_factory=interface)
@@ -1225,7 +1229,12 @@ def running(monkeypatch, tmp_path):
         path.write_text(config)
         storage = types.SimpleNamespace()
         started.append((storage, to_worker, thread))
-        return types.SimpleNamespace(path=path, storage=storage, child=child)
+        return types.SimpleNamespace(
+            path=path,
+            storage=storage,
+            child=child,
+            start=lambda: worker.command_queue.put(('start', None, None)),
+        )
 
     yield start
     for storage, to_worker, thread in started:
@@ -1309,6 +1318,7 @@ def test_each_status_reaches_the_shot_that_earned_it_behind_slow_trailing_work(
         return routine_module.optimise(session.path, session.storage, shots(*rows))
 
     invoke()
+    session.start()
 
     # Costs improving shot by shot, so that the best shot id in a status names
     # the shot whose request produced it.
@@ -1345,6 +1355,7 @@ def test_shots_handed_over_together_each_carry_their_own_phase(
         config=WORKER_CONFIG.replace('max = 1.0', 'max = 1.0\nstart = 0.5'),
     )
     routine_module.optimise(session.path, session.storage, [])
+    session.start()
 
     start, learners = shot(shot_id='shot-0'), shot(shot_id='shot-1')
     routine_module.optimise(session.path, session.storage, shots(start, learners))

@@ -5,8 +5,9 @@ A lab analysis routine is two lines::
     import labscript_optimization.routine as optimisation
     optimisation.optimise('optimisation_config.toml')
 
-Adding the routine to lyse starts the session; removing it, restarting it, or
-reaching the run budget stops it. :data:`SHOT_RESULTS` is saved into lyse's
+Adding the routine to lyse opens a paused session; a Start command begins
+submitting shots. Removing or restarting the routine, or reaching the run
+budget, stops it. :data:`SHOT_RESULTS` is saved into lyse's
 dataframe, as lyse results under :data:`RESULTS_GROUP` in the row of each
 shot the session proposed, so the best cost, where the search has got to, and
 what proposed each shot are columns of it.

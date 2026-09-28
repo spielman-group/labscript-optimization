@@ -4,11 +4,12 @@ Spawned once by the lyse routine and kept until the routine is restarted. The
 fitting and the runmanager traffic happen here, so that the routine can hand
 over the shots lyse has analysed and return at once.
 
-The worker is purely reactive: it proposes only in response to a message. If
-the routine's process dies no more messages arrive, so the few seconds zprocess
-takes to notice a dead parent cannot run away with the queue.
+The worker is purely reactive: it proposes only in response to a request or a
+local command. If the routine's process dies the worker goes with it.
 """
 
+import queue
+import threading
 import traceback
 
 from zprocess import Process
@@ -34,6 +35,7 @@ class Worker(Process):
     def __init__(self, *args, interface_factory=RunmanagerInterface, **kwargs):
         super().__init__(*args, **kwargs)
         self.interface_factory = interface_factory
+        self.command_queue = queue.Queue()
 
     def run(self) -> None:
         """Handle messages until told to quit. The child's entry point.
@@ -69,23 +71,62 @@ class Worker(Process):
         for a request already answered, which the routine raises when it sees
         it, naming that request.
         """
-        session = None
+        request = self.from_parent.get()
+        if request[0] == "quit":
+            return
+
+        # Session imports runmanager, whose h5_lock connects to zlock. Wait
+        # until the parent's first request proves zprocess has connected this
+        # child, then import on the main thread before Qt takes it over.
+        from .session import Session
+
+        self.command_queue.put(request)
+        reader = threading.Thread(target=self._read_requests, daemon=True)
+        session = threading.Thread(
+            target=self._run_session, args=(Session,), daemon=True
+        )
+        reader.start()
+        session.start()
+        session.join()
+
+    def _read_requests(self) -> None:
         while True:
-            command, number, payload = self.from_parent.get()
+            request = self.from_parent.get()
+            self.command_queue.put(request)
+            if request[0] == "quit":
+                return
+
+    def _run_session(self, session_factory) -> None:
+        session = None
+        config = None
+        while True:
+            command, number, payload = self.command_queue.get()
             if command == "quit":
                 return
             recorded = ()
             try:
-                if command == "configure":
-                    # Not at the top: session imports runmanager, whose h5_lock
-                    # connects to zlock on import, and the child imports this
-                    # module before zprocess has connected it.
-                    from .session import Session
-
-                    config = config_module.load(payload)
-                    interface = self.interface_factory(config)
+                if command in ("configure", "reset"):
+                    if command == "configure":
+                        replacement_config = config_module.load(payload)
+                    elif config is None:
+                        raise RuntimeError("got reset before being configured")
+                    else:
+                        replacement_config = config
+                    interface = self.interface_factory(replacement_config)
                     interface.check_ready()
-                    session = Session(config, interface)
+                    replacement = session_factory(replacement_config, interface)
+                    config, session = replacement_config, replacement
+                elif command == "start":
+                    if session is None:
+                        raise RuntimeError("got start before being configured")
+                    session.start()
+                    session.refill()
+                    continue
+                elif command == "pause":
+                    if session is None:
+                        raise RuntimeError("got pause before being configured")
+                    session.pause()
+                    continue
                 elif command == "observe":
                     if session is None:
                         raise RuntimeError(
@@ -105,7 +146,10 @@ class Worker(Process):
                 # routines inline and one at a time, so the routine blocked on
                 # this reply holds up every shot behind it, and both calls
                 # below are round trips to runmanager.
-                self.to_parent.put(("status", number, (recorded, session.status())))
+                if number is not None:
+                    self.to_parent.put(
+                        ("status", number, (recorded, session.status()))
+                    )
 
                 # Every invocation reconciles, not only those that submit: the
                 # routine may not be called again for a long time, and a shot
@@ -115,11 +159,11 @@ class Worker(Process):
             except Exception:
                 # Fail loudly and stop proposing, rather than carry on with a
                 # learner or a runmanager that is not doing what it should.
-                # Sent under this request's number whether it is the reply --
-                # the request itself failed -- or the trailing work behind a
-                # reply already sent. Either way the request is answered, and
-                # the error says which request it came out of. A session that
-                # had already stopped keeps the reason it stopped for.
+                # A routine request gets a numbered error; a local control has
+                # no routine waiting on it, so its traceback goes to stderr.
                 if session is not None:
                     session.stop("stopped by an error")
-                self.to_parent.put(("error", number, traceback.format_exc()))
+                if number is not None:
+                    self.to_parent.put(("error", number, traceback.format_exc()))
+                else:
+                    traceback.print_exc()

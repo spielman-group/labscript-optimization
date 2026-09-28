@@ -52,6 +52,7 @@ class Session:
         # Awaited shots runmanager had no row for at the last reconcile.
         self._unknown: set[str] = set()
         self.starved = 0
+        self.paused = True
         self.stopped: str | None = None
 
     @property
@@ -120,7 +121,22 @@ class Session:
         reported as an error without becoming the reason.
         """
         if self.stopped is None:
+            self.paused = False
             self.stopped = reason
+
+    def start(self) -> bool:
+        """Resume proposing, unless the session has stopped."""
+        if self.stopped is not None:
+            return False
+        self.paused = False
+        return True
+
+    def pause(self) -> bool:
+        """Pause proposing, unless the session has stopped."""
+        if self.stopped is not None:
+            return False
+        self.paused = True
+        return True
 
     def check_stop(self) -> None:
         limit = self.config.max_num_runs
@@ -231,7 +247,7 @@ class Session:
         proposal. runmanager refusing to add to the run's sequence stops the
         session, with runmanager's reason; any other refusal is raised.
         """
-        if self.stopped:
+        if self.paused or self.stopped:
             return []
         awaiting = len(self.awaiting)
         if awaiting == 0 and self.proposals and self.learner.generation is None:
@@ -349,5 +365,6 @@ class Session:
             "best_cost": best_cost,
             "best_params": None if best is None else best.params.tolist(),
             "best_shot_id": None if best is None else best.shot_id,
+            "paused": self.paused,
             "stopped": self.stopped,
         }

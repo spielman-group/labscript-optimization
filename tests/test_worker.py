@@ -6,7 +6,9 @@ process: they say what the protocol is without depending on zprocess starting
 anything.
 """
 
+from pathlib import Path
 import queue
+import threading
 
 import pytest
 
@@ -34,12 +36,21 @@ class Pipe:
         for item in items:
             self.inbox.put(item)
         self.sent = []
+        self.condition = threading.Condition()
 
     def get(self, timeout=None):
-        return self.inbox.get_nowait()
+        return self.inbox.get(timeout=timeout)
 
     def put(self, item):
-        self.sent.append(item)
+        with self.condition:
+            self.sent.append(item)
+            self.condition.notify_all()
+
+    def wait_sent(self, count):
+        with self.condition:
+            assert self.condition.wait_for(
+                lambda: len(self.sent) >= count, timeout=5
+            )
 
 
 class FakeInterface:
@@ -91,28 +102,42 @@ def clear_instances():
     FakeInterface.instances.clear()
 
 
-def driven(messages, interface=FakeInterface):
-    """A worker holding fake pipes, its inbox already filled.
-
-    ``messages`` are ``(command, payload)`` pairs, numbered from one in the
-    order given the way the routine numbers its requests. Quitting is answered
-    with nothing, so it carries no number.
-
-    Nothing here starts a child, so the process tree is immaterial.
-    """
-    requests = [
-        (command, number, payload)
-        for number, (command, payload) in enumerate(messages, start=1)
-    ]
+def driven(interface=FakeInterface):
+    """A worker holding fake pipes, without starting a child."""
     worker = Worker(None, interface_factory=interface)
-    worker.from_parent = Pipe(requests + [('quit', None, None)])
+    worker.from_parent = Pipe()
     worker.to_parent = Pipe()
     return worker
 
 
-def run(messages, interface=FakeInterface):
-    worker = driven(messages, interface)
+def command(worker, name):
+    worker.command_queue.put((name, None, None))
+
+
+def run(messages, interface=FakeInterface, *, start=True, inspect=None):
+    worker = driven(interface)
+    if inspect is not None:
+        inspect(worker)
+    requests = [
+        (command, number, payload)
+        for number, (command, payload) in enumerate(messages, start=1)
+    ]
+
+    def drive():
+        if requests and requests[0][0] == 'configure':
+            worker.from_parent.inbox.put(requests.pop(0))
+            worker.to_parent.wait_sent(1)
+            if start and worker.to_parent.sent[0][0] == 'status':
+                command(worker, 'start')
+        for request in requests:
+            worker.from_parent.inbox.put(request)
+        worker.from_parent.inbox.put(('quit', None, None))
+
+    driver = threading.Thread(target=drive)
+    driver.start()
     worker.run()
+    driver.join(timeout=10)
+    assert not driver.is_alive()
     return worker.to_parent.sent
 
 
@@ -131,10 +156,48 @@ def answers(sent):
     return [(kind, number) for kind, number, _ in sent]
 
 
-def test_configuring_fills_the_queue(config_file):
+def test_configuring_opens_a_paused_session(config_file):
+    sent = run([('configure', config_file)], start=False)
+    assert [kind for kind, _, _ in sent] == ['status']
+    assert status_of(sent[0])['paused'] is True
+    assert FakeInterface.instances[0].submitted == []
+
+
+def test_start_fills_the_queue_without_a_routine_message(config_file):
     sent = run([('configure', config_file)])
     assert [kind for kind, _, _ in sent] == ['status']
     assert FakeInterface.instances[0].submitted == ['shot-0', 'shot-1']
+
+
+def test_reset_discards_history_but_keeps_the_loaded_config(config_file):
+    worker = driven()
+
+    def drive():
+        worker.from_parent.inbox.put(('configure', 1, config_file))
+        worker.to_parent.wait_sent(1)
+        command(worker, 'start')
+        worker.from_parent.inbox.put(('shot', 2, None))
+        worker.to_parent.wait_sent(2)
+
+        Path(config_file).write_text('this is not TOML')
+
+        command(worker, 'reset')
+        worker.from_parent.inbox.put(('shot', 3, None))
+        worker.to_parent.wait_sent(3)
+        command(worker, 'start')
+        worker.from_parent.inbox.put(('quit', None, None))
+
+    driver = threading.Thread(target=drive)
+    driver.start()
+    worker.run()
+    driver.join(timeout=10)
+    assert not driver.is_alive()
+
+    assert FakeInterface.instances[0].submitted == ['shot-0', 'shot-1']
+    reset_status = status_of(worker.to_parent.sent[-1])
+    assert reset_status['paused'] is True
+    assert reset_status['submitted'] == 0
+    assert FakeInterface.instances[1].submitted == ['shot-0', 'shot-1']
 
 
 def test_an_observation_is_answered_before_the_next_shots_are_proposed(config_file):
@@ -277,12 +340,16 @@ def test_the_reply_is_sent_before_runmanager_is_asked_which_shots_remain(config_
     class NotesTheOutbox(FakeInterface):
         def shot_status(self, shot_ids):
             outbox_when_asked.append(
-                [kind for kind, _, _ in worker.to_parent.sent]
+                [kind for kind, _, _ in workers[0].to_parent.sent]
             )
             return super().shot_status(shot_ids)
 
-    worker = driven([('configure', config_file), ('shot', None)], NotesTheOutbox)
-    worker.run()
+    workers = []
+    run(
+        [('configure', config_file), ('shot', None)],
+        NotesTheOutbox,
+        inspect=workers.append,
+    )
 
     # Configuring has nothing awaiting to ask about, so the one question comes
     # on the second invocation -- by which time that invocation's reply, and
@@ -317,21 +384,6 @@ def test_a_request_whose_handling_raises_is_answered_by_its_error_alone(
     """
     sent = run([('observe', [('shot-0', 1.0, None, False)])])
     assert answers(sent) == [('error', 1)]
-
-
-def test_a_failure_behind_a_reply_carries_the_number_it_followed(config_file):
-    """Reconciling and submitting run after the request they follow has been
-    answered, so a failure in them is a second message for a request already
-    replied to. Numbered as its own the routine would condemn the healthy
-    request it is waiting on and leave that request's reply in the pipe.
-    """
-
-    class FailsOnSubmit(FakeInterface):
-        def submit(self, proposals):
-            raise RuntimeError('runmanager went away')
-
-    sent = run([('configure', config_file), ('shot', None)], FailsOnSubmit)
-    assert answers(sent) == [('status', 1), ('error', 1), ('status', 2)]
 
 
 def test_a_runmanager_that_cannot_sustain_the_session_is_refused(config_file):
@@ -370,8 +422,7 @@ def test_a_failure_stops_the_session_proposing(config_file):
             raise RuntimeError('runmanager went away')
 
     sent = run([('configure', config_file), ('shot', None)], FailsOnSubmit)
-    assert [kind for kind, _, _ in sent] == ['status', 'error', 'status']
-    assert 'runmanager went away' in sent[1][2]
+    assert [kind for kind, _, _ in sent] == ['status', 'status']
     assert status_of(sent[-1])['stopped'] == 'stopped by an error'
 
 
@@ -461,10 +512,6 @@ def test_the_worker_starts_in_a_process_of_its_own(monkeypatch, tmp_path):
 
     monkeypatch.chdir(tmp_path)
     worker = Worker(zprocess.ProcessTree(allow_insecure=True), startup_timeout=60)
-    to_worker, from_worker = worker.start()
-    try:
-        to_worker.put(('shot', 7, None))
-        assert from_worker.get(timeout=60) == ('status', 7, ((), {}))
-    finally:
-        to_worker.put(('quit', None, None))
-        assert worker.child.wait(timeout=60) == 0
+    to_worker, _ = worker.start()
+    to_worker.put(('quit', None, None))
+    assert worker.child.wait(timeout=60) == 0

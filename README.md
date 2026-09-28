@@ -65,8 +65,11 @@ import labscript_optimization.routine as optimisation
 optimisation.optimise('optimisation_config.toml')
 ```
 
-Adding the routine starts the session; removing it, restarting it, or reaching
-the run budget stops it. Progress is saved into lyse's dataframe, in the row
+Adding the routine opens a paused session and submits no shots until it
+receives Start. Removing or restarting it, or reaching the run budget, stops
+it. Reset discards the history and opens another paused session with the
+configuration already loaded; restart the routine after editing the TOML.
+Progress is saved into lyse's dataframe, in the row
 of each shot the session proposed, under the results group
 `labscript_optimization`, so it is dataframe columns:
 `df[('labscript_optimization', 'best_cost')]` is the best cost so far, beside
