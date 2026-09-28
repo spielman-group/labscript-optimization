@@ -421,21 +421,20 @@ def test_quit_returns_without_replying(config_file):
     assert run([]) == []
 
 
-def test_the_worker_starts_in_a_process_of_its_own(monkeypatch, tmp_path):
-    """The one test that spawns anything: zprocess enters the child through a
-    wrapper module of its own, which imports this class by name on the path
-    the parent hands over. An import that does not resolve there looks like
-    the child never connecting rather than like an import error, so the real
-    thing is pinned here, where the message is plain.
-
-    The path handed over is the parent's own ``sys.path``, not the child's
-    working directory, which is what the run from a directory the package
-    cannot be found from says.
-    """
-    import zprocess
+def test_the_worker_process_answers_requests_after_gui_startup(monkeypatch, tmp_path):
+    from labscript_utils.ls_zprocess import ProcessTree
 
     monkeypatch.chdir(tmp_path)
-    worker = Worker(zprocess.ProcessTree(allow_insecure=True), startup_timeout=60)
-    to_worker, _ = worker.start()
-    to_worker.put(('quit', None, None))
-    assert worker.child.wait(timeout=60) == 0
+    worker = Worker(ProcessTree.instance(), startup_timeout=60)
+    to_worker, from_worker = worker.start()
+    try:
+        to_worker.put(('configure', 1, str(tmp_path / 'missing.toml')))
+        kind, number, error = from_worker.get(timeout=60)
+        assert (kind, number) == ('error', 1)
+        assert 'missing.toml' in error
+
+        to_worker.put(('shot', 2, None))
+        assert from_worker.get(timeout=60) == ('status', 2, ((), {}))
+    finally:
+        to_worker.put(('quit', None, None))
+        assert worker.child.wait(timeout=60) == 0
