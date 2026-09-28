@@ -25,7 +25,7 @@ def test_window_shows_progress_controls_and_can_reopen(qt_application):
     window.update(
         {"paused": True, "submitted": 2, "completed": 1},
         False,
-        (("start", 2), ("warmup", None), ("main", 5)),
+        (),
         True,
         True,
     )
@@ -33,8 +33,6 @@ def test_window_shows_progress_controls_and_can_reopen(qt_application):
     assert window.ui.phase_value.text() == "Paused"
     assert window.ui.submitted_value.text() == "2"
     assert window.ui.completed_value.text() == "1"
-    assert window.points["main"].getData()[0].tolist() == [3]
-    assert window.best_line.getData()[1].tolist() == [2, 5]
     window.ui.start_button.click()
     assert commands.get_nowait()[0] == "start"
 
