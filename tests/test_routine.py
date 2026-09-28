@@ -438,8 +438,8 @@ def test_the_configure_deadline_covers_the_waits_inside_it(
     lab[('timeouts', 'liveness_timeout')] = 1.0
     if set_by_the_lab is not None:
         lab[('timeouts', 'communication_timeout')] = set_by_the_lab
-    # What runmanager.remote.Client will wait, which is labconfig's number or
-    # the fallback the client itself falls back to.
+    # What runmanager.client.RunmanagerClient will wait, which is labconfig's
+    # number or the fallback the client itself falls back to.
     client_waits = 60.0 if set_by_the_lab is None else set_by_the_lab
     monkeypatch.setattr(routine_module, 'CONFIGURE_MARGIN', 0.01)
 

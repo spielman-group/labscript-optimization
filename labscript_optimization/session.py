@@ -16,14 +16,10 @@ it.
 """
 
 import numpy as np
+from runmanager.client import BLOCKED_SHOT_STATE, UNKNOWN_SHOT_STATE, SequenceRefused
 
 from . import learners, observations
 from .observations import COMPLETE, DROPPED, PENDING, Observation
-from .runmanager_interface import (
-    BLOCKED_SHOT_STATE,
-    REFUSED_SEQUENCE,
-    UNKNOWN_SHOT_STATE,
-)
 
 #: The source recorded for the configured start. The session proposes it
 #: itself, whichever learner is running, so it carries a name of the session's
@@ -305,13 +301,9 @@ class Session:
         proposals = np.array([params for params, _ in proposed], dtype=float)
         try:
             shot_ids = self.interface.submit(proposals)
-        except Exception as exc:
-            # Starting another sequence would split the run in two. runmanager's
-            # server wraps its reason in a traceback, whose last line it is.
-            message = str(exc)
-            if REFUSED_SEQUENCE not in message:
-                raise
-            self.stop(message[message.rfind(REFUSED_SEQUENCE) :].splitlines()[0])
+        except SequenceRefused as exc:
+            # Starting another sequence would split the run in two.
+            self.stop(str(exc))
             return []
         if len(shot_ids) != len(proposals):
             # Nothing is recorded before the raise: the session is left as it

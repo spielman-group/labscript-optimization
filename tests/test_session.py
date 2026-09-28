@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from runmanager.client import SequenceRefused
 
 from labscript_optimization import config as config_module
 from labscript_optimization.observations import COMPLETE, DROPPED, PENDING, usable
@@ -829,22 +830,14 @@ def test_a_refused_submission_leaves_the_session_untouched(session, runmanager):
 
 def test_a_sequence_runmanager_cannot_add_to_stops_the_session(session, runmanager):
     """runmanager forgets a run's sequence when it restarts, and refuses to add
-    to it rather than split the run in two. Its server wraps the reason in the
-    traceback it raised, whose source lines can hold the same words, and the
-    reason alone is why the run stopped.
-    """
+    to it rather than split the run in two."""
     reason = (
         'Cannot add shots to sequence 20260923T101112_expt: '
         'runmanager has no record of it'
     )
 
     def refuse(proposals):
-        raise Exception(
-            'Runmanager server returned an exception:\n'
-            'Traceback (most recent call last):\n'
-            "    raise Exception('Cannot add shots to sequence %s: ...' % sequence)\n"
-            f'Exception: {reason}\n'
-        )
+        raise SequenceRefused(reason)
 
     runmanager.submit = refuse
     assert session.refill() == []

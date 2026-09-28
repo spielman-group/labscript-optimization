@@ -225,20 +225,21 @@ def configure_timeout():
     * :data:`CONFIGURE_MARGIN`, for the worker's own startup work.
 
     The client's deadline is labconfig's ``timeouts/communication_timeout``,
-    read here as ``runmanager.remote.Client.__init__`` reads it, fallback and
-    all, because that is the number the worker's client will wait. With the
-    fallback the sum is a little over two minutes, which is a long time for a
-    stalled lyse routine -- and affordable because :func:`_drain` looks at the
-    worker's process while it waits, so a worker that has died is reported
-    within :data:`LIVENESS_POLL` and only a live worker ever reaches the
-    deadline.
+    read here as ``runmanager.client.RunmanagerClient`` reads it, with the
+    same ``COMMUNICATION_DEFAULT_TIMEOUT`` fallback, because that is the number
+    the worker's client will wait. With the fallback the sum is a little over
+    two minutes, which is a long time for a stalled lyse routine -- and
+    affordable because :func:`_drain` looks at the worker's process while it
+    waits, so a worker that has died is reported within :data:`LIVENESS_POLL`
+    and only a live worker ever reaches the deadline.
     """
     # Deferred, so that importing this module reads no files: the routine is
     # imported by lyse whether or not a session is ever started.
     from labscript_utils.labconfig import LabConfig
+    from labscript_utils.ls_zprocess import COMMUNICATION_DEFAULT_TIMEOUT
 
     client_timeout = LabConfig().getfloat(
-        "timeouts", "communication_timeout", fallback=60
+        "timeouts", "communication_timeout", fallback=COMMUNICATION_DEFAULT_TIMEOUT
     )
     return (
         runmanager_interface.GREETING_TIMEOUT
