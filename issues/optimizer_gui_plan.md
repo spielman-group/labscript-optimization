@@ -1,8 +1,8 @@
 # Optimizer window: plan
 
-**Status: planned, not started.** This branch holds only this plan. Every
-decision below is Ian's and final. Build it in the slices at the end, after
-reading "Before you start".
+**Status: all three slices implemented on `OptimizerGUI`; live lyse trial
+pending.** Every decision below is Ian's and final. The slices and "Before you
+start" record the instructions used to build the window.
 
 ## Before you start
 - **Bring the branch up to date first.** `OptimizerGUI` was cut from
@@ -207,9 +207,9 @@ Each new test is shown to fail against a mutation of what it covers.
     plot.
   - "Failures": a limit-ended session is shown in the window.
 - **UPGRADING:** the behaviour change, a paused start.
-- **Ian's `optimization_multishot.py`** docstring says adding the routine
-  starts a session. That file is outside the repository; tell Ian rather than
-  editing it.
+- **Ian's `optimization_multishot.py`** docstring was updated, at his request,
+  to describe the paused start and controls. That file is outside this
+  repository.
 
 ## Settled after the first draft (Ian, 2026-09-27)
 - **Q1: closing the window hides it.** The session keeps running, and the
