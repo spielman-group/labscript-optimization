@@ -337,8 +337,8 @@ def test_an_unknown_command_is_an_error(config_file):
 
 def test_a_failure_stops_the_session_proposing(config_file):
     """Carrying on past a runmanager that is not doing what it should would
-    spend the run budget on shots nobody is counting. The error reaches the
-    routine, and the session it stopped says so from then on.
+    spend the run budget on shots nobody is counting. A local Start failure
+    gives the operator the cause in the window's status.
     """
 
     class FailsOnSubmit(FakeInterface):
@@ -347,7 +347,7 @@ def test_a_failure_stops_the_session_proposing(config_file):
 
     sent = run([('configure', config_file), ('shot', None)], FailsOnSubmit)
     assert [kind for kind, _, _ in sent] == ['status', 'status']
-    assert status_of(sent[-1])['stopped'] == 'stopped by an error'
+    assert status_of(sent[-1])['stopped'] == 'runmanager went away'
 
 
 class FailsOnStatus(FakeInterface):

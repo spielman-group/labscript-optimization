@@ -173,9 +173,9 @@ class Worker(Process):
                         session.refill()
                 except Exception as exc:
                     # A local control has no routine waiting for an error.
-                    error = str(exc)
+                    error = str(exc) or type(exc).__name__
                     if session is not None:
-                        session.stop("stopped by an error")
+                        session.stop(error if number is None else "stopped by an error")
                     if number is not None:
                         self.to_parent.put(("error", number, traceback.format_exc()))
                     else:
