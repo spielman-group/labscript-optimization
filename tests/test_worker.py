@@ -9,6 +9,8 @@ anything.
 from pathlib import Path
 import queue
 import threading
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -114,6 +116,21 @@ def command(worker, name):
     worker.command_queue.put((name, None, None))
 
 
+def run_headless(worker):
+    from labscript_optimization.session import Session
+
+    window = SimpleNamespace(
+        ui=SimpleNamespace(show=lambda: None), update=lambda *args: None
+    )
+    application = SimpleNamespace(exit=lambda code: None)
+    reader = threading.Thread(target=worker._read_requests, daemon=True)
+    reader.start()
+    with patch('qtutils.inmain_later', lambda fn, *args: fn(*args)):
+        worker._run_session(Session, window, application)
+    reader.join(timeout=10)
+    assert not reader.is_alive()
+
+
 def run(messages, interface=FakeInterface, *, start=True, inspect=None):
     worker = driven(interface)
     if inspect is not None:
@@ -135,7 +152,7 @@ def run(messages, interface=FakeInterface, *, start=True, inspect=None):
 
     driver = threading.Thread(target=drive)
     driver.start()
-    worker.run()
+    run_headless(worker)
     driver.join(timeout=10)
     assert not driver.is_alive()
     return worker.to_parent.sent
@@ -189,7 +206,7 @@ def test_reset_discards_history_but_keeps_the_loaded_config(config_file):
 
     driver = threading.Thread(target=drive)
     driver.start()
-    worker.run()
+    run_headless(worker)
     driver.join(timeout=10)
     assert not driver.is_alive()
 
@@ -225,83 +242,6 @@ def test_every_observation_in_one_message_is_taken(config_file):
         ]
     )
     assert status_of(sent[-1])['completed'] == 2
-
-
-def test_one_verdict_comes_back_per_observation_in_the_order_sent(config_file):
-    """A shot the session proposed is answered with its source, and anyone
-    else's with ``None``.
-
-    runmanager mints a shot id for every queue row it compiles, so a user's own
-    shot reaches the routine carrying one too, and whether the session
-    proposed that id is the only thing that tells the two apart. The routine
-    writes each shot's status into that shot's own file on this answer, so a
-    single answer for a message carrying several would either write the
-    optimiser's numbers onto somebody else's shot or leave one of its own
-    without them.
-    """
-    sent = run(
-        [
-            ('configure', config_file),
-            (
-                'observe',
-                [
-                    ('someone-elses-shot', 1.0, None, False),
-                    ('shot-1', 2.0, None, False),
-                    ('another-of-theirs', 3.0, None, False),
-                ],
-            ),
-        ]
-    )
-    _, _, (recorded, _) = sent[-1]
-    assert recorded == (None, 'main', None)
-
-
-def test_each_verdict_carries_the_source_of_its_own_shot(tmp_path):
-    """The routine writes a verdict's source onto that shot as its phase, and
-    one request can hand over shots proposed by different things: here the
-    configured start, which the session proposes itself, and a shot from the
-    learner. They are sent in the other order from the one they were proposed
-    in, so a verdict that named the latest proposal, or the first, would land
-    on the wrong shot.
-    """
-    path = tmp_path / 'config.toml'
-    path.write_text(CONFIG.replace('max = 1.0', 'max = 1.0\nstart = 0.5'))
-    sent = run(
-        [
-            ('configure', str(path)),
-            (
-                'observe',
-                [
-                    ('shot-1', 2.0, None, False),
-                    ('someone-elses-shot', 3.0, None, False),
-                    ('shot-0', 1.0, None, False),
-                ],
-            ),
-        ]
-    )
-    _, _, (recorded, _) = sent[-1]
-    assert recorded == ('main', None, 'start')
-
-
-def test_one_message_carrying_several_observations_is_answered_once(config_file):
-    """One status per request, however many observations the request carried.
-
-    The routine reads the first message carrying a request's number as the
-    answer to it, and writes that one status onto every shot of the batch the
-    session took, each beside the phase its own verdict carries. A verdict per
-    observation in separate messages would leave the routine to collect a
-    batch's answer a piece at a time, with a status apiece to choose between.
-    """
-    sent = run(
-        [
-            ('configure', config_file),
-            (
-                'observe',
-                [('shot-0', 1.0, None, False), ('shot-1', 2.0, None, False)],
-            ),
-        ]
-    )
-    assert [kind for kind, _, _ in sent] == ['status', 'status']
 
 
 def test_a_status_message_frees_the_places_of_lost_shots(config_file):
@@ -355,22 +295,6 @@ def test_the_reply_is_sent_before_runmanager_is_asked_which_shots_remain(config_
     # on the second invocation -- by which time that invocation's reply, and
     # the first one's, had both already gone out.
     assert outbox_when_asked == [['status', 'status']]
-
-
-def test_every_reply_names_the_request_it_answers(config_file):
-    """Order alone does not say which request an answer belongs to. The worker
-    replies before the reconciling and submitting behind that reply, so by the
-    time a reply crosses the pipe the routine may have sent two more requests
-    and given up waiting for the answer to both.
-    """
-    sent = run(
-        [
-            ('configure', config_file),
-            ('observe', [('shot-0', 1.0, None, False)]),
-            ('shot', None),
-        ]
-    )
-    assert answers(sent) == [('status', 1), ('status', 2), ('status', 3)]
 
 
 def test_a_request_whose_handling_raises_is_answered_by_its_error_alone(

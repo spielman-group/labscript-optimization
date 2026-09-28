@@ -38,7 +38,7 @@ class Worker(Process):
         self.command_queue = queue.Queue()
 
     def run(self) -> None:
-        """Handle messages until told to quit. The child's entry point.
+        """Run the window and handle messages until told to quit.
 
         A request is ``(command, number, payload)`` and every message sent
         back is ``(kind, number, payload)`` carrying the number of the request
@@ -79,15 +79,28 @@ class Worker(Process):
         # until the parent's first request proves zprocess has connected this
         # child, then import on the main thread before Qt takes it over.
         from .session import Session
+        from qtutils.qt import QtCore, QtWidgets
+
+        from .window import WindowController
+
+        application = QtWidgets.QApplication.instance()
+        if application is None:
+            application = QtWidgets.QApplication([])
+        application.setQuitOnLastWindowClosed(False)
+        window = WindowController(self.command_queue)
+        window.ui.show()
 
         self.command_queue.put(request)
         reader = threading.Thread(target=self._read_requests, daemon=True)
         session = threading.Thread(
-            target=self._run_session, args=(Session,), daemon=True
+            target=self._run_session, args=(Session, window, application), daemon=True
         )
         reader.start()
-        session.start()
-        session.join()
+        QtCore.QTimer.singleShot(0, session.start)
+        application.exec()
+        self.command_queue.put(("quit", None, None))
+        if session.ident is not None:
+            session.join()
 
     def _read_requests(self) -> None:
         while True:
@@ -96,74 +109,101 @@ class Worker(Process):
             if request[0] == "quit":
                 return
 
-    def _run_session(self, session_factory) -> None:
+    def _run_session(self, session_factory, window, application) -> None:
+        from qtutils import inmain_later
+
         session = None
         config = None
-        while True:
-            command, number, payload = self.command_queue.get()
-            if command == "quit":
-                return
-            recorded = ()
-            try:
-                if command in ("configure", "reset"):
-                    if command == "configure":
-                        replacement_config = config_module.load(payload)
-                    elif config is None:
-                        raise RuntimeError("got reset before being configured")
-                    else:
-                        replacement_config = config
-                    interface = self.interface_factory(replacement_config)
-                    interface.check_ready()
-                    replacement = session_factory(replacement_config, interface)
-                    config, session = replacement_config, replacement
-                elif command == "start":
-                    if session is None:
-                        raise RuntimeError("got start before being configured")
-                    session.start()
-                    session.refill()
-                    continue
-                elif command == "pause":
-                    if session is None:
-                        raise RuntimeError("got pause before being configured")
-                    session.pause()
-                    continue
-                elif command == "observe":
-                    if session is None:
-                        raise RuntimeError(
-                            "got an observation before being configured"
+        watched_future = None
+        try:
+            while True:
+                command, number, payload = self.command_queue.get()
+                if command == "quit":
+                    return
+                recorded = ()
+                error = None
+                try:
+                    if command in ("configure", "reset"):
+                        if command == "configure":
+                            replacement_config = config_module.load(payload)
+                        elif config is None:
+                            raise RuntimeError("got reset before being configured")
+                        else:
+                            replacement_config = config
+                        interface = self.interface_factory(replacement_config)
+                        interface.check_ready()
+                        replacement = session_factory(replacement_config, interface)
+                        config, session = replacement_config, replacement
+                    elif command == "start":
+                        if session is None:
+                            raise RuntimeError("got start before being configured")
+                        session.start()
+                        session.refill()
+                    elif command == "pause":
+                        if session is None:
+                            raise RuntimeError("got pause before being configured")
+                        session.pause()
+                    elif command == "observe":
+                        if session is None:
+                            raise RuntimeError(
+                                "got an observation before being configured"
+                            )
+                        recorded = tuple(
+                            session.record(*observation) for observation in payload
                         )
-                    recorded = tuple(
-                        session.record(*observation) for observation in payload
-                    )
-                elif command == "shot":
-                    if session is None:
-                        self.to_parent.put(("status", number, ((), {})))
-                        continue
-                else:
-                    raise ValueError(f"unknown command {command!r}")
+                    elif command == "shot":
+                        if session is None:
+                            self.to_parent.put(("status", number, ((), {})))
+                            continue
+                    elif command == "refresh":
+                        if payload is not session:
+                            continue
+                        session.refill()
+                    else:
+                        raise ValueError(f"unknown command {command!r}")
 
-                # Nothing slow may come before this line. lyse runs multishot
-                # routines inline and one at a time, so the routine blocked on
-                # this reply holds up every shot behind it, and both calls
-                # below are round trips to runmanager.
-                if number is not None:
-                    self.to_parent.put(
-                        ("status", number, (recorded, session.status()))
-                    )
+                    # A routine reply precedes runmanager round trips.
+                    if number is not None:
+                        self.to_parent.put(
+                            ("status", number, (recorded, session.status()))
+                        )
 
-                # Every invocation reconciles, not only those that submit: the
-                # routine may not be called again for a long time, and a shot
-                # that is no longer coming must not hold its place until it is.
-                session.reconcile()
-                session.refill()
-            except Exception:
-                # Fail loudly and stop proposing, rather than carry on with a
-                # learner or a runmanager that is not doing what it should.
-                # A routine request gets a numbered error; a local control has
-                # no routine waiting on it, so its traceback goes to stderr.
-                if session is not None:
-                    session.stop("stopped by an error")
-                if number is not None:
-                    self.to_parent.put(("error", number, traceback.format_exc()))
-                else:
-                    traceback.print_exc()
+                    if command not in ("start", "pause", "refresh"):
+                        session.reconcile()
+                        session.refill()
+                except Exception as exc:
+                    # A local control has no routine waiting for an error.
+                    error = str(exc)
+                    if session is not None:
+                        session.stop("stopped by an error")
+                    if number is not None:
+                        self.to_parent.put(("error", number, traceback.format_exc()))
+                    else:
+                        traceback.print_exc()
+                finally:
+                    if session is not None:
+                        computation = getattr(session.learner, "computation", None)
+                        if (
+                            computation is not None
+                            and computation is not watched_future
+                        ):
+                            computation.add_done_callback(
+                                lambda future, current=session: self.command_queue.put(
+                                    ("refresh", None, current)
+                                )
+                            )
+                            watched_future = computation
+                        window.update(
+                            session.status(),
+                            computation is not None and not computation.done(),
+                            tuple(
+                                observation.source for observation in session.history
+                            ),
+                            config.learner == "gaussian_process",
+                        )
+                    elif error is not None:
+                        window.update({"stopped": error}, False, (), False)
+                    if number is not None:
+                        inmain_later(window.ui.show)
+        finally:
+            inmain_later(application.exit, 0)

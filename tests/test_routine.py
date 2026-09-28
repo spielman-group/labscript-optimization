@@ -1203,14 +1203,26 @@ def running(monkeypatch, tmp_path):
 
     def start(interface, reply_timeout=0.2, config=WORKER_CONFIG):
         from labscript_optimization import worker as worker_module
-        # The real child calls Worker.run on its main thread. This fixture
-        # needs that thread for the routine, so complete the deferred import here.
-        from labscript_optimization.session import Session  # noqa: F401
+        from labscript_optimization.session import Session
+        import qtutils
 
         to_worker, from_worker, child = Link(), Link(), Worker()
         worker = worker_module.Worker(None, interface_factory=interface)
         worker.from_parent, worker.to_parent = to_worker, from_worker
-        thread = threading.Thread(target=worker.run, daemon=True)
+        window = types.SimpleNamespace(
+            ui=types.SimpleNamespace(show=lambda: None), update=lambda *args: None
+        )
+        application = types.SimpleNamespace(exit=lambda code: None)
+        monkeypatch.setattr(qtutils, 'inmain_later', lambda fn, *args: fn(*args))
+
+        def run_headless():
+            request = worker.from_parent.get()
+            worker.command_queue.put(request)
+            reader = threading.Thread(target=worker._read_requests, daemon=True)
+            reader.start()
+            worker._run_session(Session, window, application)
+
+        thread = threading.Thread(target=run_headless, daemon=True)
 
         class Spawned:
             def __init__(self, *args, **kwargs):
