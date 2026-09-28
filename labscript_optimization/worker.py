@@ -193,16 +193,24 @@ class Worker(Process):
                                 )
                             )
                             watched_future = computation
+                        sign = -1 if config.maximize else 1
                         window.update(
                             session.status(),
                             computation is not None and not computation.done(),
                             tuple(
-                                observation.source for observation in session.history
+                                (
+                                    observation.source,
+                                    sign * observation.cost
+                                    if observation.usable
+                                    else None,
+                                )
+                                for observation in session.history
                             ),
                             config.learner == "gaussian_process",
+                            config.maximize,
                         )
                     elif error is not None:
-                        window.update({"stopped": error}, False, (), False)
+                        window.update({"stopped": error}, False, (), False, False)
                     if number is not None:
                         inmain_later(window.ui.show)
         finally:

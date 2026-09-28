@@ -22,15 +22,23 @@ def test_window_shows_progress_controls_and_can_reopen(qt_application):
     window.ui.show()
     qt_application.processEvents()
 
-    window.update({"paused": True, "submitted": 2, "completed": 1}, False, (), True)
+    window.update(
+        {"paused": True, "submitted": 2, "completed": 1},
+        False,
+        (("start", 2), ("warmup", None), ("main", 5)),
+        True,
+        True,
+    )
     qt_application.processEvents()
     assert window.ui.phase_value.text() == "Paused"
     assert window.ui.submitted_value.text() == "2"
     assert window.ui.completed_value.text() == "1"
+    assert window.points["main"].getData()[0].tolist() == [3]
+    assert window.best_line.getData()[1].tolist() == [2, 5]
     window.ui.start_button.click()
     assert commands.get_nowait()[0] == "start"
 
-    window.update({"paused": False}, True, (), True)
+    window.update({"paused": False}, True, (), True, False)
     qt_application.processEvents()
     assert window.ui.phase_value.text() == "Batch computing"
     window.ui.pause_button.click()
@@ -38,7 +46,7 @@ def test_window_shows_progress_controls_and_can_reopen(qt_application):
     window.ui.reset_button.click()
     assert commands.get_nowait()[0] == "reset"
 
-    window.update({"stopped": "reached max_num_runs (2)"}, False, (), True)
+    window.update({"stopped": "reached max_num_runs (2)"}, False, (), True, False)
     qt_application.processEvents()
     assert window.ui.phase_value.text() == "Ended: reached max_num_runs (2)"
     assert not window.ui.start_button.isEnabled()

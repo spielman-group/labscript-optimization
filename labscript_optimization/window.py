@@ -15,6 +15,7 @@
 
 from pathlib import Path
 
+import pyqtgraph as pg
 from qtutils import UiLoader, inmain_decorator
 from qtutils.qt import QtWidgets
 
@@ -37,9 +38,30 @@ class WindowController:
                     (command, None, None)
                 )
             )
+        self.plot = pg.PlotWidget()
+        self.plot.setMinimumHeight(220)
+        self.plot.setLabel("bottom", "Shot order")
+        self.plot.setLabel("left", "Cost")
+        self.plot.addLegend()
+        self.ui.plot_layout.addWidget(self.plot)
+        colors = {
+            "start": "#0072b2",
+            "warmup": "#e69f00",
+            "main": "#009e73",
+            "explore": "#cc79a7",
+        }
+        self.points = {
+            source: self.plot.plot(
+                [], [], pen=None, symbol="o", symbolBrush=color, name=source.title()
+            )
+            for source, color in colors.items()
+        }
+        self.best_line = self.plot.plot(
+            [], [], pen=pg.mkPen("#eeeeee", width=2), name="Best so far"
+        )
 
     @inmain_decorator(wait_for_return=False)
-    def update(self, status, computing, sources, gaussian_process):
+    def update(self, status, computing, observations, gaussian_process, maximize):
         stopped = status.get("stopped")
         paused = status.get("paused", True)
         if stopped:
@@ -48,7 +70,7 @@ class WindowController:
             phase = "Paused"
         elif computing:
             phase = "Batch computing"
-        elif gaussian_process and "main" in sources:
+        elif gaussian_process and any(source == "main" for source, _ in observations):
             phase = "Batch out"
         elif gaussian_process:
             phase = "Warmup"
@@ -68,3 +90,19 @@ class WindowController:
         self.ui.start_button.setEnabled(not stopped and paused)
         self.ui.pause_button.setEnabled(not stopped and not paused)
         self.ui.reset_button.setEnabled("paused" in status)
+
+        points = {source: ([], []) for source in self.points}
+        best_x, best_y = [], []
+        best = None
+        for shot, (source, cost) in enumerate(observations, start=1):
+            if cost is None:
+                continue
+            x, y = points[source]
+            x.append(shot)
+            y.append(cost)
+            best = cost if best is None else (max if maximize else min)(best, cost)
+            best_x.append(shot)
+            best_y.append(best)
+        for source, (x, y) in points.items():
+            self.points[source].setData(x, y)
+        self.best_line.setData(best_x, best_y)

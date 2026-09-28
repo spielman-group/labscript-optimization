@@ -74,6 +74,12 @@ window hides it without stopping the session; the next routine pass shows it
 again. Restart the routine after editing the TOML. A run that reaches a limit
 shows its reason and can only be Reset.
 
+The window plots each usable cost at its shot's position in proposal order.
+Point colours distinguish the configured start, warmup, main learner and
+explorer shots; the line shows the best cost so far. Pending, dropped and bad
+observations leave gaps, and maximised costs appear in the sign of your cost
+column.
+
 Removing or restarting the routine stops the worker.
 
 Progress is saved into lyse's dataframe, in the row
