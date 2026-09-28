@@ -146,13 +146,17 @@ def test_a_new_session_waits_for_start(runmanager):
 
 def test_pause_keeps_taking_costs_but_submits_nothing(runmanager):
     session = running_session(make_config(buffered=2), runmanager)
-    first, _ = session.refill()
+    first, second = session.refill()
 
     assert session.pause() is True
     assert session.record(first, 1.0, None, False) == 'main'
     assert session.refill() == []
     assert session.status()['completed'] == 1
     assert session.status()['paused'] is True
+    session.record(second, 2.0, None, False)
+    session.start()
+    assert len(session.refill()) == 2
+    assert session.status()['starved'] == 0
 
 
 def test_a_stopped_session_cannot_be_started(runmanager):

@@ -53,6 +53,7 @@ class Session:
         self._unknown: set[str] = set()
         self.starved = 0
         self.paused = True
+        self._resume_pending = False
         self.stopped: str | None = None
 
     @property
@@ -128,6 +129,8 @@ class Session:
         """Resume proposing, unless the session has stopped."""
         if self.stopped is not None:
             return False
+        if self.paused:
+            self._resume_pending = bool(self.proposals)
         self.paused = False
         return True
 
@@ -250,7 +253,12 @@ class Session:
         if self.paused or self.stopped:
             return []
         awaiting = len(self.awaiting)
-        if awaiting == 0 and self.proposals and self.learner.generation is None:
+        if (
+            awaiting == 0
+            and self.proposals
+            and self.learner.generation is None
+            and not self._resume_pending
+        ):
             # Nothing of ours was queued when this ran, so runmanager gave
             # BLACS a default shot instead: the apparatus staying busy rather
             # than a fault, but a shot the optimiser did not get. A session
@@ -259,6 +267,7 @@ class Session:
             # one generation ends and the next begins, and a counter that fires
             # by design says nothing about the run it is meant to describe.
             self.starved += 1
+        self._resume_pending = False
         room = None
         if self.config.max_num_runs is not None:
             # Dropped shots are not charged against the budget: they produced
