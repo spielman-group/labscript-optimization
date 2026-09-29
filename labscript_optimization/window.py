@@ -50,6 +50,7 @@ class WindowController:
         plot_item.layout.removeItem(plot_item.titleLabel)
         self.legend = pg.LegendItem(colCount=5)
         plot_item.layout.addItem(self.legend, 0, 1)
+        self.listed = []
         self.ui.plot_layout.addWidget(self.plot)
         self.ui.parameters_table.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeMode.ResizeToContents
@@ -137,12 +138,22 @@ class WindowController:
             best = cost if best is None else (max if maximize else min)(best, cost)
             best_x.append(shot)
             best_y.append(best)
-        # Listed only once it has points: most learners never propose some.
-        self.legend.clear()
         for source, (x, y) in points.items():
             self.points[source].setData(x, y)
-            if x:
-                self.legend.addItem(self.points[source], source.title())
         self.best_line.setData(best_x, best_y)
+
+        # Listed only once it has points: most learners never propose some.
+        # Rebuilt only when that changes, since new entries are drawn once
+        # before the legend's layout places them.
+        listed = [
+            (self.points[source], source.title())
+            for source, (x, _) in points.items()
+            if x
+        ]
         if best_x:
-            self.legend.addItem(self.best_line, "Best so far")
+            listed.append((self.best_line, "Best so far"))
+        if listed != self.listed:
+            self.legend.clear()
+            for item, name in listed:
+                self.legend.addItem(item, name)
+            self.listed = listed
