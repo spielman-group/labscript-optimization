@@ -1,7 +1,7 @@
 # Optimizer window: plan
 
-**Status: all three slices implemented on `OptimizerGUI`; live lyse trial
-pending.** Every decision below is Ian's and final. The slices and "Before you
+**Status: implemented, and tried live in lyse.** Every decision below is
+Ian's and final. The slices and "Before you
 start" record the instructions used to build the window.
 
 ## Before you start
