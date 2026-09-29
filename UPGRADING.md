@@ -39,6 +39,12 @@ Remove `mloop_multishot.py`, `mloop_interface.py`, `mloop_controller.py`,
 `mloop_learner.py` and `monkey.py` from your analysis directory. Nothing from
 analysislib-mloop is imported any more, and `mloop` itself is not a dependency.
 
+The new session opens paused and submits no shots until it receives Start.
+This differs from analysislib-mloop and earlier labscript-optimization
+versions, which began submitting as soon as the lyse routine first ran.
+Reset discards the history but keeps the configuration loaded for that
+session. Restart the lyse routine after editing the TOML.
+
 ## 2. Rename the two M-LOOP tables, and cut the settings that no longer exist
 
 Do the renames first. The rest of this document names the new tables, and an
@@ -268,8 +274,8 @@ goes out whole.
   never computes one.
 - `max_num_runs` and `max_num_runs_without_better_params` mean what they
   meant.
-- Adding the routine to lyse starts a session; removing or restarting it, or
-  reaching the run budget, stops it.
+- Adding the routine to lyse opens a paused session; Start begins submitting.
+  Removing or restarting it, or reaching the run budget, stops it.
 
 ## What changed in the algorithms
 

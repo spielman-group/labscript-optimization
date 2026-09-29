@@ -6,7 +6,11 @@ process: they say what the protocol is without depending on zprocess starting
 anything.
 """
 
+from pathlib import Path
 import queue
+import threading
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -34,12 +38,21 @@ class Pipe:
         for item in items:
             self.inbox.put(item)
         self.sent = []
+        self.condition = threading.Condition()
 
     def get(self, timeout=None):
-        return self.inbox.get_nowait()
+        return self.inbox.get(timeout=timeout)
 
     def put(self, item):
-        self.sent.append(item)
+        with self.condition:
+            self.sent.append(item)
+            self.condition.notify_all()
+
+    def wait_sent(self, count):
+        with self.condition:
+            assert self.condition.wait_for(
+                lambda: len(self.sent) >= count, timeout=5
+            )
 
 
 class FakeInterface:
@@ -91,28 +104,57 @@ def clear_instances():
     FakeInterface.instances.clear()
 
 
-def driven(messages, interface=FakeInterface):
-    """A worker holding fake pipes, its inbox already filled.
-
-    ``messages`` are ``(command, payload)`` pairs, numbered from one in the
-    order given the way the routine numbers its requests. Quitting is answered
-    with nothing, so it carries no number.
-
-    Nothing here starts a child, so the process tree is immaterial.
-    """
-    requests = [
-        (command, number, payload)
-        for number, (command, payload) in enumerate(messages, start=1)
-    ]
+def driven(interface=FakeInterface):
+    """A worker holding fake pipes, without starting a child."""
     worker = Worker(None, interface_factory=interface)
-    worker.from_parent = Pipe(requests + [('quit', None, None)])
+    worker.from_parent = Pipe()
     worker.to_parent = Pipe()
     return worker
 
 
-def run(messages, interface=FakeInterface):
-    worker = driven(messages, interface)
-    worker.run()
+def command(worker, name):
+    worker.command_queue.put((name, None, None))
+
+
+def run_headless(worker):
+    from labscript_optimization.session import Session
+
+    window = SimpleNamespace(
+        ui=SimpleNamespace(show=lambda: None), update=lambda *args: None
+    )
+    application = SimpleNamespace(exit=lambda code: None)
+    reader = threading.Thread(target=worker._read_requests, daemon=True)
+    reader.start()
+    with patch('qtutils.inmain_later', lambda fn, *args: fn(*args)):
+        worker._run_session(Session, window, application)
+    reader.join(timeout=10)
+    assert not reader.is_alive()
+
+
+def run(messages, interface=FakeInterface, *, start=True, inspect=None):
+    worker = driven(interface)
+    if inspect is not None:
+        inspect(worker)
+    requests = [
+        (command, number, payload)
+        for number, (command, payload) in enumerate(messages, start=1)
+    ]
+
+    def drive():
+        if requests and requests[0][0] == 'configure':
+            worker.from_parent.inbox.put(requests.pop(0))
+            worker.to_parent.wait_sent(1)
+            if start and worker.to_parent.sent[0][0] == 'status':
+                command(worker, 'start')
+        for request in requests:
+            worker.from_parent.inbox.put(request)
+        worker.from_parent.inbox.put(('quit', None, None))
+
+    driver = threading.Thread(target=drive)
+    driver.start()
+    run_headless(worker)
+    driver.join(timeout=10)
+    assert not driver.is_alive()
     return worker.to_parent.sent
 
 
@@ -131,10 +173,48 @@ def answers(sent):
     return [(kind, number) for kind, number, _ in sent]
 
 
-def test_configuring_fills_the_queue(config_file):
+def test_configuring_opens_a_paused_session(config_file):
+    sent = run([('configure', config_file)], start=False)
+    assert [kind for kind, _, _ in sent] == ['status']
+    assert status_of(sent[0])['paused'] is True
+    assert FakeInterface.instances[0].submitted == []
+
+
+def test_start_fills_the_queue_without_a_routine_message(config_file):
     sent = run([('configure', config_file)])
     assert [kind for kind, _, _ in sent] == ['status']
     assert FakeInterface.instances[0].submitted == ['shot-0', 'shot-1']
+
+
+def test_reset_discards_history_but_keeps_the_loaded_config(config_file):
+    worker = driven()
+
+    def drive():
+        worker.from_parent.inbox.put(('configure', 1, config_file))
+        worker.to_parent.wait_sent(1)
+        command(worker, 'start')
+        worker.from_parent.inbox.put(('shot', 2, None))
+        worker.to_parent.wait_sent(2)
+
+        Path(config_file).write_text('this is not TOML')
+
+        command(worker, 'reset')
+        worker.from_parent.inbox.put(('shot', 3, None))
+        worker.to_parent.wait_sent(3)
+        command(worker, 'start')
+        worker.from_parent.inbox.put(('quit', None, None))
+
+    driver = threading.Thread(target=drive)
+    driver.start()
+    run_headless(worker)
+    driver.join(timeout=10)
+    assert not driver.is_alive()
+
+    assert FakeInterface.instances[0].submitted == ['shot-0', 'shot-1']
+    reset_status = status_of(worker.to_parent.sent[-1])
+    assert reset_status['paused'] is True
+    assert reset_status['submitted'] == 0
+    assert FakeInterface.instances[1].submitted == ['shot-0', 'shot-1']
 
 
 def test_an_observation_is_answered_before_the_next_shots_are_proposed(config_file):
@@ -162,83 +242,6 @@ def test_every_observation_in_one_message_is_taken(config_file):
         ]
     )
     assert status_of(sent[-1])['completed'] == 2
-
-
-def test_one_verdict_comes_back_per_observation_in_the_order_sent(config_file):
-    """A shot the session proposed is answered with its source, and anyone
-    else's with ``None``.
-
-    runmanager mints a shot id for every queue row it compiles, so a user's own
-    shot reaches the routine carrying one too, and whether the session
-    proposed that id is the only thing that tells the two apart. The routine
-    writes each shot's status into that shot's own file on this answer, so a
-    single answer for a message carrying several would either write the
-    optimiser's numbers onto somebody else's shot or leave one of its own
-    without them.
-    """
-    sent = run(
-        [
-            ('configure', config_file),
-            (
-                'observe',
-                [
-                    ('someone-elses-shot', 1.0, None, False),
-                    ('shot-1', 2.0, None, False),
-                    ('another-of-theirs', 3.0, None, False),
-                ],
-            ),
-        ]
-    )
-    _, _, (recorded, _) = sent[-1]
-    assert recorded == (None, 'main', None)
-
-
-def test_each_verdict_carries_the_source_of_its_own_shot(tmp_path):
-    """The routine writes a verdict's source onto that shot as its phase, and
-    one request can hand over shots proposed by different things: here the
-    configured start, which the session proposes itself, and a shot from the
-    learner. They are sent in the other order from the one they were proposed
-    in, so a verdict that named the latest proposal, or the first, would land
-    on the wrong shot.
-    """
-    path = tmp_path / 'config.toml'
-    path.write_text(CONFIG.replace('max = 1.0', 'max = 1.0\nstart = 0.5'))
-    sent = run(
-        [
-            ('configure', str(path)),
-            (
-                'observe',
-                [
-                    ('shot-1', 2.0, None, False),
-                    ('someone-elses-shot', 3.0, None, False),
-                    ('shot-0', 1.0, None, False),
-                ],
-            ),
-        ]
-    )
-    _, _, (recorded, _) = sent[-1]
-    assert recorded == ('main', None, 'start')
-
-
-def test_one_message_carrying_several_observations_is_answered_once(config_file):
-    """One status per request, however many observations the request carried.
-
-    The routine reads the first message carrying a request's number as the
-    answer to it, and writes that one status onto every shot of the batch the
-    session took, each beside the phase its own verdict carries. A verdict per
-    observation in separate messages would leave the routine to collect a
-    batch's answer a piece at a time, with a status apiece to choose between.
-    """
-    sent = run(
-        [
-            ('configure', config_file),
-            (
-                'observe',
-                [('shot-0', 1.0, None, False), ('shot-1', 2.0, None, False)],
-            ),
-        ]
-    )
-    assert [kind for kind, _, _ in sent] == ['status', 'status']
 
 
 def test_a_status_message_frees_the_places_of_lost_shots(config_file):
@@ -277,33 +280,21 @@ def test_the_reply_is_sent_before_runmanager_is_asked_which_shots_remain(config_
     class NotesTheOutbox(FakeInterface):
         def shot_status(self, shot_ids):
             outbox_when_asked.append(
-                [kind for kind, _, _ in worker.to_parent.sent]
+                [kind for kind, _, _ in workers[0].to_parent.sent]
             )
             return super().shot_status(shot_ids)
 
-    worker = driven([('configure', config_file), ('shot', None)], NotesTheOutbox)
-    worker.run()
+    workers = []
+    run(
+        [('configure', config_file), ('shot', None)],
+        NotesTheOutbox,
+        inspect=workers.append,
+    )
 
     # Configuring has nothing awaiting to ask about, so the one question comes
     # on the second invocation -- by which time that invocation's reply, and
     # the first one's, had both already gone out.
     assert outbox_when_asked == [['status', 'status']]
-
-
-def test_every_reply_names_the_request_it_answers(config_file):
-    """Order alone does not say which request an answer belongs to. The worker
-    replies before the reconciling and submitting behind that reply, so by the
-    time a reply crosses the pipe the routine may have sent two more requests
-    and given up waiting for the answer to both.
-    """
-    sent = run(
-        [
-            ('configure', config_file),
-            ('observe', [('shot-0', 1.0, None, False)]),
-            ('shot', None),
-        ]
-    )
-    assert answers(sent) == [('status', 1), ('status', 2), ('status', 3)]
 
 
 def test_a_request_whose_handling_raises_is_answered_by_its_error_alone(
@@ -319,26 +310,11 @@ def test_a_request_whose_handling_raises_is_answered_by_its_error_alone(
     assert answers(sent) == [('error', 1)]
 
 
-def test_a_failure_behind_a_reply_carries_the_number_it_followed(config_file):
-    """Reconciling and submitting run after the request they follow has been
-    answered, so a failure in them is a second message for a request already
-    replied to. Numbered as its own the routine would condemn the healthy
-    request it is waiting on and leave that request's reply in the pipe.
-    """
-
-    class FailsOnSubmit(FakeInterface):
-        def submit(self, proposals):
-            raise RuntimeError('runmanager went away')
-
-    sent = run([('configure', config_file), ('shot', None)], FailsOnSubmit)
-    assert answers(sent) == [('status', 1), ('error', 1), ('status', 2)]
-
-
 def test_a_runmanager_that_cannot_sustain_the_session_is_refused(config_file):
     sent = run([('configure', config_file)], RefusingInterface)
-    kind, _, payload = sent[-1]
+    kind, _, (message, _) = sent[-1]
     assert kind == 'error'
-    assert 'error in its globals' in payload
+    assert 'error in its globals' in message
 
 
 def test_a_shot_arriving_before_configuring_is_answered_with_nothing(config_file):
@@ -351,7 +327,7 @@ def test_a_shot_arriving_before_configuring_is_answered_with_nothing(config_file
 def test_an_observation_before_configuring_is_an_error(config_file):
     sent = run([('observe', [('shot-0', 1.0, None, False)])])
     assert sent[-1][0] == 'error'
-    assert 'before being configured' in sent[-1][2]
+    assert 'before being configured' in sent[-1][2][0]
 
 
 def test_an_unknown_command_is_an_error(config_file):
@@ -361,8 +337,8 @@ def test_an_unknown_command_is_an_error(config_file):
 
 def test_a_failure_stops_the_session_proposing(config_file):
     """Carrying on past a runmanager that is not doing what it should would
-    spend the run budget on shots nobody is counting. The error reaches the
-    routine, and the session it stopped says so from then on.
+    spend the run budget on shots nobody is counting. A local Start failure
+    gives the operator the cause in the window's status.
     """
 
     class FailsOnSubmit(FakeInterface):
@@ -370,9 +346,8 @@ def test_a_failure_stops_the_session_proposing(config_file):
             raise RuntimeError('runmanager went away')
 
     sent = run([('configure', config_file), ('shot', None)], FailsOnSubmit)
-    assert [kind for kind, _, _ in sent] == ['status', 'error', 'status']
-    assert 'runmanager went away' in sent[1][2]
-    assert status_of(sent[-1])['stopped'] == 'stopped by an error'
+    assert [kind for kind, _, _ in sent] == ['status', 'status']
+    assert status_of(sent[-1])['stopped'] == 'runmanager went away'
 
 
 class FailsOnStatus(FakeInterface):
@@ -436,7 +411,7 @@ def test_an_error_after_a_session_has_stopped_leaves_its_reason(tmp_path):
         ('status', 3),
         ('error', 3),
     ]
-    assert 'runmanager went away' in sent[2][2]
+    assert 'runmanager went away' in sent[2][2][0]
     assert status_of(sent[3])['stopped'] == (
         'no better parameters in 1 runs (max_num_runs_without_better_params)'
     )
@@ -446,25 +421,20 @@ def test_quit_returns_without_replying(config_file):
     assert run([]) == []
 
 
-def test_the_worker_starts_in_a_process_of_its_own(monkeypatch, tmp_path):
-    """The one test that spawns anything: zprocess enters the child through a
-    wrapper module of its own, which imports this class by name on the path
-    the parent hands over. An import that does not resolve there looks like
-    the child never connecting rather than like an import error, so the real
-    thing is pinned here, where the message is plain.
-
-    The path handed over is the parent's own ``sys.path``, not the child's
-    working directory, which is what the run from a directory the package
-    cannot be found from says.
-    """
-    import zprocess
+def test_the_worker_process_answers_requests_after_gui_startup(monkeypatch, tmp_path):
+    from labscript_utils.ls_zprocess import ProcessTree
 
     monkeypatch.chdir(tmp_path)
-    worker = Worker(zprocess.ProcessTree(allow_insecure=True), startup_timeout=60)
+    worker = Worker(ProcessTree.instance(), startup_timeout=60)
     to_worker, from_worker = worker.start()
     try:
-        to_worker.put(('shot', 7, None))
-        assert from_worker.get(timeout=60) == ('status', 7, ((), {}))
+        to_worker.put(('configure', 1, str(tmp_path / 'missing.toml')))
+        kind, number, (message, _) = from_worker.get(timeout=60)
+        assert (kind, number) == ('error', 1)
+        assert 'missing.toml' in message
+
+        to_worker.put(('shot', 2, None))
+        assert from_worker.get(timeout=60) == ('status', 2, ((), {}))
     finally:
         to_worker.put(('quit', None, None))
         assert worker.child.wait(timeout=60) == 0

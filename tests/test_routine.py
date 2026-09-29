@@ -360,7 +360,7 @@ def test_start_worker_reaps_a_worker_that_rejects_its_configuration(
             self.sent.append(item)
             if item[0] == 'configure':
                 from_worker.incoming.put(
-                    ('error', item[1], 'invalid configuration')
+                    ('error', item[1], ('invalid configuration', ''))
                 )
 
     to_worker = Rejecting()
@@ -478,8 +478,7 @@ def test_a_runmanager_that_stops_answering_after_the_greeting_is_named(
                     (
                         'error',
                         item[1],
-                        'Traceback (most recent call last):\n'
-                        'TimeoutError: no response from runmanager',
+                        ('no response from runmanager', ''),
                     )
                 ],
             )
@@ -692,7 +691,7 @@ def test_a_worker_that_failed_says_so_through_the_routine(session, analysed, sho
     what a routine raises.
     """
     session.worker.replies.append(
-        ('error', 'Traceback (most recent call last):\nRuntimeError: no runmanager')
+        ('error', ('no runmanager', ''))
     )
     with pytest.raises(RuntimeError, match='no runmanager'):
         analysed(shot())
@@ -743,7 +742,7 @@ def test_a_failure_behind_an_earlier_reply_names_the_request_it_came_from(
     """
     assert analysed(shot()) is not None
     _, answered, _ = session.worker.sent[-1]
-    session.worker.send('error', answered, 'runmanager went away', delay=0)
+    session.worker.send('error', answered, ('runmanager went away', ''), delay=0)
 
     with pytest.raises(RuntimeError, match=f'request {answered}:'):
         analysed(shot())
@@ -760,7 +759,7 @@ def test_an_answer_still_on_its_way_is_left_for_the_next_shot(
     """
     # The failure of the work behind an earlier reply, still on its way: the
     # next invocation raises it, this one is not held up for it.
-    session.worker.send('error', 99, 'runmanager went away', delay=1.0)
+    session.worker.send('error', 99, ('runmanager went away', ''), delay=1.0)
     started = time.monotonic()
     assert analysed(shot()) == {'answered': 1}
     assert time.monotonic() - started < 0.5
@@ -781,6 +780,7 @@ def status(**overrides):
         'best_cost': None,
         'best_params': None,
         'best_shot_id': None,
+        'paused': False,
         'stopped': None,
     } | overrides
 
@@ -1202,11 +1202,26 @@ def running(monkeypatch, tmp_path):
 
     def start(interface, reply_timeout=0.2, config=WORKER_CONFIG):
         from labscript_optimization import worker as worker_module
+        from labscript_optimization.session import Session
+        import qtutils
 
         to_worker, from_worker, child = Link(), Link(), Worker()
         worker = worker_module.Worker(None, interface_factory=interface)
         worker.from_parent, worker.to_parent = to_worker, from_worker
-        thread = threading.Thread(target=worker.run, daemon=True)
+        window = types.SimpleNamespace(
+            ui=types.SimpleNamespace(show=lambda: None), update=lambda *args: None
+        )
+        application = types.SimpleNamespace(exit=lambda code: None)
+        monkeypatch.setattr(qtutils, 'inmain_later', lambda fn, *args: fn(*args))
+
+        def run_headless():
+            request = worker.from_parent.get()
+            worker.command_queue.put(request)
+            reader = threading.Thread(target=worker._read_requests, daemon=True)
+            reader.start()
+            worker._run_session(Session, window, application)
+
+        thread = threading.Thread(target=run_headless, daemon=True)
 
         class Spawned:
             def __init__(self, *args, **kwargs):
@@ -1225,7 +1240,12 @@ def running(monkeypatch, tmp_path):
         path.write_text(config)
         storage = types.SimpleNamespace()
         started.append((storage, to_worker, thread))
-        return types.SimpleNamespace(path=path, storage=storage, child=child)
+        return types.SimpleNamespace(
+            path=path,
+            storage=storage,
+            child=child,
+            start=lambda: worker.command_queue.put(('start', None, None)),
+        )
 
     yield start
     for storage, to_worker, thread in started:
@@ -1309,6 +1329,7 @@ def test_each_status_reaches_the_shot_that_earned_it_behind_slow_trailing_work(
         return routine_module.optimise(session.path, session.storage, shots(*rows))
 
     invoke()
+    session.start()
 
     # Costs improving shot by shot, so that the best shot id in a status names
     # the shot whose request produced it.
@@ -1345,6 +1366,7 @@ def test_shots_handed_over_together_each_carry_their_own_phase(
         config=WORKER_CONFIG.replace('max = 1.0', 'max = 1.0\nstart = 0.5'),
     )
     routine_module.optimise(session.path, session.storage, [])
+    session.start()
 
     start, learners = shot(shot_id='shot-0'), shot(shot_id='shot-1')
     routine_module.optimise(session.path, session.storage, shots(start, learners))

@@ -228,6 +228,7 @@ def run(variant, function, dimension, population_size, budget, seed, depth=3):
             f"been deleted -- see benchmarks/README.md"
         )
 
+    session.start()
     order = np.random.default_rng(seed + 991)
     in_flight = []
     refills = 0

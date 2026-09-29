@@ -4,6 +4,7 @@ import os
 # up to ten per process. A conftest is imported by pytest and by nothing else,
 # so a real run is untouched; setdefault leaves an explicit choice alone.
 os.environ.setdefault('LABSCRIPT_NO_ERROR_DIALOG', '1')
+os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from concurrent.futures import wait
 
@@ -12,6 +13,13 @@ import pytest
 
 from labscript_optimization.observations import COMPLETE, Observation
 from labscript_optimization.space import Parameter, ParameterSpace
+
+
+@pytest.fixture(scope='session')
+def qt_application():
+    from qtutils.qt import QtWidgets
+
+    return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 
 class FakeRunmanager:

@@ -5,8 +5,9 @@ A lab analysis routine is two lines::
     import labscript_optimization.routine as optimisation
     optimisation.optimise('optimisation_config.toml')
 
-Adding the routine to lyse starts the session; removing it, restarting it, or
-reaching the run budget stops it. :data:`SHOT_RESULTS` is saved into lyse's
+Adding the routine to lyse opens a paused session; a Start command begins
+submitting shots. Removing or restarting the routine, or reaching the run
+budget, stops it. :data:`SHOT_RESULTS` is saved into lyse's
 dataframe, as lyse results under :data:`RESULTS_GROUP` in the row of each
 shot the session proposed, so the best cost, where the search has got to, and
 what proposed each shot are columns of it.
@@ -313,9 +314,10 @@ def _drain(from_worker, popen, request, pending, timeout=None):
     whose number ``pending`` no longer holds -- a request that handed nothing
     over, or one written to already -- has nothing to write.
 
-    An error raises, naming the request it carries. That is the reply to a
-    request whose handling failed, and trailing work that failed behind a
-    request already answered; the session has stopped either way.
+    An error raises with the worker's message, and its traceback in a note
+    naming the request it carries. That is the reply to a request whose
+    handling failed, and trailing work that failed behind a request already
+    answered; the session has stopped either way.
 
     ``timeout`` bounds the wait and defaults to :data:`REPLY_TIMEOUT`;
     reaching it returns ``None`` and the shots this request handed over are
@@ -349,10 +351,10 @@ def _drain(from_worker, popen, request, pending, timeout=None):
                 )
             continue
         if kind == "error":
-            raise RuntimeError(
-                f"the optimisation worker failed handling request {number}:"
-                f"\n{payload}"
-            )
+            message, worker_traceback = payload
+            error = RuntimeError(message)
+            error.add_note(f"Worker traceback, request {number}:\n{worker_traceback}")
+            raise error
         recorded, status = payload
         for filepath, source in zip(pending.pop(number, ()), recorded):
             # The session taking a cost is what says the shot is one it

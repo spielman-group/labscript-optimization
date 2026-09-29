@@ -65,8 +65,24 @@ import labscript_optimization.routine as optimisation
 optimisation.optimise('optimisation_config.toml')
 ```
 
-Adding the routine starts the session; removing it, restarting it, or reaching
-the run budget stops it. Progress is saved into lyse's dataframe, in the row
+Adding the routine opens a paused session and submits no shots until it
+receives Start. Lyse's Run multishot button opens the window even when no
+shot is waiting. Start begins submission, Pause stops new submissions while
+shots already in flight still report, and Reset discards the history and opens
+another paused session with the configuration already loaded. Closing the
+window hides it without stopping the session; the next routine pass shows it
+again. Restart the routine after editing the TOML. A run that reaches a limit
+shows its reason and can only be Reset.
+
+The window plots each usable cost at its shot's position in proposal order.
+Point colours distinguish the configured start, warmup, main learner and
+explorer shots; the line shows the best cost so far. Pending, dropped and bad
+observations leave gaps, and maximised costs appear in the sign of your cost
+column.
+
+Removing or restarting the routine stops the worker.
+
+Progress is saved into lyse's dataframe, in the row
 of each shot the session proposed, under the results group
 `labscript_optimization`, so it is dataframe columns:
 `df[('labscript_optimization', 'best_cost')]` is the best cost so far, beside
@@ -393,8 +409,8 @@ than the optimisation that stopping for it would end.
 
 runmanager refusing to add shots to the run's sequence stops the session
 without raising. It remembers a sequence only until it restarts, so this is a
-runmanager restarted mid-run. Its reason is the session's `stopped`, and the
-routine prints it once, while lyse goes on analysing.
+runmanager restarted mid-run. Its reason appears in the window and in the
+session's `stopped`, and the routine prints it once, while lyse goes on analysing.
 
 Two waits are bounded, and neither of them is the experiment's. The routine
 waits a couple of seconds for the worker's answer, so lyse is held up for that

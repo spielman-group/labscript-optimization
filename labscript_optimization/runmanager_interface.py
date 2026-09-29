@@ -89,7 +89,7 @@ class RunmanagerInterface:
                 f"runmanager did not answer within {GREETING_TIMEOUT:g} "
                 f"seconds ({exc!r}); an optimisation session cannot start "
                 f"without it"
-            ) from exc
+            ) from None
 
         if self.client.error_in_globals():
             raise RuntimeError(

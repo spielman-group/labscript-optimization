@@ -121,9 +121,52 @@ def make_config(buffered=3, maximize=False, **extra):
     )
 
 
+def running_session(config, runmanager, learner=None):
+    session = Session(config, runmanager, learner)
+    session.start()
+    return session
+
+
 @pytest.fixture
 def session(runmanager):
-    return Session(make_config(), runmanager)
+    return running_session(make_config(), runmanager)
+
+
+def test_a_new_session_waits_for_start(runmanager):
+    session = Session(make_config(buffered=3), runmanager)
+
+    assert session.status()['paused'] is True
+    assert session.refill() == []
+    assert runmanager.submitted == []
+
+    assert session.start() is True
+    assert session.refill() == ['shot-0', 'shot-1', 'shot-2']
+    assert session.status()['paused'] is False
+
+
+def test_pause_keeps_taking_costs_but_submits_nothing(runmanager):
+    session = running_session(make_config(buffered=2), runmanager)
+    first, second = session.refill()
+
+    assert session.pause() is True
+    assert session.record(first, 1.0, None, False) == 'main'
+    assert session.refill() == []
+    assert session.status()['completed'] == 1
+    assert session.status()['paused'] is True
+    session.record(second, 2.0, None, False)
+    session.start()
+    assert len(session.refill()) == 2
+    assert session.status()['starved'] == 0
+
+
+def test_a_stopped_session_cannot_be_started(runmanager):
+    session = running_session(make_config(buffered=1, max_num_runs=1), runmanager)
+    session.record(session.refill()[0], 1.0, None, False)
+
+    assert session.status()['paused'] is False
+    assert session.start() is False
+    assert session.refill() == []
+    assert runmanager.submitted == ['shot-0']
 
 
 def test_the_queue_is_filled_to_the_buffer_depth(session):
@@ -189,7 +232,7 @@ def test_a_proposal_still_waiting_is_a_position_spent_and_nothing_more(runmanage
     not count it -- counting it would stop a session for the shots it is
     waiting on.
     """
-    session = Session(
+    session = running_session(
         make_config(buffered=3, max_num_runs_without_better_params=2), runmanager
     )
     session.refill()
@@ -241,7 +284,7 @@ def test_total_attrition_does_not_end_the_session(session, runmanager):
 
 def test_a_lost_shot_is_not_charged_against_the_run_budget(runmanager):
     """A shot that produced nothing has not spent one of the runs."""
-    session = Session(make_config(buffered=1, max_num_runs=3), runmanager)
+    session = running_session(make_config(buffered=1, max_num_runs=3), runmanager)
     for _ in range(4):
         submitted = session.refill()
         if submitted:
@@ -369,7 +412,7 @@ def test_what_the_session_awaits_is_the_historys_pending_records(
 
 
 def test_a_session_stops_at_the_run_budget(runmanager):
-    session = Session(make_config(buffered=2, max_num_runs=4), runmanager)
+    session = running_session(make_config(buffered=2, max_num_runs=4), runmanager)
     for _ in range(10):
         for shot_id in session.refill():
             session.record(shot_id, 1.0, None, False)
@@ -378,7 +421,7 @@ def test_a_session_stops_at_the_run_budget(runmanager):
 
 
 def test_a_stopped_session_proposes_nothing_further(runmanager):
-    session = Session(make_config(buffered=1, max_num_runs=1), runmanager)
+    session = running_session(make_config(buffered=1, max_num_runs=1), runmanager)
     session.record(session.refill()[0], 1.0, None, False)
     assert session.stopped
     assert session.refill() == []
@@ -393,7 +436,7 @@ def test_a_session_out_of_patience_keeps_that_reason_as_its_last_shots_land(
     reached: the reason kept is the one that stopped the run, not whichever
     limit happens to hold at the last report.
     """
-    session = Session(
+    session = running_session(
         make_config(
             buffered=3, max_num_runs=3, max_num_runs_without_better_params=1
         ),
@@ -412,7 +455,7 @@ def test_a_session_out_of_patience_keeps_that_reason_as_its_last_shots_land(
 
 
 def test_a_session_gives_up_when_nothing_improves(runmanager):
-    session = Session(
+    session = running_session(
         make_config(buffered=1, max_num_runs_without_better_params=3), runmanager
     )
     for cost in [1.0, 2.0, 3.0, 4.0, 5.0]:
@@ -424,7 +467,7 @@ def test_a_session_gives_up_when_nothing_improves(runmanager):
 
 
 def test_improvement_resets_the_patience(runmanager):
-    session = Session(
+    session = running_session(
         make_config(buffered=1, max_num_runs_without_better_params=3), runmanager
     )
     for cost in [5.0, 6.0, 7.0, 4.0, 8.0, 9.0]:
@@ -441,7 +484,7 @@ def test_shots_with_no_usable_cost_still_exhaust_the_patience(runmanager):
     patience limit that ignored them would be the one setting that runs for
     ever on a broken apparatus -- which is the failure it exists to catch.
     """
-    session = Session(
+    session = running_session(
         make_config(buffered=1, max_num_runs_without_better_params=3), runmanager
     )
     for cost, bad in [
@@ -461,7 +504,7 @@ def test_shots_with_no_usable_cost_still_exhaust_the_patience(runmanager):
 
 def test_a_session_that_never_gets_a_usable_cost_gives_up(runmanager):
     """With no best to count from, the whole history has been without one."""
-    session = Session(
+    session = running_session(
         make_config(buffered=1, max_num_runs_without_better_params=2), runmanager
     )
     for _ in range(5):
@@ -503,7 +546,7 @@ def test_a_maximised_best_cost_is_reported_in_the_labs_own_sign(runmanager):
     minimised its way to the right shot, and the sign it comes back in says
     the flip the routine made on the way in was undone on the way out.
     """
-    session = Session(make_config(maximize=True), runmanager)
+    session = running_session(make_config(maximize=True), runmanager)
     session.refill()
     # The costs the routine hands over, flipped once so the session
     # minimises: measurements of 3.0 and 7.0.
@@ -516,7 +559,7 @@ def test_a_maximised_best_cost_is_reported_in_the_labs_own_sign(runmanager):
 
 def test_a_minimised_best_cost_is_reported_as_it_was_measured(runmanager):
     """The mirror, which a session negating unconditionally would fail."""
-    session = Session(make_config(), runmanager)
+    session = running_session(make_config(), runmanager)
     session.refill()
     session.record('shot-0', 3.0, None, False)
     session.record('shot-1', 7.0, None, False)
@@ -533,7 +576,7 @@ def test_the_configured_start_is_the_first_proposal_and_the_only_one(runmanager)
     here, so not one cost has come back when the session refills -- and the
     run still does not begin over from the point the file named.
     """
-    session = Session(config_module.loads(STARTED), runmanager)
+    session = running_session(config_module.loads(STARTED), runmanager)
     submitted = session.refill()
     runmanager.lose(*submitted)
     session.reconcile()
@@ -557,7 +600,7 @@ def test_a_generation_opening_on_the_configured_start_is_still_whole(runmanager)
     queue drained between them, and a population founded a slot short of the
     generation it is bred from.
     """
-    session = Session(config_module.loads(GENERATIONAL_STARTED), runmanager)
+    session = running_session(config_module.loads(GENERATIONAL_STARTED), runmanager)
 
     opening = session.refill()
     assert len(opening) == 4
@@ -579,7 +622,7 @@ def test_a_configured_start_still_out_holds_the_next_generation_back(runmanager)
     it, the population would be a slot short, and the start's cost would land
     on a generation that had already gone.
     """
-    session = Session(config_module.loads(GENERATIONAL_STARTED), runmanager)
+    session = running_session(config_module.loads(GENERATIONAL_STARTED), runmanager)
 
     start, *founders = session.refill()
     for shot_id in founders:
@@ -595,7 +638,7 @@ def test_the_configured_start_carries_a_source_of_its_own(runmanager):
     it is not any learner's phase: the shot it goes out in says ``start``, and
     the learner's shots beside it say what the learner said of them.
     """
-    session = Session(config_module.loads(STARTED), runmanager)
+    session = running_session(config_module.loads(STARTED), runmanager)
     session.refill()
     assert [o.source for o in session.history] == ['start', 'main']
     assert session.record('shot-0', 1.0, None, False) == 'start'
@@ -621,7 +664,7 @@ def test_each_shot_carries_the_phase_of_the_learner_that_proposed_it(runmanager)
     was proposed last. The history holds the same answer, fixed when each shot
     was proposed and unchanged by everything proposed since.
     """
-    session = Session(config_module.loads(CYCLED), runmanager)
+    session = running_session(config_module.loads(CYCLED), runmanager)
     proposed_by, latest, written = {}, {}, {}
     # What the learner says of each proposal, heard as it says it: its answer
     # to the latest call, and the source of the newest proposal it has made.
@@ -666,7 +709,7 @@ def test_an_empty_queue_at_refill_is_counted(runmanager):
     That is the apparatus staying busy rather than a fault, but it is a shot
     the optimiser did not get, so it is worth telling the user about.
     """
-    session = Session(make_config(buffered=1), runmanager)
+    session = running_session(make_config(buffered=1), runmanager)
     for _ in range(3):
         for shot_id in session.refill():
             session.record(shot_id, 1.0, None, False)
@@ -677,7 +720,7 @@ def test_a_generation_goes_out_whole_and_waits_to_be_answered_for(runmanager):
     """The learner proposes nothing while any of its proposals is outstanding,
     which is what stops a trial being bred against a half-built population.
     """
-    session = Session(config_module.loads(GENERATIONAL), runmanager)
+    session = running_session(config_module.loads(GENERATIONAL), runmanager)
 
     assert len(session.refill()) == 4
     assert session.refill() == []
@@ -703,7 +746,7 @@ def test_the_session_submits_what_its_learner_proposes_and_holds_no_barrier(
         def propose(self, history, hint):
             return [(np.array([0.5]), 'main')]
 
-    session = Session(make_config(), runmanager, OneAtATime())
+    session = running_session(make_config(), runmanager, OneAtATime())
     assert [len(session.refill()) for _ in range(3)] == [1, 1, 1]
     assert len(session.awaiting) == 3
 
@@ -723,7 +766,7 @@ def test_the_budget_keeps_the_first_proposals_a_learner_offers(runmanager):
         def propose(self, history, hint):
             return [(np.array([x]), 'main') for x in (0.1, 0.2, 0.3, 0.4)]
 
-    session = Session(make_config(max_num_runs=2), runmanager, Labelled())
+    session = running_session(make_config(max_num_runs=2), runmanager, Labelled())
     session.refill()
     assert [p[0] for p in session.proposals.values()] == [0.1, 0.2]
 
@@ -732,7 +775,7 @@ def test_the_budget_cuts_explorer_shots_before_any_of_the_batch(runmanager):
     """A ready batch is offered ahead of the explorer shots, so a budget with
     room for less than a refill cuts the explorer shots, not points each chosen
     beside the rest of the batch."""
-    session = Session(
+    session = running_session(
         gaussian_process_config(
             'max_num_runs = 10\nnum_buffered_runs = 4',
             'warmup_observations = 3\nbatch_size = 2',
@@ -768,7 +811,7 @@ def test_a_gaussian_process_session_runs_end_to_end_with_each_explorer(
     drives a session. Each batch is waited for before the next shot reports,
     so the run reaches the model's points however long a fit takes.
     """
-    session = Session(
+    session = running_session(
         gaussian_process_config(
             'max_num_runs = 16',
             f'explorer = "{explorer}"\nwarmup_observations = 4\nbatch_size = 2',
@@ -793,7 +836,7 @@ def test_a_generational_run_counts_no_starvation(runmanager):
     design, and a counter that fires by design is noise in the one number the
     documentation tells a lab to watch.
     """
-    session = Session(config_module.loads(GENERATIONAL), runmanager)
+    session = running_session(config_module.loads(GENERATIONAL), runmanager)
     for _ in range(5):
         for shot_id in session.refill():
             session.record(shot_id, 1.0, None, False)
@@ -803,7 +846,7 @@ def test_a_generational_run_counts_no_starvation(runmanager):
 
 
 def test_a_queue_kept_topped_up_does_not_starve(runmanager):
-    session = Session(make_config(buffered=3), runmanager)
+    session = running_session(make_config(buffered=3), runmanager)
     session.refill()
     for _ in range(5):
         session.record(session.awaiting[0], 1.0, None, False)
@@ -910,7 +953,7 @@ def test_the_budget_may_cut_the_last_generation_short(runmanager):
     are spent rather than withheld to keep the generation whole.
     """
     config = de_config(population_size=5, max_num_runs=13)
-    session = Session(config, runmanager)
+    session = running_session(config, runmanager)
 
     sizes = []
     while not session.stopped:
@@ -933,7 +976,7 @@ def test_a_short_last_generation_evolves_the_slots_it_reaches(runmanager):
     position names, not the one a running count would name.
     """
     config = de_config(population_size=5, max_num_runs=13)
-    session = Session(config, runmanager)
+    session = running_session(config, runmanager)
     learner = session.learner
 
     generations = (

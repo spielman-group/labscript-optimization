@@ -180,6 +180,7 @@ def test_a_proposal_without_a_source_is_refused_rather_than_recorded(space, rng)
         runmanager,
         Silent(space, rng),
     )
+    session.start()
     with pytest.raises(TypeError, match='rather than a source'):
         session.refill()
     assert session.proposals == {}
@@ -525,6 +526,7 @@ def test_every_proposal_keeps_the_role_its_position_gave_it(rng):
     session = Session(
         Config(space=space, globals=(), cost_key=('r', 'c')), runmanager, learner
     )
+    session.start()
 
     def population(history):
         """What holds each slot: the cheapest usable result at its position."""
@@ -1206,7 +1208,9 @@ def driven(space, model, hint=2, **knobs):
     config = Config(
         space=space, globals=(), cost_key=('r', 'c'), num_buffered_runs=hint
     )
-    return Session(config, FakeRunmanager(), learner)
+    session = Session(config, FakeRunmanager(), learner)
+    session.start()
+    return session
 
 
 def step(session, back=1):

@@ -48,6 +48,8 @@ lyse = [
     "labscript_utils>=3.4.2",
     "lyse",
     "runmanager",
+    "qtutils",
+    "pyqtgraph>=0.11.1",
 ]
 
 [tool.pytest.ini_options]
