@@ -61,7 +61,9 @@ class Worker(Process):
         Every request is answered with exactly one status, unless handling it
         raised, in which case the error is its reply. The routine waits on
         that: a request answered with nothing would leave it waiting out its
-        deadline on a worker that is alive and well.
+        deadline on a worker that is alive and well. An error payload is
+        ``(message, traceback)``, as text, because not every exception keeps
+        its message through pickling.
 
         The reply goes out before the reconciling, proposing and submitting
         that follow it, so the status the routine reads is one step behind:
@@ -177,7 +179,9 @@ class Worker(Process):
                     if session is not None:
                         session.stop(error if number is None else "stopped by an error")
                     if number is not None:
-                        self.to_parent.put(("error", number, traceback.format_exc()))
+                        self.to_parent.put(
+                            ("error", number, (error, traceback.format_exc()))
+                        )
                     else:
                         traceback.print_exc()
                 finally:

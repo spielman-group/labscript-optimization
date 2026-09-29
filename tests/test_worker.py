@@ -312,9 +312,9 @@ def test_a_request_whose_handling_raises_is_answered_by_its_error_alone(
 
 def test_a_runmanager_that_cannot_sustain_the_session_is_refused(config_file):
     sent = run([('configure', config_file)], RefusingInterface)
-    kind, _, payload = sent[-1]
+    kind, _, (message, _) = sent[-1]
     assert kind == 'error'
-    assert 'error in its globals' in payload
+    assert 'error in its globals' in message
 
 
 def test_a_shot_arriving_before_configuring_is_answered_with_nothing(config_file):
@@ -327,7 +327,7 @@ def test_a_shot_arriving_before_configuring_is_answered_with_nothing(config_file
 def test_an_observation_before_configuring_is_an_error(config_file):
     sent = run([('observe', [('shot-0', 1.0, None, False)])])
     assert sent[-1][0] == 'error'
-    assert 'before being configured' in sent[-1][2]
+    assert 'before being configured' in sent[-1][2][0]
 
 
 def test_an_unknown_command_is_an_error(config_file):
@@ -411,7 +411,7 @@ def test_an_error_after_a_session_has_stopped_leaves_its_reason(tmp_path):
         ('status', 3),
         ('error', 3),
     ]
-    assert 'runmanager went away' in sent[2][2]
+    assert 'runmanager went away' in sent[2][2][0]
     assert status_of(sent[3])['stopped'] == (
         'no better parameters in 1 runs (max_num_runs_without_better_params)'
     )
@@ -429,9 +429,9 @@ def test_the_worker_process_answers_requests_after_gui_startup(monkeypatch, tmp_
     to_worker, from_worker = worker.start()
     try:
         to_worker.put(('configure', 1, str(tmp_path / 'missing.toml')))
-        kind, number, error = from_worker.get(timeout=60)
+        kind, number, (message, _) = from_worker.get(timeout=60)
         assert (kind, number) == ('error', 1)
-        assert 'missing.toml' in error
+        assert 'missing.toml' in message
 
         to_worker.put(('shot', 2, None))
         assert from_worker.get(timeout=60) == ('status', 2, ((), {}))

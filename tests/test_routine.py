@@ -360,7 +360,7 @@ def test_start_worker_reaps_a_worker_that_rejects_its_configuration(
             self.sent.append(item)
             if item[0] == 'configure':
                 from_worker.incoming.put(
-                    ('error', item[1], 'invalid configuration')
+                    ('error', item[1], ('invalid configuration', ''))
                 )
 
     to_worker = Rejecting()
@@ -478,8 +478,7 @@ def test_a_runmanager_that_stops_answering_after_the_greeting_is_named(
                     (
                         'error',
                         item[1],
-                        'Traceback (most recent call last):\n'
-                        'TimeoutError: no response from runmanager',
+                        ('no response from runmanager', ''),
                     )
                 ],
             )
@@ -692,7 +691,7 @@ def test_a_worker_that_failed_says_so_through_the_routine(session, analysed, sho
     what a routine raises.
     """
     session.worker.replies.append(
-        ('error', 'Traceback (most recent call last):\nRuntimeError: no runmanager')
+        ('error', ('no runmanager', ''))
     )
     with pytest.raises(RuntimeError, match='no runmanager'):
         analysed(shot())
@@ -743,7 +742,7 @@ def test_a_failure_behind_an_earlier_reply_names_the_request_it_came_from(
     """
     assert analysed(shot()) is not None
     _, answered, _ = session.worker.sent[-1]
-    session.worker.send('error', answered, 'runmanager went away', delay=0)
+    session.worker.send('error', answered, ('runmanager went away', ''), delay=0)
 
     with pytest.raises(RuntimeError, match=f'request {answered}:'):
         analysed(shot())
@@ -760,7 +759,7 @@ def test_an_answer_still_on_its_way_is_left_for_the_next_shot(
     """
     # The failure of the work behind an earlier reply, still on its way: the
     # next invocation raises it, this one is not held up for it.
-    session.worker.send('error', 99, 'runmanager went away', delay=1.0)
+    session.worker.send('error', 99, ('runmanager went away', ''), delay=1.0)
     started = time.monotonic()
     assert analysed(shot()) == {'answered': 1}
     assert time.monotonic() - started < 0.5
