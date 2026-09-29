@@ -31,8 +31,11 @@ class WindowController:
         self.command_queue = command_queue
         path = Path(__file__).with_suffix(".ui")
         self.ui = UiLoader().load(str(path), OptimizerWindow())
-        for name in ("start", "pause", "reset"):
-            button = getattr(self.ui, f"{name}_button")
+        for button, name in (
+            (self.ui.start_button, "start"),
+            (self.ui.pause_button, "pause"),
+            (self.ui.reset_button, "reset"),
+        ):
             button.clicked.connect(
                 lambda checked=False, command=name: self.command_queue.put(
                     (command, None, None)
@@ -78,10 +81,15 @@ class WindowController:
             phase = "Running"
         self.ui.phase_value.setText(phase)
 
-        for name in (
-            "submitted", "completed", "awaiting", "dropped", "blocked", "starved"
+        for label, name in (
+            (self.ui.submitted_value, "submitted"),
+            (self.ui.completed_value, "completed"),
+            (self.ui.awaiting_value, "awaiting"),
+            (self.ui.dropped_value, "dropped"),
+            (self.ui.blocked_value, "blocked"),
+            (self.ui.starved_value, "starved"),
         ):
-            getattr(self.ui, f"{name}_value").setText(str(status.get(name, 0)))
+            label.setText(str(status.get(name, 0)))
         cost = status.get("best_cost")
         self.ui.best_cost_value.setText("—" if cost is None else f"{cost:g}")
         params = status.get("best_params")
