@@ -11,6 +11,7 @@ local command. If the routine's process dies the worker goes with it.
 import queue
 import threading
 import traceback
+from pathlib import Path
 
 from zprocess import Process
 
@@ -81,13 +82,14 @@ class Worker(Process):
         # until the parent's first request proves zprocess has connected this
         # child, then import on the main thread before Qt takes it over.
         from .session import Session
-        from qtutils.qt import QtCore, QtWidgets
+        from labscript_utils.splash import get_qapplication
+        from qtutils.qt import QtCore, QtGui
 
         from .window import WindowController
 
-        application = QtWidgets.QApplication.instance()
-        if application is None:
-            application = QtWidgets.QApplication([])
+        application = get_qapplication([], "labscript optimizer")
+        icon = QtGui.QIcon(str(Path(__file__).with_name("optimizer.svg")))
+        application.setWindowIcon(icon)
         application.setQuitOnLastWindowClosed(False)
         window = WindowController(self.command_queue)
         window.ui.show()
@@ -127,7 +129,10 @@ class Worker(Process):
                 try:
                     if command in ("configure", "reset"):
                         if command == "configure":
-                            replacement_config = config_module.load(payload)
+                            # One read, so the window shows the text that was parsed.
+                            text = Path(payload).read_text(encoding="utf-8")
+                            replacement_config = config_module.loads(text)
+                            window.show_config(replacement_config, text)
                         elif config is None:
                             raise RuntimeError("got reset before being configured")
                         else:

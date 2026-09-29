@@ -120,7 +120,9 @@ def run_headless(worker):
     from labscript_optimization.session import Session
 
     window = SimpleNamespace(
-        ui=SimpleNamespace(show=lambda: None), update=lambda *args: None
+        ui=SimpleNamespace(show=lambda: None),
+        update=lambda *args: None,
+        show_config=lambda *args: None,
     )
     application = SimpleNamespace(exit=lambda code: None)
     reader = threading.Thread(target=worker._read_requests, daemon=True)

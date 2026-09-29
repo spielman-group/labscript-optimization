@@ -74,6 +74,10 @@ window hides it without stopping the session; the next routine pass shows it
 again. Restart the routine after editing the TOML. A run that reaches a limit
 shows its reason and can only be Reset.
 
+The window's Status tab shows the phase, the learner, the shot counts and the
+best cost, with each parameter's range, start and best value. Its
+Configuration tab shows the TOML file as it was loaded.
+
 The window plots each usable cost at its shot's position in proposal order.
 Point colours distinguish the configured start, warmup, main learner and
 explorer shots; the line shows the best cost so far. Pending, dropped and bad

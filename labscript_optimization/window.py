@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pyqtgraph as pg
 from qtutils import UiLoader, inmain_decorator
-from qtutils.qt import QtWidgets
+from qtutils.qt import QtGui, QtWidgets
 
 
 class OptimizerWindow(QtWidgets.QMainWindow):
@@ -45,8 +45,19 @@ class WindowController:
         self.plot.setMinimumHeight(220)
         self.plot.setLabel("bottom", "Shot order")
         self.plot.setLabel("left", "Cost")
-        self.plot.addLegend()
+        # The title row sits above the axes, so a legend there covers no data.
+        plot_item = self.plot.getPlotItem()
+        plot_item.layout.removeItem(plot_item.titleLabel)
+        self.legend = pg.LegendItem(colCount=5)
+        plot_item.layout.addItem(self.legend, 0, 1)
+        self.listed = []
         self.ui.plot_layout.addWidget(self.plot)
+        self.ui.parameters_table.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.ui.config_text.setFont(
+            QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
+        )
         colors = {
             "start": "#0072b2",
             "warmup": "#e69f00",
@@ -54,14 +65,27 @@ class WindowController:
             "explore": "#cc79a7",
         }
         self.points = {
-            source: self.plot.plot(
-                [], [], pen=None, symbol="o", symbolBrush=color, name=source.title()
-            )
+            source: self.plot.plot([], [], pen=None, symbol="o", symbolBrush=color)
             for source, color in colors.items()
         }
-        self.best_line = self.plot.plot(
-            [], [], pen=pg.mkPen("#eeeeee", width=2), name="Best so far"
-        )
+        self.best_line = self.plot.plot([], [], pen=pg.mkPen("#eeeeee", width=2))
+
+    @inmain_decorator(wait_for_return=False)
+    def show_config(self, config, text):
+        self.ui.method_value.setText(config.learner.replace("_", " ").capitalize())
+        self.ui.config_text.setPlainText(text)
+        table = self.ui.parameters_table
+        table.setRowCount(len(config.space.parameters))
+        for row, parameter in enumerate(config.space.parameters):
+            start = "—" if parameter.start is None else f"{parameter.start:g}"
+            cells = (
+                parameter.name,
+                f"{parameter.minimum:g}",
+                f"{parameter.maximum:g}",
+                start,
+            )
+            for column, cell in enumerate(cells):
+                table.setItem(row, column, QtWidgets.QTableWidgetItem(cell))
 
     @inmain_decorator(wait_for_return=False)
     def update(self, status, computing, observations, gaussian_process, maximize):
@@ -93,7 +117,10 @@ class WindowController:
         cost = status.get("best_cost")
         self.ui.best_cost_value.setText("—" if cost is None else f"{cost:g}")
         params = status.get("best_params")
-        self.ui.best_params_value.setText("—" if params is None else str(params))
+        table = self.ui.parameters_table
+        for row in range(table.rowCount()):
+            cell = "—" if params is None else f"{params[row]:g}"
+            table.setItem(row, 4, QtWidgets.QTableWidgetItem(cell))
 
         self.ui.start_button.setEnabled(not stopped and paused)
         self.ui.pause_button.setEnabled(not stopped and not paused)
@@ -114,3 +141,19 @@ class WindowController:
         for source, (x, y) in points.items():
             self.points[source].setData(x, y)
         self.best_line.setData(best_x, best_y)
+
+        # Listed only once it has points: most learners never propose some.
+        # Rebuilt only when that changes, since new entries are drawn once
+        # before the legend's layout places them.
+        listed = [
+            (self.points[source], source.title())
+            for source, (x, _) in points.items()
+            if x
+        ]
+        if best_x:
+            listed.append((self.best_line, "Best so far"))
+        if listed != self.listed:
+            self.legend.clear()
+            for item, name in listed:
+                self.legend.addItem(item, name)
+            self.listed = listed

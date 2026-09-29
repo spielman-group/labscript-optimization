@@ -1209,7 +1209,9 @@ def running(monkeypatch, tmp_path):
         worker = worker_module.Worker(None, interface_factory=interface)
         worker.from_parent, worker.to_parent = to_worker, from_worker
         window = types.SimpleNamespace(
-            ui=types.SimpleNamespace(show=lambda: None), update=lambda *args: None
+            ui=types.SimpleNamespace(show=lambda: None),
+            update=lambda *args: None,
+            show_config=lambda *args: None,
         )
         application = types.SimpleNamespace(exit=lambda code: None)
         monkeypatch.setattr(qtutils, 'inmain_later', lambda fn, *args: fn(*args))
