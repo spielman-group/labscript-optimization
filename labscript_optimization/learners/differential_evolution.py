@@ -1,7 +1,7 @@
 """Differential evolution, in ask/tell form.
 
 The algorithm is written out here rather than called from scipy, whose
-optimisers are callback-driven and want to own the loop, while a lab optimiser
+optimizers are callback-driven and want to own the loop, while a lab optimizer
 has to hand out a point now and receive its cost hours later, possibly out of
 order.
 

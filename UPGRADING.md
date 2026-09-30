@@ -30,9 +30,9 @@ pass and says so.
 Your lyse analysis routine becomes two lines:
 
 ```python
-import labscript_optimization.routine as optimisation
+import labscript_optimization.routine as optimization
 
-optimisation.optimise('mloop_config.toml')
+optimization.optimize('mloop_config.toml')
 ```
 
 Remove `mloop_multishot.py`, `mloop_interface.py`, `mloop_controller.py`,
@@ -74,7 +74,7 @@ Delete these from your configuration:
 | --- | --- | --- |
 | `[ANALYSIS]` | `ignore_bad` | A shot whose cost is `NaN` is now recorded as a bad observation: counted as a completed run, left out of the fits. Nothing waits for it, so there is nothing to switch off. |
 | `[ANALYSIS]` | `analysislib_console_log_level`, `analysislib_file_log_level` | The plugin's own logging configuration. It has no logging of its own to configure. |
-| `[GENERAL]` | `session` | A label. Nothing read it but the status `optimise` returns, where it was one more key in the printed dictionary; it was never written onto a shot and never matched on. A shot is attributed by the id runmanager mints for its queue row, which lyse reads as the `shot_id` column. |
+| `[GENERAL]` | `session` | A label. Nothing read it but the status `optimize` returns, where it was one more key in the printed dictionary; it was never written onto a shot and never matched on. A shot is attributed by the id runmanager mints for its queue row, which lyse reads as the `shot_id` column. |
 | `[GENERAL]` | `no_delay` | The Gaussian process always behaves as M-LOOP's `no_delay = true`: while it computes a batch its explorer keeps the queue topped up, and each of its points goes out as soon as it is ready. |
 | `[GENERAL]` | `visualisations` | No plots and no GUI. Progress comes back as the routine's results. |
 | `[GENERAL]` | `console_log_level`, `console_log_string` | As above. |
@@ -193,7 +193,7 @@ nothing for you to create and nothing to keep in step.
 
 It defaults to 2, because one of the shots in flight is always the one BLACS
 is running. BLACS asks for its next shot as soon as it finishes
-the last, which is before the optimiser has seen the cost and proposed a
+the last, which is before the optimizer has seen the cost and proposed a
 replacement — so a queue holding only one of its shots is empty at precisely
 that moment and runmanager gives BLACS a default shot instead. At one buffered
 run roughly every second shot is a default one. Those shots go to BLACS
@@ -393,11 +393,11 @@ empty string or list for the rest.
 
 The session's counters — `submitted`, `completed`, `awaiting`, `dropped`,
 `blocked` and `starved` — are one answer for the whole run rather than anything about a shot,
-so they are not written onto every shot of it. `optimise` returns the whole
+so they are not written onto every shot of it. `optimize` returns the whole
 status, so a routine that wants them prints it:
 
 ```python
-print(optimisation.optimise('mloop_config.toml'))
+print(optimization.optimize('mloop_config.toml'))
 ```
 
 `dropped` counts shots the session proposed that will never produce a cost:
@@ -418,13 +418,13 @@ and look at the queue.
 
 **A shot that cannot compile stops everything.** Such a row stays at the head
 of runmanager's queue until someone deletes it, and nothing behind it runs —
-so nothing reaches lyse and the optimiser is never invoked again. The row is
+so nothing reaches lyse and the optimizer is never invoked again. The row is
 red in runmanager and the queue has visibly halted. That is the signal; the
-optimiser cannot report it, because it is not running. Delete the row and the
+optimizer cannot report it, because it is not running. Delete the row and the
 queue moves.
 
 **The session stops if the labscript file changes underneath it.** Its shots
-would no longer be the experiment it has been optimising, so it says so rather
+would no longer be the experiment it has been optimizing, so it says so rather
 than carrying on.
 
 ## One thing that looks like a failure and is not
@@ -434,5 +434,5 @@ row are given up on and counted in `dropped`, and the search moves on without
 them; you delete the row, they run, and their costs come back for a generation
 that has already been replaced. Each is still taken and competes for its own
 slot and no other -- which is what differential evolution would have done with
-it had it arrived in time. Two generations of the optimiser's shots sit in the
+it had it arrived in time. Two generations of the optimizer's shots sit in the
 queue while it catches up, and `awaiting` reads high for as long as they do.

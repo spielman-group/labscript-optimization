@@ -110,7 +110,7 @@ None - can start immediately.
 `[ANALYSIS] groups = ["CMOT", "SHIMSS"]` beside a `[PARAMETERS.SHIMS.b]` table
 loads and searches CMOT's parameters alone. The misspelt group matches nothing,
 SHIMS is left out, its globals are never set, and the lab believes it is
-optimising `b`.
+optimizing `b`.
 
 Refuse any name in `groups` that no `[PARAMETERS.<group>]` or
 `[RUNMANAGER_GLOBALS.<group>]` table defines, naming it and the groups that do

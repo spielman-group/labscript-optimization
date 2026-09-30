@@ -1,4 +1,4 @@
-"""The persistent optimisation process.
+"""The persistent optimization process.
 
 Spawned once by the lyse routine and kept until the routine is restarted. The
 fitting and the runmanager traffic happen here, so that the routine can hand
@@ -20,7 +20,7 @@ from .runmanager_interface import RunmanagerInterface
 
 
 class Worker(Process):
-    """The optimisation session, in a process of its own.
+    """The optimization session, in a process of its own.
 
     zprocess enters the child through a wrapper module of its own, imports
     this module by name and calls :meth:`run` with the pipes to the routine

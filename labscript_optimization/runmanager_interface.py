@@ -87,14 +87,14 @@ class RunmanagerInterface:
         except Exception as exc:
             raise RuntimeError(
                 f"runmanager did not answer within {GREETING_TIMEOUT:g} "
-                f"seconds ({exc!r}); an optimisation session cannot start "
+                f"seconds ({exc!r}); an optimization session cannot start "
                 f"without it"
             ) from None
 
         if self.client.error_in_globals():
             raise RuntimeError(
                 "runmanager reports an error in its globals; fix it before "
-                "starting an optimisation"
+                "starting an optimization"
             )
 
         self.labscript_file = self.client.get_labscript_file()
@@ -106,7 +106,7 @@ class RunmanagerInterface:
             raise RuntimeError(
                 f"the labscript file changed from {self.labscript_file!r} to "
                 f"{current!r} while this session was running; its shots would "
-                f"no longer be the experiment it has been optimising"
+                f"no longer be the experiment it has been optimizing"
             )
 
     def submit(self, proposals: Sequence[Sequence[float]]) -> list[str]:

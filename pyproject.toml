@@ -15,11 +15,11 @@ find = {namespaces = false}
 
 [project]
 name = "labscript-optimization"
-description = "Machine-learning online optimisation of labscript suite experiments"
+description = "Machine-learning online optimization of labscript suite experiments"
 authors = [
     {name = "Ian Spielman", email = "spielman@umd.edu"},
 ]
-keywords = ["experiment control", "automation", "optimisation"]
+keywords = ["experiment control", "automation", "optimization"]
 license = {file = "LICENSE"}
 classifiers = [
     "License :: OSI Approved :: MIT License",

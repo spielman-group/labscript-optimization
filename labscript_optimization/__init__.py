@@ -1,4 +1,4 @@
-"""Machine-learning online optimisation of labscript suite experiments.
+"""Machine-learning online optimization of labscript suite experiments.
 
 A lyse routine proposes shots, runmanager runs them, and the costs come back
 through lyse. The learners are ordinary objects, driven through one method,
@@ -13,6 +13,6 @@ so they can be used on their own::
 
 In a lab, the entry point is the routine::
 
-    import labscript_optimization.routine as optimisation
-    optimisation.optimise('optimisation_config.toml')
+    import labscript_optimization.routine as optimization
+    optimization.optimize('optimization_config.toml')
 """

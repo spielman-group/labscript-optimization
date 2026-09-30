@@ -273,7 +273,7 @@ def test_a_shot_that_will_never_arrive_stops_being_waited_on(session, runmanager
 
 
 def test_total_attrition_does_not_end_the_session(session, runmanager):
-    """Losing every shot, repeatedly, must not stop the optimisation."""
+    """Losing every shot, repeatedly, must not stop the optimization."""
     for _ in range(5):
         submitted = session.refill()
         runmanager.lose(*submitted)
@@ -707,7 +707,7 @@ def test_an_empty_queue_at_refill_is_counted(runmanager):
     """Every time nothing of ours is queued, BLACS ran a default shot instead.
 
     That is the apparatus staying busy rather than a fault, but it is a shot
-    the optimiser did not get, so it is worth telling the user about.
+    the optimizer did not get, so it is worth telling the user about.
     """
     session = running_session(make_config(buffered=1), runmanager)
     for _ in range(3):

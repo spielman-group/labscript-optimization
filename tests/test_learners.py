@@ -1653,7 +1653,7 @@ def test_a_late_cost_refits_a_set_of_unchanged_size(space):
     fresh.fit(waiting_on(8))
 
     # From the kernel fitted to the other eight, the refit here reaches the
-    # fresh fit's optimum to within the optimiser's tolerance; that kernel left
+    # fresh fit's optimum to within the optimizer's tolerance; that kernel left
     # in place would predict several times off.
     grid = space.uniform(np.random.default_rng(5), 5)
     for carried_part, fresh_part in zip(carried.predict(grid), fresh.predict(grid)):

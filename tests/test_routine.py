@@ -102,7 +102,7 @@ def shot(tmp_path):
             # row: the globals group the row takes its columns from, and the
             # sequence it is indexed by.
             f.create_group('globals')
-            f.attrs['sequence_id'] = '20260922T120000_optimisation'
+            f.attrs['sequence_id'] = '20260922T120000_optimization'
         row = {'filepath': str(path), 'shot_id': shot_id}
         if with_cost:
             row[('zTOF', 'Nb')] = cost
@@ -502,7 +502,7 @@ def session(monkeypatch, tmp_path):
     ``worker`` is the end the routine writes to: what it was ``sent``, and the
     ``replies`` it answers with in place of its default.
     """
-    path = tmp_path / 'optimisation_config.toml'
+    path = tmp_path / 'optimization_config.toml'
     path.write_text(CONFIG)
     from_worker = Pipe()
     to_worker = Answering(from_worker)
@@ -513,8 +513,8 @@ def session(monkeypatch, tmp_path):
     yield types.SimpleNamespace(
         storage=storage, path=path, worker=to_worker, child=child
     )
-    # Leaves the atexit hook that optimise() registered with nothing to stop.
-    storage.optimisation_worker = None
+    # Leaves the atexit hook that optimize() registered with nothing to stop.
+    storage.optimization_worker = None
 
 
 def shots(*rows):
@@ -529,7 +529,7 @@ def analysed(session):
     """Run the routine on the shots of one pass, returning the status."""
 
     def analyse(*rows):
-        return routine_module.optimise(session.path, session.storage, shots(*rows))
+        return routine_module.optimize(session.path, session.storage, shots(*rows))
 
     return analyse
 
@@ -584,7 +584,7 @@ def test_the_shots_lyse_names_are_asked_of_its_dataframe_in_one_request(
     monkeypatch.setitem(sys.modules, 'lyse', lyse)
     for paths in [None, [], [row['filepath'] for row in rows]]:
         lyse.paths = paths
-        routine_module.optimise(session.path, session.storage)
+        routine_module.optimize(session.path, session.storage)
 
     assert asked == [{'filepath': paths}]
     assert ids_sent(session.worker) == [[], [], ['row-1', 'row-2']]
@@ -595,7 +595,7 @@ def test_lyse_s_unsorted_columns_are_read_without_a_warning(
 ):
     """lyse keeps its columns in the order they were added, and pandas warns
     about lexsort depth when an unsorted MultiIndex is read by a shallower key,
-    which would print into lyse's output as though the optimiser had failed.
+    which would print into lyse's output as though the optimizer had failed.
     The frame is made deeper than the cost key, as a shot carrying images makes
     it, because a key as deep as the columns is looked up whole and does not
     warn."""
@@ -609,7 +609,7 @@ def test_lyse_s_unsorted_columns_are_read_without_a_warning(
     monkeypatch.setitem(sys.modules, 'lyse', lyse)
     with warnings.catch_warnings():
         warnings.simplefilter('error', pd.errors.PerformanceWarning)
-        routine_module.optimise(session.path, session.storage)
+        routine_module.optimize(session.path, session.storage)
     assert ids_sent(session.worker) == [['row-1']]
 
 
@@ -859,7 +859,7 @@ def test_the_sessions_own_counters_are_not_written_onto_every_shot(
 ):
     """They are one answer for the whole run rather than anything about a shot,
     and a column repeating a running total says nothing about the shot it lands
-    on. A routine that wants them has them: optimise returns the whole status.
+    on. A routine that wants them has them: optimize returns the whole status.
     """
     row = shot()
     session.worker.replies.append(('status', (('main',), status())))
@@ -937,7 +937,7 @@ def lyse_column(shot, results):
     they make.
 
     ``dataframe_utilities`` turns the shot files into rows, as lyse does when
-    each file appears, and they carry nothing of the optimiser's: the status is
+    each file appears, and they carry nothing of the optimizer's: the status is
     saved to the dataframe alone. Then, a shot at a time,
     ``lyse.Run.save_result`` records each value in ``_updated_data``, the
     analysis subprocess hands that dict back to the file box, and
@@ -1015,7 +1015,7 @@ def test_a_shot_carrying_no_identifier_is_not_written_to(
     session, analysed, shot, results
 ):
     """One of runmanager's default shots. There is no id to send an observation
-    under, so the session has nothing to take and nothing of the optimiser's
+    under, so the session has nothing to take and nothing of the optimizer's
     belongs on the shot, whatever it took from the shots beside it.
     """
     default, ours = shot(shot_id=''), shot(shot_id='row-1')
@@ -1029,11 +1029,11 @@ def test_a_shot_the_session_never_proposed_is_handed_over_and_not_written_to(
     session, analysed, shot, results
 ):
     """runmanager mints a shot id for every queue row it compiles, so a user's
-    own shot, engaged alongside the optimisation, arrives carrying one exactly
-    as the optimiser's do. The routine cannot tell them apart and does not try:
+    own shot, engaged alongside the optimization, arrives carrying one exactly
+    as the optimizer's do. The routine cannot tell them apart and does not try:
     it hands the shot over, and the session's answer -- that it took nothing --
-    is what says nothing of the optimiser's belongs on it. Writing on the
-    strength of the id alone puts a column of the optimiser's numbers onto
+    is what says nothing of the optimizer's belongs on it. Writing on the
+    strength of the id alone puts a column of the optimizer's numbers onto
     somebody else's shot.
     """
     row = shot(shot_id='someone-elses-shot')
@@ -1046,7 +1046,7 @@ def test_a_shot_the_session_never_proposed_is_handed_over_and_not_written_to(
 def test_the_status_is_written_onto_each_shot_the_session_took(
     session, analysed, shot, results
 ):
-    """A batch can hold the optimiser's shots and a user's own together, and
+    """A batch can hold the optimizer's shots and a user's own together, and
     the worker answers with a verdict for each in the order they were sent.
     One answer for the whole message could only write onto all of them or none.
     """
@@ -1238,7 +1238,7 @@ def running(monkeypatch, tmp_path):
         # A deadline for configuring that a test can outrun if it has to, and
         # one these tests do not read the workstation's labconfig for.
         monkeypatch.setattr(routine_module, 'configure_timeout', lambda: 5.0)
-        path = tmp_path / 'optimisation_config.toml'
+        path = tmp_path / 'optimization_config.toml'
         path.write_text(config)
         storage = types.SimpleNamespace()
         started.append((storage, to_worker, thread))
@@ -1251,9 +1251,9 @@ def running(monkeypatch, tmp_path):
 
     yield start
     for storage, to_worker, thread in started:
-        # Leaves the atexit hook that optimise() registered with nothing to
+        # Leaves the atexit hook that optimize() registered with nothing to
         # stop, and lets the loop out of its wait for the next request.
-        storage.optimisation_worker = None
+        storage.optimization_worker = None
         to_worker.put(('quit', None, None))
         thread.join(timeout=5)
 
@@ -1277,7 +1277,7 @@ def test_a_request_the_worker_could_not_handle_ends_the_wait(running, shot):
     started = time.monotonic()
 
     with pytest.raises(RuntimeError, match='error in its globals'):
-        routine_module.optimise(
+        routine_module.optimize(
             session.path, session.storage, shots(shot(shot_id='row-0'))
         )
 
@@ -1293,9 +1293,9 @@ def test_each_status_reaches_the_shot_that_earned_it_behind_slow_trailing_work(
     not let up: every invocation times out and every reply arrives an
     invocation or two after the shots it belongs to were handed over.
 
-    Attributed by arrival, a verdict of ``True`` earned by the optimiser's own
+    Attributed by arrival, a verdict of ``True`` earned by the optimizer's own
     shot lands on whatever the invocation reading it is holding -- a user's
-    shot engaged alongside the run gets a column of the optimiser's numbers,
+    shot engaged alongside the run gets a column of the optimizer's numbers,
     and the shots that earned them get none.
     """
     pytest.importorskip('lyse')
@@ -1328,7 +1328,7 @@ def test_each_status_reaches_the_shot_that_earned_it_behind_slow_trailing_work(
     session = running(SlowToSubmit)
 
     def invoke(*rows):
-        return routine_module.optimise(session.path, session.storage, shots(*rows))
+        return routine_module.optimize(session.path, session.storage, shots(*rows))
 
     invoke()
     session.start()
@@ -1367,11 +1367,11 @@ def test_shots_handed_over_together_each_carry_their_own_phase(
         reply_timeout=5.0,
         config=WORKER_CONFIG.replace('max = 1.0', 'max = 1.0\nstart = 0.5'),
     )
-    routine_module.optimise(session.path, session.storage, [])
+    routine_module.optimize(session.path, session.storage, [])
     session.start()
 
     start, learners = shot(shot_id='shot-0'), shot(shot_id='shot-1')
-    routine_module.optimise(session.path, session.storage, shots(start, learners))
+    routine_module.optimize(session.path, session.storage, shots(start, learners))
 
     assert results(start)['phase'] == 'start'
     assert results(learners)['phase'] == 'main'
@@ -1383,7 +1383,7 @@ def stopping():
 
     def stop(exits_on):
         worker = Worker(exits_on)
-        storage = types.SimpleNamespace(optimisation_worker=(Pipe(), Pipe(), worker))
+        storage = types.SimpleNamespace(optimization_worker=(Pipe(), Pipe(), worker))
         routine_module.stop_worker(storage)
         return worker
 

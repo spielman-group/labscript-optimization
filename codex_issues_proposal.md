@@ -70,7 +70,7 @@ raised have both since been fixed, verified in the tree:
 - **Orphaned worker on a failed configure — fixed.** `start_worker` builds
   `handles` before configuring and wraps the configure exchange in
   `try/except BaseException: _stop_worker(handles); raise`, so the spawned
-  child is reaped before the exception reaches `optimise`.
+  child is reaped before the exception reaches `optimize`.
 - **Silent 2 s configure timeout — fixed.** `_drain` takes a timeout,
   `CONFIGURE_TIMEOUT` is 30 s, and a timeout raises with a message naming the
   limit instead of returning `(False, None)` and re-establishing the offset.
@@ -96,7 +96,7 @@ every incomplete file in turn, breaks when `get_first_incomplete()` returns
 `None`, and only then — after the loop, at lines 943-945 — does
 `do_multishot_analysis()` run, once.
 
-`optimise` asks for `lyse.data(n_sequences=1, n_shots=1)`, the last row. So when
+`optimize` asks for `lyse.data(n_sequences=1, n_shots=1)`, the last row. So when
 three shots are analysed in one pass, two of them are never handed to the
 worker. runmanager answers `unknown` for them, the session drops them after two
 reconciles, the learner never sees their costs, `save_status` never writes to
@@ -276,7 +276,7 @@ colliding with `GaussianProcessLearner`'s public `generation_size`
 DE literature uses, and our code does not overrule standard convention.
 
 The collision is resolved from the other side instead — **the Gaussian process
-knob is renamed `batch_size`**, which is what batch Bayesian optimisation calls
+knob is renamed `batch_size`**, which is what batch Bayesian optimization calls
 it, so each learner now uses its own field's standard word. That is a public
 configuration key, so it is refused under its old name at load and listed in
 `UPGRADING.md`; the rename is carried in the configuration slice.

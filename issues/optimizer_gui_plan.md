@@ -28,7 +28,7 @@ start" record the instructions used to build the window.
   - Work in lyse, runmanager or blacs belongs to those repositories' own
     sessions. This plan needs none.
 - **How the code is shaped today:**
-  - `routine.py`: `optimise()` is the lyse multishot entry point. Its first
+  - `routine.py`: `optimize()` is the lyse multishot entry point. Its first
     call starts the worker with `start_worker()`, and every call hands over
     the shots lyse names and waits up to `REPLY_TIMEOUT` = 2 s for a
     numbered reply.
@@ -91,7 +91,7 @@ window.
   until **Start**. This is a behaviour change: today the first invocation
   submits the first shots.
 - **D4: the configuration still comes from the routine,**
-  `optimise(config_path)`, as now. It is loaded once when the session opens;
+  `optimize(config_path)`, as now. It is loaded once when the session opens;
   Start and Reset do not reread it. Restart the routine after editing the
   file.
 - **D5: stopwatch controls.**
@@ -160,7 +160,7 @@ through `inmain`/`inmain_later`, with no QThread subclasses.
 - **The controls:** Start, Pause and Reset, enabled according to the state.
 
 ### Routine
-- **Unchanged calling convention:** `optimise(config_path)`.
+- **Unchanged calling convention:** `optimize(config_path)`.
 - **Its first invocation** starts the worker as now. The worker now opens the
   window and waits paused.
 - **Every later request** also shows the window again if it was closed, which

@@ -312,7 +312,7 @@ class GaussianProcess:
         than the kernel's numbering and speaks only when the set of them
         changes. :data:`LENGTH_SCALE_AT_BOUND` is what the filter matches, so
         everything else the fit warns about -- the white-noise level reaching
-        its own bound, an optimiser that gave up -- reaches the lab untouched.
+        its own bound, an optimizer that gave up -- reaches the lab untouched.
         """
         from sklearn.gaussian_process import GaussianProcessRegressor
         from sklearn.preprocessing import StandardScaler

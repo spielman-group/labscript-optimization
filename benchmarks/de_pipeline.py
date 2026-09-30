@@ -185,7 +185,7 @@ def configuration(dimension, budget, learner, population_size, seed, buffered=No
 
 
 def run(variant, function, dimension, population_size, budget, seed, depth=3):
-    """One optimisation. Returns a row of what it spent and what it found.
+    """One optimization. Returns a row of what it spent and what it found.
 
     ``generational`` goes all the way through the shipped loader, which builds
     the learner and holds the budget to two whole generations. The asynchronous

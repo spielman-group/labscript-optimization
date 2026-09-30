@@ -1,7 +1,7 @@
 """Reading the TOML configuration.
 
 ``[PARAMETERS.<group>.<name>]``
-    One optimised parameter, with ``min``, ``max``, optional ``start``,
+    One optimized parameter, with ``min``, ``max``, optional ``start``,
     optional ``enable`` (default true), and optional ``global_name``. Giving
     ``global_name`` is shorthand for a runmanager global that takes this
     parameter's value directly.

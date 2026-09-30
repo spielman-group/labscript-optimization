@@ -2,8 +2,8 @@
 
 A lab analysis routine is two lines::
 
-    import labscript_optimization.routine as optimisation
-    optimisation.optimise('optimisation_config.toml')
+    import labscript_optimization.routine as optimization
+    optimization.optimize('optimization_config.toml')
 
 Adding the routine to lyse opens a paused session; a Start command begins
 submitting shots. Removing or restarting the routine, or reaching the run
@@ -55,7 +55,7 @@ RESULTS_GROUP = "labscript_optimization"
 #: not the phase of whatever was proposed most recently, which is another shot
 #: whenever more than one is in flight. The other four come from the session's
 #: status, whose remaining keys are its bookkeeping, one answer for the whole
-#: run that would be repeated onto every shot of it; :func:`optimise` returns
+#: run that would be repeated onto every shot of it; :func:`optimize` returns
 #: all of it.
 #:
 #: ``stopped`` is here rather than with the bookkeeping because it is a marker
@@ -204,7 +204,7 @@ def save_status(filepath, status) -> None:
             run.save_result(name, reported, save_to_h5=False)
     except Exception as exc:
         print(
-            f"could not write the optimisation status to {filepath}: {exc!r}",
+            f"could not write the optimization status to {filepath}: {exc!r}",
             file=sys.stderr,
         )
 
@@ -250,7 +250,7 @@ def configure_timeout():
 
 
 def start_worker(config_path, process_tree=None):
-    """Spawn the optimisation worker and configure it.
+    """Spawn the optimization worker and configure it.
 
     Configuring is :data:`CONFIGURE_REQUEST`, the session's first request, and
     it is given :func:`configure_timeout`. Waits for its reply, then returns
@@ -287,7 +287,7 @@ def start_worker(config_path, process_tree=None):
         )
         if status is None:
             raise TimeoutError(
-                f"the optimisation worker did not configure within "
+                f"the optimization worker did not configure within "
                 f"{allowed:g} seconds"
             )
     except BaseException:
@@ -346,7 +346,7 @@ def _drain(from_worker, popen, request, pending, timeout=None):
                 return answer
             if popen.poll() is not None:
                 raise RuntimeError(
-                    f"the optimisation worker died without answering request "
+                    f"the optimization worker died without answering request "
                     f"{request}"
                 )
             continue
@@ -368,7 +368,7 @@ def _drain(from_worker, popen, request, pending, timeout=None):
             answer = status
 
 
-def optimise(config_path, storage=None, shots=None):
+def optimize(config_path, storage=None, shots=None):
     """Hand over the shots analysed since last time. The lyse routine entry point.
 
     Args:
@@ -399,44 +399,44 @@ def optimise(config_path, storage=None, shots=None):
 
         storage = lyse.routine_storage
 
-    if getattr(storage, "optimisation_worker", None) is None:
+    if getattr(storage, "optimization_worker", None) is None:
         from . import config as config_module
 
         # Read once and kept for the life of the session. The worker holds the
         # configuration it was started with, so re-reading the file each shot
         # would let an edit mid-session leave the two disagreeing about what
         # the cost is -- a flipped maximize driving the search the wrong way.
-        storage.optimisation_config = config_module.load(config_path)
-        storage.optimisation_worker = start_worker(config_path)
+        storage.optimization_config = config_module.load(config_path)
+        storage.optimization_worker = start_worker(config_path)
         # Configuring was this session's first request; the counter carries
         # on from it.
-        storage.optimisation_request = CONFIGURE_REQUEST
+        storage.optimization_request = CONFIGURE_REQUEST
         # The shots handed over by each request still awaiting its status, so
         # that a status arriving after the routine gave up waiting for it is
         # written onto the shots that produced it. A handful of entries at
         # most: the worker owes one status per request.
-        storage.optimisation_pending = {}
+        storage.optimization_pending = {}
         # Whether this session has already told lyse why it stopped. Every
         # pass of a stopped session gets the same status back, and this is
         # what keeps it from being printed again on each one.
-        storage.optimisation_stop_printed = False
+        storage.optimization_stop_printed = False
         # The ordinary shutdown, where lyse asks the analysis subprocess to
         # quit. A killed subprocess does not run this and the worker is left
         # to zprocess's heartbeat.
         atexit.register(stop_worker, storage)
 
-    config = storage.optimisation_config
-    to_worker, from_worker, popen = storage.optimisation_worker
+    config = storage.optimization_config
+    to_worker, from_worker, popen = storage.optimization_worker
     if shots is None:
         shots = analysed()
     handed, observations = extract(shots, config)
 
-    storage.optimisation_request += 1
-    request = storage.optimisation_request
+    storage.optimization_request += 1
+    request = storage.optimization_request
     # Remembered before the message goes out, because the reply is what clears
     # it: whether it arrives inside this invocation's wait or three
     # invocations later, it is written onto these shots and no others.
-    storage.optimisation_pending[request] = handed
+    storage.optimization_pending[request] = handed
     if observations:
         # One message however many shots it carries. The routine waits for one
         # reply, so the verdicts a second message earned would go unread until
@@ -451,14 +451,14 @@ def optimise(config_path, storage=None, shots=None):
         # generation an operator has unblocked.
         to_worker.put(("shot", request, None))
 
-    status = _drain(from_worker, popen, request, storage.optimisation_pending)
+    status = _drain(from_worker, popen, request, storage.optimization_pending)
     stopped = status is not None and status.get("stopped")
-    if stopped and not storage.optimisation_stop_printed:
+    if stopped and not storage.optimization_stop_printed:
         # lyse shows what a routine prints. Nothing is raised, so lyse goes on
         # analysing and the shots still in flight are still taken. Printed
         # once per session: every later pass gets the same status back.
-        print(f"The optimisation has stopped: {status['stopped']}")
-        storage.optimisation_stop_printed = True
+        print(f"The optimization has stopped: {status['stopped']}")
+        storage.optimization_stop_printed = True
     return status
 
 
@@ -506,8 +506,8 @@ def stop_worker(storage=None) -> None:
         import lyse
 
         storage = lyse.routine_storage
-    handles = getattr(storage, "optimisation_worker", None)
+    handles = getattr(storage, "optimization_worker", None)
     if handles is None:
         return
-    storage.optimisation_worker = None
+    storage.optimization_worker = None
     _stop_worker(handles)

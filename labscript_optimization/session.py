@@ -1,4 +1,4 @@
-"""One optimisation session: the history, the learner, and the stop conditions.
+"""One optimization session: the history, the learner, and the stop conditions.
 
 There is no count of shots in flight. How many of this session's shots are
 still coming is runmanager's answer, asked for afresh each time it matters,
@@ -28,7 +28,7 @@ START_SOURCE = "start"
 
 
 class Session:
-    """Drives one optimisation.
+    """Drives one optimization.
 
     Args:
         config: The session configuration.
@@ -261,7 +261,7 @@ class Session:
         ):
             # Nothing of ours was queued when this ran, so runmanager gave
             # BLACS a default shot instead: the apparatus staying busy rather
-            # than a fault, but a shot the optimiser did not get. A session
+            # than a fault, but a shot the optimizer did not get. A session
             # that starves wants a larger num_buffered_runs. A learner
             # declaring a generation is not counted: the queue emptying is how
             # one generation ends and the next begins, and a counter that fires

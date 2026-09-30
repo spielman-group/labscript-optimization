@@ -35,7 +35,7 @@ learner = "gaussian_process"
 
 # How many shots to keep in runmanager's queue at once, which defaults to 2.
 # BLACS asks for a shot as soon as it finishes the last, which is before this
-# optimiser has seen the cost and proposed a replacement, so a queue holding
+# optimizer has seen the cost and proposed a replacement, so a queue holding
 # only one of our shots is empty at exactly that moment and runmanager gives
 # BLACS a default shot instead. At one buffered run roughly every second shot
 # is a default one. Raise it if the "starved" count the routine returns keeps
@@ -130,7 +130,7 @@ cost_has_noise = true
 # fixed weight on every point.
 uncer_bias = [0.0, 1.0, 2.0, 3.0]
 
-# One optimised parameter per table. "global_name" is shorthand for a
+# One optimized parameter per table. "global_name" is shorthand for a
 # runmanager global that takes this parameter's value directly.
 [PARAMETERS.CMOT.CMOTCaptureWidth]
 global_name = "CMOTCaptureWidth"

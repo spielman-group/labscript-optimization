@@ -18,7 +18,7 @@ from . import knobs
 
 @dataclass(frozen=True)
 class Parameter:
-    """One optimised quantity.
+    """One optimized quantity.
 
     Args:
         name: The key this parameter has in the configuration.
@@ -62,7 +62,7 @@ class ParameterSpace:
     def __init__(self, parameters: Sequence[Parameter]):
         self.parameters = tuple(p for p in parameters if p.enable)
         if not self.parameters:
-            raise ValueError("no enabled parameters to optimise")
+            raise ValueError("no enabled parameters to optimize")
         # A name is how a proposal's coordinates are read back out, so two
         # dimensions answering to one name is a malformed space whatever built
         # it: the second silently takes the first's value everywhere the

@@ -185,7 +185,7 @@ count, which moves towards the measured optimum. State the new meaning in
 differential evolution work adds a `generation` attribute to the learner base,
 named for what the DE literature calls it, and the Gaussian process already
 used the same word for an unrelated thing — the period of its exploration
-schedule and its kernel refit interval, which batch Bayesian optimisation calls
+schedule and its kernel refit interval, which batch Bayesian optimization calls
 a batch. Renaming the Gaussian process knob leaves each learner using its own
 field's standard word, rather than leaving two senses of "generation" side by
 side in one document. It is a public key, so refuse it under the old name and
@@ -523,7 +523,7 @@ of five seconds and shots arriving every 0.4 s:
 ```
 
 The third invocation hands over a shot the session never proposed and receives
-`True`, so the optimiser's results are written onto somebody else's shot. The
+`True`, so the optimizer's results are written onto somebody else's shot. The
 session's own shots receive no verdict and are not written to at all. This is
 the defect Slice 1 closed, reached by a second route.
 
@@ -1143,7 +1143,7 @@ None - can start immediately.
 
 ### User stories covered
 
-- Found running the optimiser against the dummy apparatus: the trainer's
+- Found running the optimizer against the dummy apparatus: the trainer's
   behaviour differs from M-LOOP's in a way the documentation denies, and the
   shared-knob table is the mechanism this package refuses everywhere else.
 

@@ -1,6 +1,6 @@
 # labscript-optimization
 
-Machine-learning online optimisation of
+Machine-learning online optimization of
 [labscript suite](https://github.com/labscript-suite) experiments.
 
 A lyse routine proposes shots, runmanager runs them, and the costs come back
@@ -53,16 +53,16 @@ rather than once per shot. Where analysis keeps up that is one shot an
 invocation; where it does not — a shot arriving while the one before it is
 still being analysed, analysis paused and resumed, or lyse started with shots
 already in the box — it is several. lyse names them in `lyse.paths`, and
-each invocation hands over every one, so a batch costs the optimiser nothing.
+each invocation hands over every one, so a batch costs the optimizer nothing.
 
 ## Using it
 
 Add a routine to lyse containing:
 
 ```python
-import labscript_optimization.routine as optimisation
+import labscript_optimization.routine as optimization
 
-optimisation.optimise('optimisation_config.toml')
+optimization.optimize('optimization_config.toml')
 ```
 
 Adding the routine opens a paused session and submits no shots until it
@@ -96,22 +96,22 @@ into lyse afresh come without it. `phase` is the shot's own: what proposed
 that shot, which is the source the learner gave it when it proposed it, or
 `start` for the configured start, however far the run has moved on since. A
 value the session does not have yet is empty — `NaN` for the best cost, an
-empty string or list for the rest. Shots that are not the optimiser's own —
+empty string or list for the rest. Shots that are not the optimizer's own —
 yours, and runmanager's default shots — are left alone: runmanager mints a
 shot id for every queue row it compiles, so carrying one does not make a shot
-the optimiser's, and the session writes onto an id it proposed and no other.
+the optimizer's, and the session writes onto an id it proposed and no other.
 
 The session's own counters are one answer for the whole run rather than
 anything about a shot, so they are not written onto every shot of it.
-`optimise` returns the whole status, which a routine that wants them prints:
+`optimize` returns the whole status, which a routine that wants them prints:
 
 ```python
-print(optimisation.optimise('optimisation_config.toml'))
+print(optimization.optimize('optimization_config.toml'))
 ```
 
 `num_buffered_runs` is how many of the session's shots to keep queued, and
 defaults to two. BLACS asks for its next shot as soon as it finishes the last,
-which is before this optimiser has seen the cost and proposed a replacement —
+which is before this optimizer has seen the cost and proposed a replacement —
 so a queue holding only one of our shots is empty at precisely that moment,
 and runmanager hands BLACS a default shot instead. At one buffered run roughly
 every second shot is a default one. The status counts a `starved` for each
@@ -128,7 +128,7 @@ disagree with it. Such a learner empties the queue once per generation, by
 design, so nothing counts a `starved` there: a number that fires every
 generation says nothing about the run.
 
-Those default shots are also what keeps the routine running while the optimiser
+Those default shots are also what keeps the routine running while the optimizer
 waits. They go to BLACS already compiled, so runmanager never writes a shot id
 into them, and the routine passes them over.
 
@@ -170,7 +170,7 @@ a quoted `"false"`, a fraction where a whole number belongs, or one number
 where a pair belongs is refused, naming the setting, rather than converted into
 something nobody wrote.
 
-`[PARAMETERS.<group>.<name>]` is one optimised parameter and
+`[PARAMETERS.<group>.<name>]` is one optimized parameter and
 `[RUNMANAGER_GLOBALS.<group>.<name>]` is a runmanager global computed from
 several of them; `[ANALYSIS] groups` says which groups take part. A group
 defined and not listed there is switched off. A group listed and defined by no
@@ -409,7 +409,7 @@ or JIT? ticked, a labscript file changed underneath a running session, or a
 learner raising. Nothing is retried, and no shot, fit or
 submission is put on a clock. The exception is a status that cannot be written
 to its shot, which is printed and passed over: a progress report is worth less
-than the optimisation that stopping for it would end.
+than the optimization that stopping for it would end.
 
 runmanager refusing to add shots to the run's sequence stops the session
 without raising. It remembers a sequence only until it restarts, so this is a
@@ -425,12 +425,12 @@ connection is slower than a shot cycle. A worker whose process has gone is
 neither of those, and the routine says so within about a second rather than
 reporting it as slow.
 
-One failure stops the optimisation and cannot be reported from here: a shot
+One failure stops the optimization and cannot be reported from here: a shot
 that fails to compile stays at the head of runmanager's queue until someone
 deletes it, and nothing behind it runs. Nothing then reaches lyse, so the
 routine is never called again. The row is red in runmanager and the queue has
 visibly halted, which is where that failure belongs — the apparatus cannot
-proceed, and an optimiser that stops is behaving correctly.
+proceed, and an optimizer that stops is behaving correctly.
 
 A cost can arrive after the generation it belonged to, and that is an ordinary
 operator path rather than a failure. The shots behind such a row are given up
@@ -438,7 +438,7 @@ on, so the search moves on without them; delete the row and they run, and their
 costs come back for a generation that has already been replaced. Each of them
 is still taken and competes for its own slot and no other, which is what
 differential evolution would have done with it had it arrived in time. While
-the queue catches up, two generations of the optimiser's shots sit in it and
+the queue catches up, two generations of the optimizer's shots sit in it and
 `awaiting` reads high. Neither that nor the `dropped` those shots were counted
 in is a fault to chase.
 
