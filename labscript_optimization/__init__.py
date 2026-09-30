@@ -13,6 +13,6 @@ so they can be used on their own::
 
 In a lab, the entry point is the routine::
 
-    import labscript_optimization.routine as optimization
-    optimization.optimize('optimization_config.toml')
+    from labscript_optimization.routine import optimize
+    optimize('optimization_config.toml')
 """

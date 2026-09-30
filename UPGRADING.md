@@ -30,9 +30,9 @@ pass and says so.
 Your lyse analysis routine becomes two lines:
 
 ```python
-import labscript_optimization.routine as optimization
+from labscript_optimization.routine import optimize
 
-optimization.optimize('mloop_config.toml')
+optimize('mloop_config.toml')
 ```
 
 Remove `mloop_multishot.py`, `mloop_interface.py`, `mloop_controller.py`,
@@ -397,7 +397,7 @@ so they are not written onto every shot of it. `optimize` returns the whole
 status, so a routine that wants them prints it:
 
 ```python
-print(optimization.optimize('mloop_config.toml'))
+print(optimize('mloop_config.toml'))
 ```
 
 `dropped` counts shots the session proposed that will never produce a cost:

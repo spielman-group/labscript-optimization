@@ -2,8 +2,8 @@
 
 A lab analysis routine is two lines::
 
-    import labscript_optimization.routine as optimization
-    optimization.optimize('optimization_config.toml')
+    from labscript_optimization.routine import optimize
+    optimize('optimization_config.toml')
 
 Adding the routine to lyse opens a paused session; a Start command begins
 submitting shots. Removing or restarting the routine, or reaching the run

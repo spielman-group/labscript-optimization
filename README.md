@@ -60,9 +60,9 @@ each invocation hands over every one, so a batch costs the optimizer nothing.
 Add a routine to lyse containing:
 
 ```python
-import labscript_optimization.routine as optimization
+from labscript_optimization.routine import optimize
 
-optimization.optimize('optimization_config.toml')
+optimize('optimization_config.toml')
 ```
 
 Adding the routine opens a paused session and submits no shots until it
@@ -106,7 +106,7 @@ anything about a shot, so they are not written onto every shot of it.
 `optimize` returns the whole status, which a routine that wants them prints:
 
 ```python
-print(optimization.optimize('optimization_config.toml'))
+print(optimize('optimization_config.toml'))
 ```
 
 `num_buffered_runs` is how many of the session's shots to keep queued, and
