@@ -11,22 +11,31 @@ This needs lyse's `ClassRoutines` work. Both repositories carry the effort on
 their `ClassRoutines` branches, and this one builds against lyse's committed
 branch only.
 
-## The lab's routine file
+## The lab's routine folder
 
-A lab adds a three-line class file to lyse's multishot routines:
+A lab adds a routine folder to lyse's multishot routines, holding its
+configuration and a `lyse_routine.py`:
+
+```
+optimization_multishot/
+    lyse_routine.py
+    mloop_config.toml
+```
 
 ```python
-LYSE_MODE = "gui"
 from labscript_optimization.routine import OptimizationRoutine
+
 
 class Optimization(OptimizationRoutine):
     config_path = "mloop_config.toml"
 ```
 
 - `OptimizationRoutine` subclasses `lyse.Routine`. lyse counts only classes
-  defined in the file, so the lab's subclass is the file's one routine.
-- `config_path` is read relative to the routine file's folder, which is the
-  worker's working directory.
+  defined in `lyse_routine.py`, so the lab's subclass is the folder's one
+  routine.
+- The folder's name is the routine's name in lyse and its window's title.
+- `config_path` is read relative to the routine folder, which is the worker's
+  working directory.
 - The configuration is read once, when the routine starts. Restart the routine
   after editing it.
 - `OptimizationRoutine` sets `lyse.Routine`'s `icon` class attribute to the
@@ -34,18 +43,17 @@ class Optimization(OptimizationRoutine):
   The attribute is lyse's planned work-order slice 9.
 - It is a multishot routine. Added to the singleshot routines, where lyse
   passes `paths=None`, every `run()` raises, saying so.
-- `optimize(config_path)`, the classic-script entry point, is removed.
 
 ## Structure
 
-- **`worker.py`'s `Worker`** owns the session thread and its queue, and holds
-  everything that does not need lyse. It is today's `Worker` without its
-  zprocess `Process` base, pipes and Qt setup:
-  - constructed with the configuration, the window and an interface factory,
-    it starts the session thread and queues `configure`;
-  - `hand_over(filepaths, observations)` queues one request carrying a
+- **`worker.py`'s `Worker`** owns the session thread and holds everything
+  that does not need lyse:
+  - constructed with the configuration and its text, the window, the command
+    queue and an interface factory, it starts the session thread and queues
+    the opening, which is a `reset`;
+  - `hand_over(filepaths, observations, save)` queues one request carrying a
     `concurrent.futures.Future` and waits up to `REPLY_TIMEOUT` (2 s) for it.
-    It returns `(filepath, status)` for every shot the session took, among
+    It calls `save(filepath, status)` for every shot the session took, among
     these and any earlier hand-over whose reply has arrived since. It raises
     an error the session thread reported, as the original exception;
   - the window's buttons put `start`, `pause` and `reset` on its queue;
@@ -60,12 +68,12 @@ class Optimization(OptimizationRoutine):
 | Reading the configuration, building the window, `close()`, button slots | GUI main thread |
 | Greeting runmanager, recording costs, reconciling, proposing, submitting | Session thread |
 | Reading the analysed shots and saving their status columns | lyse's analysis thread, in `run()` |
-| A Gaussian-process batch | The learner's background thread, as now |
+| A Gaussian-process batch | The learner's background thread |
 
-The session is touched by the session thread alone. It handles each request
-as `Worker._run_session` does today, then hands the window a snapshot through
-`inmain_later`. A finished Gaussian-process batch puts `refresh` on the queue,
-as now.
+The session is touched by the session thread alone. It handles each request,
+replying before any runmanager round trip, then hands the window a snapshot,
+which the window applies on the GUI thread. A finished Gaussian-process batch
+puts `refresh` on the queue.
 
 ## `__init__`
 
@@ -76,7 +84,7 @@ as now.
 2. Load the window's controls with `self.load_ui(...)`, given the absolute path
    of the package's `window.ui`, a `QWidget` form holding the buttons, the
    Status and Configuration tabs and the plot area. The pyqtgraph plot is
-   inserted into the plot area as now. The routine creates no matplotlib
+   inserted into the plot area. The routine creates no matplotlib
    figures.
 3. Build the `Worker`, with the `interface_factory` class attribute, which is
    `RunmanagerInterface`.
@@ -90,10 +98,10 @@ output box; after construction, output goes to the window's Output dock.
 
 1. Raise if `paths` is `None`: the routine is a singleshot one.
 2. Read the rows for `paths` with `lyse.data(where={"filepath": paths})`, and
-   extract the shot ids and costs as now. An empty pass, from Run multishot
+   extract the shot ids and costs. An empty pass, from Run multishot
    with nothing analysed, has `paths=[]` and reads nothing.
-3. Hand them to the worker, and save each `(filepath, status)` it returns with
-   `save_status`, as now.
+3. Hand them to the worker, which saves each shot's status with
+   `save_status`.
 
 Status columns are saved only here. lyse resets a routine's results at the
 start of each `run()` and replies with them at its end, so a save from any
@@ -102,26 +110,26 @@ reply: lyse updates every row the reply names, and warns about a shot whose
 row has gone.
 
 A failure in the work after a reply, such as reconciling or submitting, stops
-the session as now. Its traceback goes to the Output dock, and the next
-hand-over raises it, so lyse shows it as that analysis's error.
+the session. The next hand-over raises it, or this one if it has already
+failed by its end, so lyse shows it as that analysis's error.
 
 ## Session lifecycle
 
 - **Opening:** the session thread greets runmanager and builds the session,
   paused. If that fails, for example because runmanager is not running, the
-  window shows why, the traceback goes to the Output dock, and the routine
-  stays up.
-- **Start, Pause, Reset** behave as now. Reset builds a new paused session
-  from the configuration already loaded, greeting runmanager again, so it is
-  also how a failed opening is retried.
+  window shows why, the traceback is printed, and the routine stays up.
+- **Start** begins submitting, and **Pause** stops new submissions while shots
+  in flight still report. **Reset** builds a new paused session from the
+  configuration already loaded, greeting runmanager again, so it is also how a
+  failed opening is retried.
 - **Before a session exists,** a hand-over is answered with no shots taken,
   since none can be the session's yet.
-- **A limit** ends the session as now. The reason is shown in the window and
+- **A limit** ends the session. The reason is shown in the window and
   printed once to the Output dock.
 
 ## Window
 
-The window is lyse's routine window, titled with the routine file's name. lyse
+The window is lyse's routine window, titled with the routine folder's name. lyse
 shows it once construction finishes, and restores its geometry. Closing it
 hides it, and lyse's **Show windows** brings it back. The routine never shows
 or raises the window itself, so a closed window stays closed while shots
@@ -136,32 +144,14 @@ block the GUI thread. The thread is a daemon, and the worker's exit ends it.
 
 lyse terminates a worker 2 s after asking it to quit, so `close()` may never
 run. Nothing depends on it: shots already queued in runmanager stay queued and
-run as ordinary shots, as when a routine is killed today.
-
-## What is removed
-
-- From `worker.py`: the zprocess `Process` base, the pipes, `run()` with its
-  `QApplication` setup, `_read_requests`, and the deferred `Session` import.
-- From `routine.py`: `optimize`, `analysed`'s use of `lyse.paths`,
-  `start_worker`, `configure_timeout`, `CONFIGURE_MARGIN`, `LIVENESS_POLL`,
-  `CONFIGURE_REQUEST`, `_drain` with its numbered requests and pending map,
-  `exited_within`, `_stop_worker`, `stop_worker`, the `atexit` hook and the use
-  of `lyse.routine_storage`. The pending map's job moves into `Worker`.
-- `CHECK_READY_REQUESTS`, which only sized the configure deadline.
-  `GREETING_TIMEOUT` stays, so that an absent runmanager is named within
-  seconds.
-- The `(message, traceback)` error payload. Errors stay exceptions in one
-  process.
-- `OptimizerWindow`, whose close-to-hide lyse now provides.
-
-`session.py`, the learners, `config.py` and `runmanager_interface.py`'s
-submitting and reconciling are unchanged.
+run as ordinary shots, as when any routine is killed.
 
 ## Documentation and the demo
 
-- The README's "Using it" and UPGRADING's lyse step show the class file. Its
-  window opens when the routine is added, not on Run multishot.
-- Ian's `optimization_multishot.py` in the userlib becomes the class file.
+- The README's "Using it" and UPGRADING's lyse step show the routine folder.
+  Its window opens when the routine is added, not on Run multishot.
+- Ian's demo in the userlib's `example_apparatus` is the routine folder
+  `optimization_multishot/`.
 
 ## Tests
 
@@ -175,32 +165,17 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
   - an error in handling a request is raised by the hand-over;
   - a failed opening leaves the worker up, and Reset retries it.
 - **The routine, end to end,** through lyse's real worker subprocess, as lyse's
-  own `GuiWorkerTests` drive it: a routine file whose subclass sets
+  own `GuiWorkerTests` drive it: a routine folder whose subclass sets
   `interface_factory` to the fake. It constructs, an empty multishot pass
   replies `done`, and a singleshot pass replies `error`. The test removes the
   settings file lyse writes for the routine.
 
-The worker-process tests in `test_worker.py`, and the `optimize` and worker
-plumbing tests in `test_routine.py`, go with the code they test.
+## Remaining work
 
-## Build order
-
-1. **The routine**, in one commit, since the old and new entry points cannot
-   stand side by side. It starts once lyse has committed its `GuiWorker` and
-   `GuiWorkerTests` on `ClassRoutines`.
-   - `Worker` as a plain class, with `hand_over` and futures;
-   - `OptimizationRoutine`, with `__init__`, `run` and `close`;
-   - `window.ui` with a `QWidget` root, and `WindowController` built on the
-     widget `load_ui` returns;
-   - the removals listed above;
-   - the README, UPGRADING, the package docstrings and `pyproject.toml`'s
-     `lyse` extra comment describing the class file;
-   - the tests above. The suite passes against lyse's `ClassRoutines`.
-
-   Budget: about 150 lines of code added against about 450 removed, and about
-   150 lines of tests against about 1300 removed.
-2. **The demo and a live trial.** Ian's `optimization_multishot.py` in the
-   userlib becomes the class file. Ian runs it in lyse against runmanager:
+1. **The end-to-end test** above, once lyse has committed its `GuiWorker` for
+   routine folders and its `GuiWorkerTests` on `ClassRoutines`, with the
+   README's Tests paragraph saying it needs lyse.
+2. **A live trial,** by Ian, of the demo in lyse against runmanager:
    - the window opens when the routine is added;
    - Start submits, and the analysed shots get their status columns;
    - an opening with runmanager absent shows why, and Reset recovers once

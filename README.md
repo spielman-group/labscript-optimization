@@ -57,17 +57,20 @@ each invocation hands over every one, so a batch costs the optimizer nothing.
 
 ## Using it
 
-Add a routine file to lyse's multishot routines containing:
+Make a routine folder holding the configuration and a `lyse_routine.py`
+containing:
 
 ```python
-LYSE_MODE = "gui"
 from labscript_optimization.routine import OptimizationRoutine
+
 
 class Optimization(OptimizationRoutine):
     config_path = "optimization_config.toml"
 ```
 
-`config_path` is relative to the routine file's folder. Adding the routine
+and add the folder to lyse's multishot routines. The folder's name is the
+routine's name in lyse and its window's title, and `config_path` is relative
+to the folder. Adding the routine
 opens the optimizer window with a paused session, which submits no shots until
 it receives Start. Start begins submission, Pause stops new submissions while
 shots already in flight still report, and Reset discards the history and opens

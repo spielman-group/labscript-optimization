@@ -1,8 +1,8 @@
 """The lyse multishot routine.
 
-A lab's routine file is a subclass of :class:`OptimizationRoutine`::
+A lab's routine is a folder whose ``lyse_routine.py`` holds a subclass of
+:class:`OptimizationRoutine`::
 
-    LYSE_MODE = "gui"
     from labscript_optimization.routine import OptimizationRoutine
 
     class Optimization(OptimizationRoutine):
@@ -34,7 +34,7 @@ from .worker import Worker
 
 #: The lyse results group the session's status is written to, and so the first
 #: level of every column it produces: ``df[('labscript_optimization',
-#: 'best_cost')]``. lyse names a routine's group after the routine's file, so a
+#: 'best_cost')]``. lyse names a routine's group after the routine, so a
 #: lab collides with this only by naming a routine after the package it imports.
 RESULTS_GROUP = "labscript_optimization"
 
@@ -176,14 +176,14 @@ def save_status(filepath, status) -> None:
 class OptimizationRoutine(lyse.Routine):
     """One optimization session, as a lyse GUI routine.
 
-    A lab's routine file subclasses this and sets :attr:`config_path`. The
+    A lab's ``lyse_routine.py`` subclasses this and sets :attr:`config_path`. The
     configuration is read once, when lyse starts the routine; restart the
     routine after editing it.
 
     Attributes
     ----------
     config_path : str
-        The TOML configuration, relative to the routine file's folder.
+        The TOML configuration, relative to the routine folder.
     interface_factory : callable
         What the configuration is turned into a runmanager interface by.
     """
