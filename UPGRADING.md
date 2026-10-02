@@ -28,9 +28,9 @@ class routines (`lyse.Routine`), `lyse.data(where=...)`, `save_result`'s
 `submit_shots`'s `sequence` and `sequence_index`. An older one fails at the first
 pass and says so.
 
-Your lyse analysis routine becomes a routine folder, added to lyse's
-multishot routines. It holds `mloop_config.toml` and a `lyse_routine.py`
-containing:
+Your lyse analysis routine becomes a routine folder, named with a `.lyse`
+suffix and added to lyse's multishot routines. It holds `mloop_config.toml`
+and a `lyse_routine.py` containing:
 
 ```python
 from labscript_optimization.routine import OptimizationRoutine

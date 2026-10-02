@@ -57,8 +57,8 @@ each invocation hands over every one, so a batch costs the optimizer nothing.
 
 ## Using it
 
-Make a routine folder holding the configuration and a `lyse_routine.py`
-containing:
+Make a routine folder, named with a `.lyse` suffix, holding the configuration
+and a `lyse_routine.py` containing:
 
 ```python
 from labscript_optimization.routine import OptimizationRoutine

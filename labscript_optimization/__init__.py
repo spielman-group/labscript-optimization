@@ -11,8 +11,8 @@ so they can be used on their own::
     learner = GaussianProcessLearner(space, numpy.random.default_rng())
     proposals = learner.propose(history, hint=4)  # (params, source) pairs
 
-In a lab, the entry point is a lyse routine folder whose ``lyse_routine.py``
-holds a subclass of
+In a lab, the entry point is a lyse routine folder, ``<name>.lyse``, whose
+``lyse_routine.py`` holds a subclass of
 :class:`~labscript_optimization.routine.OptimizationRoutine`::
 
     from labscript_optimization.routine import OptimizationRoutine

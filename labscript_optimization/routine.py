@@ -1,7 +1,7 @@
 """The lyse multishot routine.
 
-A lab's routine is a folder whose ``lyse_routine.py`` holds a subclass of
-:class:`OptimizationRoutine`::
+A lab's routine is a folder, ``<name>.lyse``, whose ``lyse_routine.py`` holds a
+subclass of :class:`OptimizationRoutine`::
 
     from labscript_optimization.routine import OptimizationRoutine
 

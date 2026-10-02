@@ -13,11 +13,11 @@ branch only.
 
 ## The lab's routine folder
 
-A lab adds a routine folder to lyse's multishot routines, holding its
-configuration and a `lyse_routine.py`:
+A lab adds a routine folder, named with a `.lyse` suffix, to lyse's multishot
+routines, holding its configuration and a `lyse_routine.py`:
 
 ```
-optimization_multishot/
+optimization_multishot.lyse/
     lyse_routine.py
     mloop_config.toml
 ```
@@ -151,7 +151,7 @@ run as ordinary shots, as when any routine is killed.
 - The README's "Using it" and UPGRADING's lyse step show the routine folder.
   Its window opens when the routine is added, not on Run multishot.
 - Ian's demo in the userlib's `example_apparatus` is the routine folder
-  `optimization_multishot/`.
+  `optimization_multishot.lyse/`.
 
 ## Tests
 
