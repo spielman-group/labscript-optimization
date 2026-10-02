@@ -52,10 +52,11 @@ then hands the window a snapshot through `inmain_later`.
 ## `__init__`
 
 1. Load `config_path`, keeping its text for the Configuration tab. A file that
-   does not load raises: lyse reports the error in the Output dock and fails
-   later analyses until the routine is restarted.
-2. Load the window's controls with `self.load_ui(...)` from the package's
-   `window.ui`, a `QWidget` form holding the buttons, the Status and
+   does not load raises. Until construction finishes, output goes to lyse's
+   own output box, so the error appears there, and lyse fails later analyses
+   until the routine is restarted.
+2. Load the window's controls with `self.load_ui(...)`, given the absolute path
+   of the package's `window.ui`, a `QWidget` form holding the buttons, the Status and
    Configuration tabs and the plot area. The pyqtgraph plot is inserted into
    the plot area as now. The routine creates no matplotlib figures.
 3. Give the routine `optimizer.svg` as its icon, through lyse's support for a
@@ -107,8 +108,8 @@ raises it.
 
 ## Window
 
-The window is lyse's routine window. lyse shows it when the routine starts and
-restores its geometry. Closing it hides it, and lyse's **Show windows** brings
+The window is lyse's routine window, titled with the routine file's name. lyse
+shows it once construction finishes, and restores its geometry. Closing it hides it, and lyse's **Show windows** brings
 it back. The routine never shows or raises the window itself, so a closed
 window stays closed while shots arrive; lyse's spec rules this out for every
 routine.
