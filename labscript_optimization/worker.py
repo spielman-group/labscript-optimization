@@ -26,8 +26,6 @@ class Worker:
     ----------
     config : Config
         The session configuration, loaded once.
-    text : str
-        The configuration file's text, which the window shows.
     window : WindowController
         The view the thread updates after each request.
     command_queue : queue.Queue
@@ -37,7 +35,7 @@ class Worker:
     """
 
     def __init__(
-        self, config, text, window, command_queue, interface_factory=RunmanagerInterface
+        self, config, window, command_queue, interface_factory=RunmanagerInterface
     ):
         self.config = config
         self.window = window
@@ -47,8 +45,8 @@ class Worker:
         self.unsaved = []
         # Failures in the work after a reply, for the next hand-over to raise.
         self.failures = queue.SimpleQueue()
-        window.show_config(config, text)
-        threading.Thread(target=self._run_session, daemon=True).start()
+        self.thread = threading.Thread(target=self._run_session, daemon=True)
+        self.thread.start()
         self.command_queue.put(("reset", None, None))
 
     def hand_over(self, filepaths, observations, save):
@@ -63,6 +61,8 @@ class Worker:
 
         Raises
         ------
+        RuntimeError
+            If the session thread has stopped, so that nothing will answer.
         Exception
             What handling a request raised, or what failed in the work after an
             earlier reply.
@@ -81,6 +81,11 @@ class Worker:
                     save(filepath, status | {"phase": source})
         if not self.failures.empty():
             raise self.failures.get()
+        if not reply.done() and not self.thread.is_alive():
+            raise RuntimeError(
+                "The optimization session's thread has stopped, so nothing will "
+                "answer; its traceback is above. Restart the routine."
+            )
 
     def quit(self):
         """Ask the session thread to stop, without waiting for it."""

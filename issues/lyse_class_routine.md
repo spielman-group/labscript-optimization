@@ -48,14 +48,15 @@ class Optimization(OptimizationRoutine):
 
 - **`worker.py`'s `Worker`** owns the session thread and holds everything
   that does not need lyse:
-  - constructed with the configuration and its text, the window, the command
-    queue and an interface factory, it starts the session thread and queues
-    the opening, which is a `reset`;
+  - constructed with the configuration, the window, the command queue and an
+    interface factory, it starts the session thread and queues the opening,
+    which is a `reset`;
   - `hand_over(filepaths, observations, save)` queues one request carrying a
     `concurrent.futures.Future` and waits up to `REPLY_TIMEOUT` (2 s) for it.
     It calls `save(filepath, status)` for every shot the session took, among
     these and any earlier hand-over whose reply has arrived since. It raises
-    an error the session thread reported, as the original exception;
+    an error the session thread reported, as the original exception, and
+    raises if the thread itself has stopped, since nothing would answer;
   - the window's buttons put `start`, `pause` and `reset` on its queue;
   - `quit()` asks the thread to stop, and does not wait for it.
 - **`routine.py`'s `OptimizationRoutine`** is the lyse side alone: it builds the
@@ -77,10 +78,10 @@ puts `refresh` on the queue.
 
 ## `__init__`
 
-1. Load `config_path`, keeping its text for the Configuration tab. A file that
-   does not load raises. lyse then shows no window, prints the error in its
-   own output box, and reports it again at every analysis until the routine is
-   restarted.
+1. Load `config_path`, and show its text in the Configuration tab. An unset
+   `config_path`, or a file that does not load, raises. lyse then shows no
+   window, prints the error in its own output box, and reports it again at
+   every analysis until the routine is restarted.
 2. Load the window's controls with `self.load_ui(...)`, given the absolute path
    of the package's `window.ui`, a `QWidget` form holding the buttons, the
    Status and Configuration tabs and the plot area. The pyqtgraph plot is

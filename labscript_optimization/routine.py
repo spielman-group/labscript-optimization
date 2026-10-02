@@ -193,14 +193,18 @@ class OptimizationRoutine(lyse.Routine):
     interface_factory = RunmanagerInterface
 
     def __init__(self):
+        if self.config_path is None:
+            raise ValueError(
+                f"{type(self).__name__} must set config_path to its TOML "
+                f"configuration file."
+            )
         text = Path(self.config_path).read_text(encoding="utf-8")
         self.config = config_module.loads(text)
         ui = self.load_ui(Path(__file__).with_name("window.ui"))
         commands = queue.Queue()
         window = WindowController(ui, commands)
-        self.worker = Worker(
-            self.config, text, window, commands, self.interface_factory
-        )
+        window.show_config(self.config, text)
+        self.worker = Worker(self.config, window, commands, self.interface_factory)
 
     def run(self):
         if self.paths is None:

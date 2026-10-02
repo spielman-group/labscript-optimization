@@ -11,7 +11,7 @@ with warnings.catch_warnings():
     from lyse.routine import RoutineSettings
     from lyse.utils import LYSE_DIR
 
-from test_worker import CONFIG
+from conftest import SESSION_CONFIG
 
 ROUTINE = '''
 from labscript_optimization.routine import OptimizationRoutine
@@ -39,7 +39,7 @@ def worker(tmp_path):
     routine = tmp_path / 'optimization.lyse'
     routine.mkdir()
     (routine / 'lyse_routine.py').write_text(ROUTINE)
-    (routine / 'config.toml').write_text(CONFIG)
+    (routine / 'config.toml').write_text(SESSION_CONFIG)
     settings = RoutineSettings(routine, lyse.analysis_subprocess.config_dir)
     to_worker, from_worker, process = ProcessTree.instance().subprocess(
         str(LYSE_DIR / 'analysis_subprocess.py'), startup_timeout=30

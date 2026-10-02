@@ -15,6 +15,21 @@ from labscript_optimization.observations import COMPLETE, Observation
 from labscript_optimization.space import Parameter, ParameterSpace
 
 
+#: A one-parameter session under the random learner, keeping two shots queued.
+SESSION_CONFIG = """
+[ANALYSIS]
+cost_key = ["r", "c"]
+groups = ["G"]
+[GENERAL]
+learner = "random"
+num_buffered_runs = 2
+[PARAMETERS.G.x]
+global_name = "gx"
+min = 0.0
+max = 1.0
+"""
+
+
 @pytest.fixture(scope='session')
 def qt_application():
     from qtutils.qt import QtWidgets

@@ -10,18 +10,7 @@ from labscript_optimization import config as config_module
 from labscript_optimization import worker as worker_module
 from labscript_optimization.worker import Worker
 
-CONFIG = """
-[ANALYSIS]
-cost_key = ["r", "c"]
-groups = ["G"]
-[GENERAL]
-learner = "random"
-num_buffered_runs = 2
-[PARAMETERS.G.x]
-global_name = "gx"
-min = 0.0
-max = 1.0
-"""
+from conftest import SESSION_CONFIG as CONFIG
 
 
 class FakeInterface:
@@ -63,12 +52,9 @@ class Shown(list):
 def start(interface=FakeInterface, text=CONFIG):
     """A worker whose opening has been handled, and what its window was shown."""
     shown = Shown()
-    window = SimpleNamespace(
-        update=lambda status, *args: shown.append(status),
-        show_config=lambda *args: None,
-    )
+    window = SimpleNamespace(update=lambda status, *args: shown.append(status))
     commands = queue.Queue()
-    worker = Worker(config_module.loads(text), text, window, commands, interface)
+    worker = Worker(config_module.loads(text), window, commands, interface)
     # Answered after the opening, which is ahead of it in the queue.
     worker.hand_over([], [], None)
     return worker, commands, shown
@@ -148,6 +134,19 @@ def test_a_failed_opening_leaves_the_worker_up_and_reset_retries():
     commands.put(('start', None, None))
     hand_over(worker)
     assert shown[-1]['submitted'] == 2
+
+
+def test_a_session_thread_that_has_died_is_reported(monkeypatch):
+    monkeypatch.setattr(worker_module, 'REPLY_TIMEOUT', 0.2)
+
+    def update(status, *args):
+        raise RuntimeError('the window is broken')
+
+    window = SimpleNamespace(update=update)
+    worker = Worker(config_module.loads(CONFIG), window, queue.Queue(), FakeInterface)
+    worker.thread.join(timeout=10)
+    with pytest.raises(RuntimeError, match='thread has stopped'):
+        hand_over(worker)
 
 
 def test_a_session_that_reaches_a_limit_says_why_once(capsys):
