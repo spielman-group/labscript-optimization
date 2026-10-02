@@ -158,3 +158,26 @@ test cannot run. The behaviours covered are:
 
 `test_worker.py` and the worker parts of `test_routine.py` go with the code
 they test.
+
+## Build order
+
+1. **The routine**, in one commit, since the old and new entry points cannot
+   stand side by side:
+   - `OptimizationRoutine`, with `__init__`, `run` and `close`, and the session
+     loop moved in from `Worker._run_session`, replying through futures;
+   - `window.ui` with a `QWidget` root, and `WindowController` built on the
+     widget `load_ui` returns;
+   - the removals listed above;
+   - the README, UPGRADING, the package docstrings and `pyproject.toml`'s
+     `lyse` extra comment describing the class file;
+   - the tests above. The suite passes against lyse's `ClassRoutines`.
+
+   Budget: about 150 lines of code added against about 450 removed, and about
+   120 lines of tests against about 1300 removed.
+2. **The demo and a live trial.** Ian's `optimization_multishot.py` in the
+   userlib becomes the class file. Ian runs it in lyse against runmanager:
+   - the window opens when the routine is added;
+   - Start submits, and the analysed shots get their status columns;
+   - an opening with runmanager absent shows why, and Reset recovers once
+     runmanager is up;
+   - restarting and removing the routine end it cleanly.
