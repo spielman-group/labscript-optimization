@@ -172,12 +172,9 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
 
 ## Remaining work
 
-1. **The end-to-end test** above, once lyse has committed its `GuiWorker` for
-   routine folders and its `GuiWorkerTests` on `ClassRoutines`, with the
-   README's Tests paragraph saying it needs lyse.
-2. **A live trial,** by Ian, of the demo in lyse against runmanager:
-   - the window opens when the routine is added;
-   - Start submits, and the analysed shots get their status columns;
-   - an opening with runmanager absent shows why, and Reset recovers once
-     runmanager is up;
-   - restarting and removing the routine end it cleanly.
+- **A live trial,** by Ian, of the demo in lyse against runmanager:
+  - the window opens when the routine is added;
+  - Start submits, and the analysed shots get their status columns;
+  - an opening with runmanager absent shows why, and Reset recovers once
+    runmanager is up;
+  - restarting and removing the routine end it cleanly.

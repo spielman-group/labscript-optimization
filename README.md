@@ -483,8 +483,9 @@ python -m pytest tests/ -q
 ```
 
 The tests run the learners against analytic cost functions and the session
-against a stand-in for runmanager; none of them needs a lab, a GUI or a
-running suite.
+against a stand-in for runmanager. One drives the routine through a real lyse
+worker process, started as lyse starts one, so the suite's lyse must be
+installed; none of them needs a lab or a running runmanager.
 
 ## Benchmarks
 
