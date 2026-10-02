@@ -202,13 +202,13 @@ class OptimizationRoutine(lyse.Routine):
             self.config, text, window, commands, self.interface_factory
         )
 
-    def run(self, path, paths):
-        if paths is None:
+    def run(self):
+        if self.paths is None:
             raise ValueError(
                 "labscript_optimization's routine runs on the shots of a "
                 "multishot pass; add it to lyse's multishot routines."
             )
-        filepaths, observations = extract(analysed(paths), self.config)
+        filepaths, observations = extract(analysed(self.paths), self.config)
         self.worker.hand_over(filepaths, observations, save_status)
 
     def close(self):

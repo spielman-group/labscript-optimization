@@ -52,7 +52,7 @@ lyse runs a multishot routine once per drained batch of singleshot analyses
 rather than once per shot. Where analysis keeps up that is one shot an
 invocation; where it does not — a shot arriving while the one before it is
 still being analysed, analysis paused and resumed, or lyse started with shots
-already in the box — it is several. lyse names them in `paths`, and
+already in the box — it is several. lyse names them in the routine's `paths`, and
 each invocation hands over every one, so a batch costs the optimizer nothing.
 
 ## Using it

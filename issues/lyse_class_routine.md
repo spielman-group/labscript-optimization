@@ -42,7 +42,7 @@ class Optimization(OptimizationRoutine):
   absolute path of the package's `optimizer.svg`, and lyse shows that icon on
   the window.
 - It is a multishot routine. Added to the singleshot routines, where lyse
-  passes `paths=None`, every `run()` raises, saying so.
+  sets `self.paths` to `None`, every `run()` raises, saying so.
 
 ## Structure
 
@@ -94,12 +94,14 @@ session thread greets runmanager and builds the session, and the window shows
 "Opening" until it has. Anything printed during `__init__` goes to lyse's
 output box; after construction, output goes to the window's Output dock.
 
-## `run(path, paths)`
+## `run()`
 
-1. Raise if `paths` is `None`: the routine is a singleshot one.
-2. Read the rows for `paths` with `lyse.data(where={"filepath": paths})`, and
-   extract the shot ids and costs. An empty pass, from Run multishot
-   with nothing analysed, has `paths=[]` and reads nothing.
+lyse sets `self.path` and `self.paths` before each `run()`.
+
+1. Raise if `self.paths` is `None`: the routine is a singleshot one.
+2. Read the rows for `self.paths` with `lyse.data(where={"filepath": ...})`,
+   and extract the shot ids and costs. An empty pass, from Run multishot with
+   nothing analysed, has `self.paths == []` and reads nothing.
 3. Hand them to the worker, which saves each shot's status with
    `save_status`.
 
