@@ -39,8 +39,8 @@ class Optimization(OptimizationRoutine):
 - The configuration is read once, when the routine starts. Restart the routine
   after editing it.
 - `OptimizationRoutine` sets `lyse.Routine`'s `icon` class attribute to the
-  absolute path of the package's `optimizer.svg`, and lyse shows that icon.
-  The attribute is lyse's planned work-order slice 9.
+  absolute path of the package's `optimizer.svg`, and lyse shows that icon on
+  the window.
 - It is a multishot routine. Added to the singleshot routines, where lyse
   passes `paths=None`, every `run()` raises, saying so.
 
