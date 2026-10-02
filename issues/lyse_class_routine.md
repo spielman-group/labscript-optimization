@@ -58,8 +58,10 @@ then hands the window a snapshot through `inmain_later`.
    `window.ui`, a `QWidget` form holding the buttons, the Status and
    Configuration tabs and the plot area. The pyqtgraph plot is inserted into
    the plot area as now. The routine creates no matplotlib figures.
-3. Set the window's icon to `optimizer.svg`. The process, and so the Dock or
-   taskbar entry, is lyse's.
+3. Give the routine `optimizer.svg` as its icon, through lyse's support for a
+   worker's custom icon, so that the window and the worker's Dock or taskbar
+   entry carry it. lyse's spec does not have that support yet; where it is
+   missing, the window alone carries the icon.
 4. Start the session thread, and put `configure` on its queue.
 
 `__init__` makes no runmanager round trip, so the window appears at once. The
