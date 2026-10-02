@@ -29,6 +29,9 @@ class Optimization(OptimizationRoutine):
   worker's working directory.
 - The configuration is read once, when the routine starts. Restart the routine
   after editing it.
+- `OptimizationRoutine` sets `lyse.Routine`'s `icon` class attribute to the
+  absolute path of the package's `optimizer.svg`, and lyse shows that icon.
+  The attribute is lyse's planned work-order slice 9.
 - It is a multishot routine. Added to the singleshot routines, where lyse
   passes `paths=None`, every `run()` raises, saying so.
 - `optimize(config_path)`, the classic-script entry point, is removed.
@@ -75,11 +78,7 @@ as now.
    Status and Configuration tabs and the plot area. The pyqtgraph plot is
    inserted into the plot area as now. The routine creates no matplotlib
    figures.
-3. Give the routine `optimizer.svg` as its icon, through lyse's support for a
-   worker's custom icon, so that the window and the worker's Dock or taskbar
-   entry carry it. Where lyse has no such support, the window alone carries
-   the icon.
-4. Build the `Worker`, with the `interface_factory` class attribute, which is
+3. Build the `Worker`, with the `interface_factory` class attribute, which is
    `RunmanagerInterface`.
 
 `__init__` makes no runmanager round trip, so the window appears at once. The
