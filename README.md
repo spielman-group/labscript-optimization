@@ -13,7 +13,7 @@ analysislib-mloop file as it stands: see
 
 ## How it works
 
-One lyse routine, one worker process, one session.
+One lyse routine, one session, on a thread of the routine's own.
 
 ```
 lyse routine ──observation──▶ worker ──submit_shots──▶ runmanager
@@ -52,27 +52,30 @@ lyse runs a multishot routine once per drained batch of singleshot analyses
 rather than once per shot. Where analysis keeps up that is one shot an
 invocation; where it does not — a shot arriving while the one before it is
 still being analysed, analysis paused and resumed, or lyse started with shots
-already in the box — it is several. lyse names them in `lyse.paths`, and
+already in the box — it is several. lyse names them in `paths`, and
 each invocation hands over every one, so a batch costs the optimizer nothing.
 
 ## Using it
 
-Add a routine to lyse containing:
+Add a routine file to lyse's multishot routines containing:
 
 ```python
-from labscript_optimization.routine import optimize
+LYSE_MODE = "gui"
+from labscript_optimization.routine import OptimizationRoutine
 
-optimize('optimization_config.toml')
+class Optimization(OptimizationRoutine):
+    config_path = "optimization_config.toml"
 ```
 
-Adding the routine opens a paused session and submits no shots until it
-receives Start. Lyse's Run multishot button opens the window even when no
-shot is waiting. Start begins submission, Pause stops new submissions while
+`config_path` is relative to the routine file's folder. Adding the routine
+opens the optimizer window with a paused session, which submits no shots until
+it receives Start. Start begins submission, Pause stops new submissions while
 shots already in flight still report, and Reset discards the history and opens
-another paused session with the configuration already loaded. Closing the
-window hides it without stopping the session; the next routine pass shows it
-again. Restart the routine after editing the TOML. A run that reaches a limit
-shows its reason and can only be Reset.
+another paused session with the configuration already loaded. If runmanager
+cannot be reached when the session opens, the window says so, and Reset tries
+again. Closing the window hides it without stopping the session; lyse's Show
+windows brings it back. Restart the routine after editing the TOML. A run that
+reaches a limit shows its reason and can only be Reset.
 
 The window's Status tab shows the phase, the learner, the shot counts and the
 best cost, with each parameter's range, start and best value. Its
@@ -84,7 +87,7 @@ explorer shots; the line shows the best cost so far. Pending, dropped and bad
 observations leave gaps, and maximised costs appear in the sign of your cost
 column.
 
-Removing or restarting the routine stops the worker.
+Removing or restarting the routine ends the session.
 
 Progress is saved into lyse's dataframe, in the row
 of each shot the session proposed, under the results group
@@ -102,12 +105,8 @@ shot id for every queue row it compiles, so carrying one does not make a shot
 the optimizer's, and the session writes onto an id it proposed and no other.
 
 The session's own counters are one answer for the whole run rather than
-anything about a shot, so they are not written onto every shot of it.
-`optimize` returns the whole status, which a routine that wants them prints:
-
-```python
-print(optimize('optimization_config.toml'))
-```
+anything about a shot, so they are not written onto every shot of it. The
+window shows them.
 
 `num_buffered_runs` is how many of the session's shots to keep queued, and
 defaults to two. BLACS asks for its next shot as soon as it finishes the last,
@@ -466,8 +465,9 @@ anywhere else is one lyse cannot import.
 
 Needs Python 3.11 or newer, numpy, scipy and scikit-learn. The lyse routine
 additionally needs `lyse`, `runmanager` and `labscript_utils`, which a labscript
-suite installation already provides. It asks lyse's dataframe for the rows of
-the shots lyse names in `lyse.paths`, in one `lyse.data(where=...)` request,
+suite installation already provides. It is a lyse class routine
+(`lyse.Routine`), and asks lyse's dataframe for the rows of the shots each
+pass names, in one `lyse.data(where=...)` request,
 each with its `shot_id`, saves its progress with `save_result`'s `save_to_h5`,
 and submits with `submit_shots`'s `sequence` and `sequence_index`, so it needs
 a lyse and a runmanager that have them; an older one fails at the first use and

@@ -8,10 +8,7 @@ import numpy as np
 import pytest
 
 from labscript_optimization import config as config_module
-from labscript_optimization.runmanager_interface import (
-    CHECK_READY_REQUESTS,
-    RunmanagerInterface,
-)
+from labscript_optimization.runmanager_interface import RunmanagerInterface
 
 CONFIG = """
 [ANALYSIS]
@@ -114,28 +111,14 @@ def test_a_session_starts_when_runmanager_can_sustain_it(interface):
 
 
 def test_a_runmanager_that_does_not_answer_is_reported_as_the_cause(interface, client):
-    """The worker has one startup allowance, and everything it does with
-    runmanager happens inside it. A runmanager that is not running answers
-    nothing, so without being named here the lab waits out the client's own
-    deadline and then reads whichever question went unanswered -- true, and
-    no help at all.
+    """A runmanager that is not running answers nothing, so without being
+    named here the lab waits out the client's own deadline and then reads
+    whichever question went unanswered -- true, and no help at all.
     """
     client.silent = True
     with pytest.raises(RuntimeError, match='runmanager did not answer'):
         interface.check_ready()
     assert client.asked == ['say_hello']
-
-
-def test_the_deadline_is_summed_over_as_many_requests_as_are_made(
-    interface, client
-):
-    """The routine's allowance for configuring is the greeting's deadline plus
-    one of the client's per question asked after it. That count lives beside
-    the questions, so a question added below is a visible reason to change it;
-    this is what says the two agree.
-    """
-    interface.check_ready()
-    assert len(client.asked) == 1 + CHECK_READY_REQUESTS
 
 
 def test_a_runmanager_whose_globals_do_not_evaluate_is_refused(interface, client):

@@ -23,16 +23,20 @@ tensorflow: the neural-network learner is gone, and with it M-LOOP's hard
 import of tensorflow through every other learner.
 
 It also needs a lyse and a runmanager that have what the routine uses:
-`lyse.paths`, `lyse.data(where=...)`, `save_result`'s `save_to_h5`, and
+class routines (`lyse.Routine`), `lyse.data(where=...)`, `save_result`'s
+`save_to_h5`, and
 `submit_shots`'s `sequence` and `sequence_index`. An older one fails at the first
 pass and says so.
 
-Your lyse analysis routine becomes two lines:
+Your lyse analysis routine becomes a short class file, added to lyse's
+multishot routines:
 
 ```python
-from labscript_optimization.routine import optimize
+LYSE_MODE = "gui"
+from labscript_optimization.routine import OptimizationRoutine
 
-optimize('mloop_config.toml')
+class Optimization(OptimizationRoutine):
+    config_path = "mloop_config.toml"
 ```
 
 Remove `mloop_multishot.py`, `mloop_interface.py`, `mloop_controller.py`,
@@ -393,12 +397,8 @@ empty string or list for the rest.
 
 The session's counters — `submitted`, `completed`, `awaiting`, `dropped`,
 `blocked` and `starved` — are one answer for the whole run rather than anything about a shot,
-so they are not written onto every shot of it. `optimize` returns the whole
-status, so a routine that wants them prints it:
-
-```python
-print(optimize('mloop_config.toml'))
-```
+so they are not written onto every shot of it. The optimizer window shows
+them.
 
 `dropped` counts shots the session proposed that will never produce a cost:
 cancelled, deleted, refused, or gone from the queue with nothing reaching lyse.
