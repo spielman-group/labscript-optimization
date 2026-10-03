@@ -11,44 +11,50 @@ tell whether it applies to your lab.
 ## 1. Install it, and point lyse at the new routine
 
 ```
-pip install -e /path/to/labscript-optimization
+git clone https://github.com/spielman-group/labscript-optimization
+pip install -e "./labscript-optimization[lyse]"
 ```
 
-Run that against the Python environment lyse itself runs in, the one holding
-the rest of your suite: the routine runs inside a lyse analysis subprocess, so
-an installation anywhere else is one lyse cannot import.
+Run those in the Python environment lyse itself runs in, the one holding the
+rest of your suite: the routine runs inside a lyse analysis subprocess, so an
+installation anywhere else is one lyse cannot import.
 
-Needs Python 3.11 or newer, and numpy, scipy and scikit-learn. There is no
-tensorflow: the neural-network learner is gone, and with it M-LOOP's hard
-import of tensorflow through every other learner.
+It needs Python 3.11 or newer. The `lyse` extra adds what the routine needs from
+the suite: `labscript_utils`, `lyse`, `runmanager`, `qtutils` and `pyqtgraph`.
+The learners alone, without the extra, need only numpy, scipy and scikit-learn.
+There is no tensorflow: the neural-network learner is gone, and with it M-LOOP's
+hard import of tensorflow through every other learner.
 
-It also needs a lyse and a runmanager that have what the routine uses:
-class routines (`lyse.Routine`), `lyse.data(where=...)`, `save_result`'s
-`save_to_h5`, and
-`submit_shots`'s `sequence` and `sequence_index`. An older one fails at the first
-pass and says so.
+The routine needs the Development branches of lyse and runmanager from the
+Spielman group's labscript suite, which have class routines (`lyse.Routine`),
+`lyse.data(where=...)`, `save_result`'s `save_to_h5`, and `submit_shots`'s
+`sequence` and `sequence_index`. An older lyse or runmanager fails with Python's
+own error for the missing name or argument; the package checks no versions.
 
 Your lyse analysis routine becomes a routine folder, named with a `.lyse`
-suffix and added to lyse's multishot routines. It holds `mloop_config.toml`
-and a `lyse_routine.py` containing:
+suffix, such as `optimization.lyse`, and added to lyse's multishot routines. It
+holds your edited configuration, saved as `optimization_config.toml`, and a
+`lyse_routine.py` containing:
 
 ```python
 from labscript_optimization.routine import OptimizationRoutine
 
 
 class Optimization(OptimizationRoutine):
-    config_path = "mloop_config.toml"
+    config_path = "optimization_config.toml"
 ```
 
 Remove `mloop_multishot.py`, `mloop_interface.py`, `mloop_controller.py`,
 `mloop_learner.py` and `monkey.py` from your analysis directory. Nothing from
 analysislib-mloop is imported any more, and `mloop` itself is not a dependency.
 
-The new session opens paused and submits no shots until it receives Start.
-This differs from analysislib-mloop and earlier labscript-optimization
-versions, which began submitting as soon as the lyse routine first ran.
-Reset discards the history but keeps the configuration loaded for that
-session. Restart the lyse routine after editing the TOML.
+The session opens paused and submits no shots until it receives Start;
+analysislib-mloop began as soon as the lyse routine first ran. Reset discards
+the history but keeps the configuration loaded for that session. Restart the
+lyse routine after editing the TOML.
+
+The Results, Window and Troubleshooting pages of the documentation describe what
+the routine saves into lyse's dataframe, its window, and how it fails.
 
 ## 2. Rename the two M-LOOP tables, and cut the settings that no longer exist
 
@@ -142,10 +148,8 @@ history dies with it and a new session starts from nothing.
 `start` keeps its spelling and gains a rule. It is one coordinate of a single
 opening point over every searched parameter, so it is written on all of them
 or on none, and a file writing it on some is **refused**, naming which
-parameters carry one and which do not. It used to be dropped instead: a start
-on three parameters of five was ignored for all five, and the run opened on a
-uniform draw with nothing said. A parameter carrying `enable = false` is not
-searched, so it is not a coordinate of that point and needs no `start`.
+parameters carry one and which do not. A parameter carrying `enable = false` is
+not searched, so it is not a coordinate of that point and needs no `start`.
 
 ## 3. Move every learner knob into its learner's table
 
@@ -244,8 +248,9 @@ members in the other nine; counted by blocks of four functions, eight wins
 five of the seven and sixteen takes a block only at the largest budget. Four
 members, at two and at four parameters, improves by under a per cent when
 given two and a half times the budget, which is what converging prematurely
-looks like. `benchmarks/README.md`, under "What the sweep found", has the
-tables, the caveats, and the harness and rows behind them. Your landscape is not an analytic test function, so
+looks like. [`benchmarks/README.md`](https://github.com/spielman-group/labscript-optimization/blob/Development/benchmarks/README.md),
+under "What the sweep found", has the tables, the caveats, and the harness and
+rows behind them. Your landscape is not an analytic test function, so
 treat the two numbers as a place to start.
 
 A budget has to cover two whole generations of that population, so
@@ -264,10 +269,10 @@ goes out whole.
 - What the parameter and globals tables carry is unchanged, and only the
   first of them was renamed: `[PARAMETERS.<group>.<name>]` takes
   `global_name`, `min`, `max`, `start` and `enable` -- `start` under the rule
-  above -- and
-  `[RUNMANAGER_GLOBALS.<group>.<name>]` takes `expr` and `args`.
-  `ANALYSIS.groups` still selects which groups take part, and `enable = false`
-  still keeps a parameter in the file but out of the search. A name in
+  above -- and `[RUNMANAGER_GLOBALS.<group>.<name>]` takes `expr`, `args` and
+  `enable`. `[ANALYSIS] groups` still selects which groups take part, and
+  `enable = false` still keeps a parameter in the file but out of the search. A
+  name in
   `groups` that no table defines is refused, naming it, so a misspelt group
   cannot leave the one it meant switched off.
 - `cost_key` is still `[routine_name, result_name]`, `maximize` still means
@@ -295,23 +300,25 @@ goes out whole.
   Gaussian process computes `batch_size` points at a time in the background,
   4 by default, each conditioned on the ones before it, and each point goes
   out as soon as it is ready; while a batch is computed, the explorer keeps the
-  queue topped up. Each batch cycle, from one batch's first point to the
-  next's, holds at least `explore_runs` explorer shots, 1 by default, and in
-  practice about `num_buffered_runs` of them: see step 5. The next
+  queue topped up. Each batch cycle, from one batch's last point to the
+  next batch's first, holds at least `explore_runs` explorer shots, 1 by
+  default, and in practice about `num_buffered_runs` of them: see step 5. The next
   batch is computed once every point of the last is back or given up on, and
   the explorer shots never hold it up. Warmup counts observations a fit can
   use, not shots, and ends at the count: explorer shots already queued then
   still run. The `phase` column reads `warmup`, `main` or `explore` for the
   three kinds of shot.
 
-  This is M-LOOP's cycle with `no_delay = true`, as the lab's fork of
-  analysislib-mloop ran it. M-LOOP's machine-learning controller ran
+  This is M-LOOP's cycle with `no_delay = true`, as the `no_delay` branch of the
+  Spielman lab's
+  [fork of analysislib-mloop](https://github.com/ispielma/analysislib-mloop)
+  ran it. M-LOOP's machine-learning controller ran
   `generation_num` machine-learner runs, fixed at 4, at the four exploration
   weights `[0, 1, 2, 3]` that are `uncer_bias` here, then one run from its
   training source, round and round, and under `no_delay = true` also took a
   training run whenever the machine learner had no point ready
-  (`mloop/controllers.py`, `mloop/learners.py`). The lab's fork, the
-  `no_delay` branch's `mloop_controller.py`, kept `num_buffered_runs` shots
+  (`mloop/controllers.py`, `mloop/learners.py`). That branch's
+  `mloop_controller.py` kept `num_buffered_runs` shots
   queued and trained with its own random learner alone, the forerunner of
   `directed_random`. It never took the run after each generation: one counter
   decides both that run and when to ask for the next generation, and asking
@@ -331,9 +338,9 @@ goes out whole.
   the training shots, for the periodic training runs among them, and for any
   point the machine-learning learner was too slow to supply — so all of them
   came from a population clustered around the best points seen. This package's
-  `directed_random` centres its draws on a band of *middling* costs instead,
-  which is what makes it explore rather than refine, so the warmup and the
-  explorer shots range much wider and produce stretches of poor shots that
+  `directed_random` centers its draws on a band at the poor end of the costs
+  instead, which is what makes it explore rather than refine, so the warmup and
+  the explorer shots range much wider and produce stretches of poor shots that
   M-LOOP never showed. That is what a run against the dummy apparatus looks
   like.
 
@@ -346,22 +353,20 @@ goes out whole.
   default population — so it starts wider than `directed_random`. To explore
   nearer the best points with `directed_random` instead, narrow its own band
   — `trust_range = [0.9, 1.0]` in
-  `[LEARNER.directed_random]` centres on the best point rather than on
-  middling ones, and `[1, 1]` is the best point alone. `explorer = "random"`
+  `[LEARNER.directed_random]` centers on points near the best rather than on
+  poor ones, and `[1, 1]` is the best point alone. `explorer = "random"`
   is the plain uniform spread over the whole space.
 - **Nelder-Mead and the neural network are gone.** Nelder-Mead may return;
   the neural network will not.
-- **The directed random learner's trust region now works.** Its guard sent
-  every draw to the whole space once any cost had been recorded, which left
-  `trust_region`, `trust_range` and `trust_gaussian` doing nothing — so this
-  learner was a plain random one in every lab running it. A bad run, arriving
-  as an infinite cost, also left the trust band undefined so that nothing fell
-  inside it. Both are fixed, which means **this learner will behave
-  differently from the one you have been running**, as it was always meant to.
-  `trust_range` still defaults to `[0.1, 0.25]`, which centres the search on
-  middling results rather than the best one: that is deliberate, and is what
-  makes it explore rather than refine. A pair written the wrong way round is
-  now refused at construction, where M-LOOP quietly sorted it.
+- **The directed random learner applies its trust region.** The fork's random
+  learner (`mloop_learner.py`) sent every draw to the whole space once it had
+  recorded a cost, so `trust_region`, `trust_range` and `trust_gaussian` did
+  nothing there, and a lab setting them will see different behavior here.
+  `trust_range` defaults to `[0.1, 0.25]`, a band at the poor end of the costs,
+  measured from the worst cost to the best: it centers the search on poor
+  results rather than the best one, which is what makes the learner explore
+  rather than refine. A pair written the wrong way round is refused at
+  construction, where the fork's learner quietly sorted it.
 - **Every learner knob goes under `[LEARNER.<name>]`**, which step 3 above is
   the move for. A named learner table is strict: an unknown learner, or a key
   that learner's constructor does not accept, stops the file from loading, and
@@ -379,61 +384,6 @@ goes out whole.
   asynchronous variant, and the cost grows with the budget rather than washing
   out: over four analytic test functions at four parameters it is nothing
   measurable at 120 shots and a factor of 1.6 in the best cost found at 600.
-  The name has to be true.
 - **`seed`** in `[GENERAL]` makes a run reproducible, except under
   `gaussian_process`, where which shots its points take depends on how long
   each fit takes.
-
-## What the routine reports
-
-Where the search has got to is saved into lyse's dataframe, in the row of each
-shot the session proposed, as columns under `labscript_optimization` —
-`df[('labscript_optimization', 'best_cost')]` and so on. It is not written into
-the shot files, so shots loaded into lyse afresh come without it. The keys are
-`phase`, `best_cost`, `best_params`, `best_shot_id` and `stopped`. `phase` is
-the shot's own: what proposed that shot, which is `start` for the configured
-start and, under `gaussian_process`, `warmup`, `main` or `explore`. A key
-the session has nothing to report for yet is empty — `NaN` for `best_cost`, an
-empty string or list for the rest.
-
-The session's counters — `submitted`, `completed`, `awaiting`, `dropped`,
-`blocked` and `starved` — are one answer for the whole run rather than anything about a shot,
-so they are not written onto every shot of it. The optimizer window shows
-them.
-
-`dropped` counts shots the session proposed that will never produce a cost:
-cancelled, deleted, refused, or gone from the queue with nothing reaching lyse.
-A shot that simply ran is not among them. runmanager answers for a finished
-shot exactly as it does for one that was deleted, so a shot is given up on only
-when a second reconcile says the same, by which time a healthy shot's cost has
-come back through lyse. A `dropped` above zero is shots the run actually lost,
-and is worth looking into.
-
-`blocked` is the part of that number worth acting on. It counts shots sitting
-behind a row the queue will not hand over — a rejected head, or one whose
-compile failed — and nothing moves them but an operator. Every other way a
-shot stops coming is the apparatus getting on with things; this one means go
-and look at the queue.
-
-## Two failures worth recognising
-
-**A shot that cannot compile stops everything.** Such a row stays at the head
-of runmanager's queue until someone deletes it, and nothing behind it runs —
-so nothing reaches lyse and the optimizer is never invoked again. The row is
-red in runmanager and the queue has visibly halted. That is the signal; the
-optimizer cannot report it, because it is not running. Delete the row and the
-queue moves.
-
-**The session stops if the labscript file changes underneath it.** Its shots
-would no longer be the experiment it has been optimizing, so it says so rather
-than carrying on.
-
-## One thing that looks like a failure and is not
-
-A cost that arrives after the generation it belonged to. The shots behind a red
-row are given up on and counted in `dropped`, and the search moves on without
-them; you delete the row, they run, and their costs come back for a generation
-that has already been replaced. Each is still taken and competes for its own
-slot and no other -- which is what differential evolution would have done with
-it had it arrived in time. Two generations of the optimizer's shots sit in the
-queue while it catches up, and `awaiting` reads high for as long as they do.

@@ -53,7 +53,7 @@ Evolves a population, one whole generation at a time. The first generation is ``
 
 A whole generation goes out together, and nothing is proposed until every shot of the last has completed or been given up on. The queue therefore empties once per generation. ``population_size`` is both the population and the queue depth, so ``num_buffered_runs`` is refused, and ``starved`` is not counted. ``max_num_runs`` must allow at least two generations; its last generation is cut short where the budget runs out.
 
-It builds no model of the cost, and it selects on a single measurement per slot, so a lucky measurement stays in its slot. Choose it for a cost that a Gaussian process fits poorly and whose shot-to-shot noise is small. ``benchmarks/README.md`` in the repository holds the sweep behind the default of 8 members, run over four analytic test functions at two to eight parameters: 8 suits the budgets a lab usually runs, 16 suits budgets past a thousand shots, and 4 mostly stalls.
+It builds no model of the cost, and it selects on a single measurement per slot, so a lucky measurement stays in its slot. Choose it for a cost that a Gaussian process fits poorly and whose shot-to-shot noise is small. `benchmarks/README.md <https://github.com/spielman-group/labscript-optimization/blob/Development/benchmarks/README.md>`_ in the repository holds the sweep behind the default of 8 members, run over four analytic test functions at two to eight parameters: 8 suits the budgets a lab usually runs, 16 suits budgets past a thousand shots, and 4 mostly stalls.
 
 Its knobs are in :ref:`[LEARNER.differential_evolution] <configuration-learner-differential-evolution>`.
 

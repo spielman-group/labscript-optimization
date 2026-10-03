@@ -17,9 +17,9 @@ A lab adds a routine folder, named with a `.lyse` suffix, to lyse's multishot
 routines, holding its configuration and a `lyse_routine.py`:
 
 ```
-optimization_multishot.lyse/
+optimization.lyse/
     lyse_routine.py
-    mloop_config.toml
+    optimization_config.toml
 ```
 
 ```python
@@ -27,7 +27,7 @@ from labscript_optimization.routine import OptimizationRoutine
 
 
 class Optimization(OptimizationRoutine):
-    config_path = "mloop_config.toml"
+    config_path = "optimization_config.toml"
 ```
 
 - `OptimizationRoutine` subclasses `lyse.Routine`. lyse counts only classes
