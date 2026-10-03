@@ -51,6 +51,11 @@ lyse = [
     "qtutils",
     "pyqtgraph>=0.11.1",
 ]
+docs = [
+    "Sphinx==8.2.3",
+    "sphinx-rtd-theme==3.0.2",
+    "myst_parser==4.0.1",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
