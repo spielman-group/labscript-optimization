@@ -7,9 +7,7 @@ an analysis thread for `run()`. The optimizer uses that process: the session
 runs on a thread started by the routine, and the package starts no process of
 its own.
 
-This needs lyse's `ClassRoutines` work. Both repositories carry the effort on
-their `ClassRoutines` branches, and this one builds against lyse's committed
-branch only.
+This needs lyse's GUI routines, which are on lyse's `Development` branch.
 
 ## The lab's routine folder
 
