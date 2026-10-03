@@ -262,6 +262,7 @@ class GaussianProcess:
         )
 
     def new_kernel(self):
+        """A fresh RBF kernel, with a white-noise term when ``cost_has_noise``."""
         from sklearn.gaussian_process.kernels import RBF, WhiteKernel
 
         kernel = RBF(
@@ -612,7 +613,7 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         ``0 < low < high``.
     cost_bias : float
         Weight on predicted cost in the acquisition.
-    uncer_bias : float or sequence of float
+    uncer_bias : float or Sequence[float]
         The weights on predicted uncertainty the exploration schedule walks
         through, one per point of a batch, starting again from the first at
         every batch. A single number is a cycle of one step, and so a fixed
@@ -622,14 +623,14 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         How many points the Gaussian process computes at a time, each
         conditioned on the ones before it. The kernel hyperparameters are
         refit once per batch.
-    trust_region : float or sequence of float, optional
+    trust_region : float or Sequence[float] or None
         Restrict the search to this distance around the best point seen.
-    warmup_observations : int, optional
+    warmup_observations : int or None
         How many usable observations the explorer gathers before the Gaussian
         process computes, counted as observations a fit can use and not as
         shots. Defaults to max(5, twice the parameter count). Warmup ends at
         the count, and explorer shots already queued then still run.
-    explorer : str or learner
+    explorer : str or ParameterSpaceLearner
         The learner whose shots run the warmup and fill the queue after it:
         ``"random"``, ``"directed_random"`` or ``"differential_evolution"``,
         built from its defaults, or an instance of one. A configuration names

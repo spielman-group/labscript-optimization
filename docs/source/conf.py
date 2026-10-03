@@ -43,6 +43,7 @@ release = version
 # HTML icons
 img_path = 'img'
 html_logo = img_path + "/optimizer.svg"
+html_favicon = img_path + "/optimizer.svg"
 
 # -- General configuration (should be identical across all projects) ------------------
 
@@ -65,6 +66,14 @@ numfig = True
 # The suite and GUI modules the package imports; a docs build has no lab to
 # provide them. routine.py subclasses lyse.Routine, which a mock allows.
 autodoc_mock_imports = ['lyse', 'runmanager', 'qtutils', 'pyqtgraph']
+# Nitpicky references that nothing documents: lyse.Routine is mocked, Future
+# reports a private module, concurrent.futures._base, and the page leaves out
+# the runmanager interface that OptimizationRoutine.interface_factory aliases.
+nitpick_ignore = [
+    ('py:class', 'lyse.Routine'),
+    ('py:class', 'concurrent.futures._base.Future'),
+    ('py:class', 'labscript_optimization.runmanager_interface.RunmanagerInterface'),
+]
 
 # mock missing site packages methods
 import site
@@ -118,6 +127,7 @@ intersphinx_mapping = {
     ),  # change to stable once v0.11 is published
     'matplotlib': ('https://matplotlib.org/stable/', None),
     'h5py': ('https://docs.h5py.org/en/stable/', None),
+    'sklearn': ('https://scikit-learn.org/stable/', None),
     'pydaqmx': ('https://pythonhosted.org/PyDAQmx/', None),
     'qt': (
         'https://riverbankcomputing.com/static/Docs/PyQt5/',

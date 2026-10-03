@@ -31,6 +31,8 @@ __all__ = [
 #: is a fact about an instance. So none of them may import the scientific
 #: stack to be imported, to be built, or to open a run; see
 #: :mod:`labscript_optimization.learners.gaussian_process`.
+#:
+#: :meta hide-value:
 LEARNERS = {
     "random": RandomLearner,
     "directed_random": DirectedRandomLearner,
@@ -114,6 +116,20 @@ def validate_options(config) -> None:
 
     Everything here is answered by a name and a table, before any learner
     exists. What only a learner can answer is checked in :func:`build`.
+
+    Parameters
+    ----------
+    config : labscript_optimization.config.Config
+        Names the learner and holds the ``[LEARNER.<name>]`` tables.
+
+    Raises
+    ------
+    ValueError
+        If the learner or its explorer is not one of those available, or a
+        table holds a key its learner does not take.
+    TypeError
+        If a learner collects its knobs in ``**kwargs``, so that its table has
+        no schema.
     """
     if config.learner not in LEARNERS:
         raise ValueError(
@@ -153,6 +169,25 @@ def build(config, rng: np.random.Generator | None = None):
     The budget is then measured against the learner that came back, because
     how many proposals it makes at a time is its own to say and no signature
     or class attribute answers for it.
+
+    Parameters
+    ----------
+    config : labscript_optimization.config.Config
+        Names the learner, holds the tables of knobs, and sets the budget.
+    rng : numpy.random.Generator or None
+        Source of randomness. ``None`` makes one seeded from ``config.seed``.
+
+    Returns
+    -------
+    labscript_optimization.learners.base.Learner
+        The learner, built from its ``[LEARNER.<name>]`` table.
+
+    Raises
+    ------
+    ValueError
+        As :func:`validate_options`; if a learner refuses a knob's value; or if
+        ``config.max_num_runs`` leaves less than two generations of a learner
+        that proposes them.
     """
     # Config objects may be constructed directly instead of parsed from TOML.
     validate_options(config)

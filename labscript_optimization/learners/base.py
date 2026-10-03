@@ -97,7 +97,7 @@ class Learner:
 
         Parameters
         ----------
-        history : sequence of Observation
+        history : Sequence[Observation]
             Every proposal made so far, in the order they were made, each with
             what became of it. The ones still pending are the run's shots in
             flight.
@@ -138,7 +138,7 @@ class Learner:
 
         Parameters
         ----------
-        history : sequence of Observation
+        history : Sequence[Observation]
             As :meth:`propose` was handed it.
         k : int
             How many proposals :meth:`propose` settled on, at least one.
@@ -152,7 +152,7 @@ class Learner:
 
 
 class ParameterSpaceLearner(Learner):
-    """A learner that searches a :class:`ParameterSpace` of its own.
+    """A learner that searches a :class:`~labscript_optimization.space.ParameterSpace`.
 
     Fixes how one is built: ``space`` first and ``rng`` second, positionally,
     then the learner's own knobs as keyword arguments with defaults. Every

@@ -16,7 +16,7 @@ import numpy as np
 #: Submitted, and a cost may still arrive.
 PENDING = "pending"
 
-#: No cost will ever arrive: the shot was cancelled, deleted, refused, or is
+#: No cost will ever arrive. The shot was cancelled, deleted, refused, or is
 #: behind a row only an operator can clear.
 DROPPED = "dropped"
 

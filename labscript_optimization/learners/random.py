@@ -39,8 +39,9 @@ class RandomLearner(ParameterSpaceLearner):
     def ask(self, history: Sequence[Observation], k: int) -> np.ndarray:
         """The next ``k`` points, as a ``(k, num_params)`` array.
 
-        The drawing without the pacing: what :meth:`propose` tops the queue up
-        with, whatever is in flight.
+        The drawing without the pacing: what
+        :meth:`~labscript_optimization.learners.base.Learner.propose` tops the
+        queue up with, whatever is in flight.
         """
         return self.space.uniform(self.rng, k)
 
@@ -104,7 +105,7 @@ class DirectedRandomLearner(RandomLearner):
                 f"{trust_range!r}"
             )
 
-    def centre(self, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
+    def _center(self, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
         """Pick the point to draw around.
 
         The band is a slice out of the middle of the observed cost range, so a
@@ -123,6 +124,7 @@ class DirectedRandomLearner(RandomLearner):
         return candidates[self.rng.integers(len(candidates))]
 
     def draw_near(self, centre: np.ndarray) -> np.ndarray:
+        """One draw about a center point, Gaussian or uniform per ``trust_gaussian``."""
         if self.trust_gaussian:
             return self.space.clip(self.rng.normal(centre, self.trust_region))
         return self.space.uniform(self.rng, 1, centre, self.trust_region)[0]
@@ -138,5 +140,5 @@ class DirectedRandomLearner(RandomLearner):
             if self.rng.uniform() < self.explore_fraction:
                 proposals[i] = self.space.uniform(self.rng, 1)[0]
             else:
-                proposals[i] = self.draw_near(self.centre(params, costs))
+                proposals[i] = self.draw_near(self._center(params, costs))
         return proposals
