@@ -20,6 +20,7 @@ rather than once per shot, and names that batch's files in ``paths``. Every
 one of them is a run the session spent, so every one of them is handed over.
 """
 
+import inspect
 import queue
 import sys
 from pathlib import Path
@@ -38,8 +39,9 @@ from .worker import Worker
 #: lab collides with this only by naming a routine after the package it imports.
 RESULTS_GROUP = "labscript_optimization"
 
-#: The keys written onto a shot, and so the columns the session produces: what
-#: proposed the shot, where the search has got to, and whether it has stopped.
+#: The keys written onto a shot, and so the columns the session produces.
+#: They say what proposed the shot, where the search has got to, and whether it
+#: has stopped.
 #:
 #: ``phase`` is the shot's own: the source the session recorded when it
 #: proposed that shot, which the worker's verdict on the shot carries. It is
@@ -52,9 +54,9 @@ RESULTS_GROUP = "labscript_optimization"
 #: ``stopped`` is here rather than with the bookkeeping because it is a marker
 #: and not a tally. A counter carries a running total onto every shot and says
 #: nothing about the one it lands on; ``stopped`` is empty until the session
-#: ends, so the first shot carrying a reason is the shot the run ended on, and
-#: where it sits in the column is the answer to the question a lab asks of a
-#: finished run.
+#: ends, and every shot of the pass that stopped it carries the reason, so the
+#: first shot carrying one is in the pass the run ended on, and where it sits
+#: in the column is the answer to the question a lab asks of a finished run.
 SHOT_RESULTS = ("phase", "best_cost", "best_params", "best_shot_id", "stopped")
 
 #: What each of :data:`SHOT_RESULTS` is saved as while the session has
@@ -80,7 +82,7 @@ NO_VALUE_YET = {
 }
 
 
-def analysed(paths):
+def analyzed(paths):
     """The rows of lyse's dataframe for the files in ``paths``.
 
     The rows come in one request, in the dataframe's order. A file named twice,
@@ -99,19 +101,34 @@ def analysed(paths):
 def extract(shots, config):
     """Read the shot ids and costs of ``shots``, rows of lyse's dataframe.
 
-    Returns two lists in step: the file of each shot there is an id to read,
-    and its ``(shot_id, cost, uncer, bad)``. lyse reads the identifier
-    runmanager wrote into the file as a column, and it is empty for one of
-    runmanager's default shots, which go to BLACS already compiled and so
-    never have an id written into them. An id that is there does not make the
-    shot the session's -- runmanager mints one for every row it compiles, a
-    user's own shots included -- and which ids belong to the session is the
-    session's own answer. A shot with an id is read whether or not its cost is
-    usable: it has run and lyse has analysed it, so withholding it would leave
-    its id awaited until a reconcile quietly dropped it, understating the runs
-    spent. The sign flip for ``maximize`` happens here, on the way in, so
-    everything downstream minimises; the session puts it back in the best
-    cost it reports.
+    lyse reads the identifier runmanager wrote into the file as a column, and
+    it is empty for one of runmanager's default shots, which go to BLACS
+    already compiled and so never have an id written into them. An id that is
+    there does not make the shot the session's -- runmanager mints one for
+    every row it compiles, a user's own shots included -- and which ids belong
+    to the session is the session's own answer. A shot with an id is read
+    whether or not its cost is usable: it has run and lyse has analyzed it, so
+    withholding it would leave its id awaited until a reconcile quietly dropped
+    it, understating the runs spent. The sign flip for ``maximize`` happens
+    here, on the way in, so everything downstream minimizes; the session puts
+    it back in the best cost it reports.
+
+    Parameters
+    ----------
+    shots : pandas.DataFrame
+        Rows of lyse's dataframe, one per shot.
+    config : labscript_optimization.config.Config
+        Names the cost and uncertainty columns, and whether to maximize.
+
+    Returns
+    -------
+    filepaths : list of str
+        The file of each shot there is an id to read.
+    observations : list of tuple
+        ``(shot_id, cost, uncer, bad)`` for each of those files, in step with
+        ``filepaths``. ``bad`` is true when the cost is missing or not finite,
+        and ``cost`` is NaN when it is missing. ``uncer`` is ``None`` when the
+        uncertainty is missing or not finite.
     """
     # A column at a time off the frame rather than a row at a time: pandas
     # resolves a key shallower than the column MultiIndex, whose padding levels
@@ -139,9 +156,6 @@ def extract(shots, config):
 def save_status(filepath, status) -> None:
     """Save :data:`SHOT_RESULTS` of ``status`` against one shot, as lyse results.
 
-    ``status`` is what this shot is to carry: the session's status, with the
-    shot's own ``phase`` beside it.
-
     Each key becomes ``df[(RESULTS_GROUP, key)]`` in that shot's row of lyse's
     dataframe, and is saved there alone, with ``save_to_h5=False``: lyse sets
     it into the row, and the shot file is not opened. The dataframe is where
@@ -155,6 +169,15 @@ def save_status(filepath, status) -> None:
     onwards.
 
     A save that fails is reported to lyse's output and otherwise passed over.
+
+    Parameters
+    ----------
+    filepath : str
+        The shot file whose row of lyse's dataframe is set.
+    status : dict
+        What this shot is to carry: the session's status, with the shot's own
+        ``phase`` beside it. A value of ``None`` is saved as its
+        :data:`NO_VALUE_YET`.
     """
     try:
         import lyse
@@ -179,17 +202,19 @@ class OptimizationRoutine(lyse.Routine):
     A lab's ``lyse_routine.py`` subclasses this and sets :attr:`config_path`. The
     configuration is read once, when lyse starts the routine; restart the
     routine after editing it.
-
-    Attributes
-    ----------
-    config_path : str
-        The TOML configuration, relative to the routine folder.
-    interface_factory : callable
-        What the configuration is turned into a runmanager interface by.
     """
 
+    #: The TOML configuration, relative to the routine folder. A subclass must
+    #: set it.
     config_path = None
+
+    #: The routine's icon in lyse, the package's ``optimizer.svg``.
+    #:
+    #: :meta hide-value:
     icon = str(Path(__file__).with_name("optimizer.svg"))
+
+    #: Called with the session's :class:`~labscript_optimization.config.Config`
+    #: to build the runmanager interface the session submits shots through.
     interface_factory = RunmanagerInterface
 
     def __init__(self):
@@ -198,7 +223,9 @@ class OptimizationRoutine(lyse.Routine):
                 f"{type(self).__name__} must set config_path to its TOML "
                 f"configuration file."
             )
-        text = Path(self.config_path).read_text(encoding="utf-8")
+        # The folder of the lab's subclass, whatever the working directory is.
+        folder = Path(inspect.getfile(type(self))).parent
+        text = (folder / self.config_path).read_text(encoding="utf-8")
         self.config = config_module.loads(text)
         ui = self.load_ui(Path(__file__).with_name("window.ui"))
         commands = queue.Queue()
@@ -207,13 +234,15 @@ class OptimizationRoutine(lyse.Routine):
         self.worker = Worker(self.config, window, commands, self.interface_factory)
 
     def run(self):
+        """Hand the shots of lyse's current multishot pass to the session."""
         if self.paths is None:
             raise ValueError(
                 "labscript_optimization's routine runs on the shots of a "
                 "multishot pass; add it to lyse's multishot routines."
             )
-        filepaths, observations = extract(analysed(self.paths), self.config)
+        filepaths, observations = extract(analyzed(self.paths), self.config)
         self.worker.hand_over(filepaths, observations, save_status)
 
     def close(self):
+        """Ask the session to stop, when lyse removes or restarts the routine."""
         self.worker.quit()

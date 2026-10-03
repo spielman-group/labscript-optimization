@@ -1,6 +1,6 @@
 """The optimization session's thread, and the queue everything reaches it by.
 
-The lyse routine hands over the shots lyse has analysed and returns within
+The lyse routine hands over the shots lyse has analyzed and returns within
 :data:`REPLY_TIMEOUT`, so the fitting and the runmanager traffic happen here,
 on a thread of the routine's own. The thread is purely reactive: it proposes
 only in response to a request or a window command.
@@ -30,7 +30,7 @@ class Worker:
         The view the thread updates after each request.
     command_queue : queue.Queue
         Where the window puts its commands, and the thread takes its requests.
-    interface_factory : callable
+    interface_factory : Callable
         What a configuration is turned into a runmanager interface by.
     """
 
@@ -82,6 +82,8 @@ class Worker:
         if not self.failures.empty():
             raise self.failures.get()
         if not reply.done() and not self.thread.is_alive():
+            # With the thread dead, nothing will complete these.
+            self.unsaved = [entry for entry in self.unsaved if entry[1].done()]
             raise RuntimeError(
                 "The optimization session's thread has stopped, so nothing will "
                 "answer; its traceback is above. Restart the routine."
@@ -105,6 +107,9 @@ class Worker:
                 if command == "reset":
                     # Opening is a reset too, so a failed one is retried by Reset.
                     session = None
+                    # An empty status is the window's Opening, until the new
+                    # session's own status replaces it.
+                    self.window.update({}, False, (), False, False)
                     interface = self.interface_factory(self.config)
                     interface.check_ready()
                     session = Session(self.config, interface)
@@ -143,6 +148,8 @@ class Worker:
                 elif not reply.done():
                     reply.set_exception(exc)
                 else:
+                    # The next hand-over raises this, and may never come.
+                    traceback.print_exc()
                     self.failures.put(exc)
             finally:
                 if session is not None:

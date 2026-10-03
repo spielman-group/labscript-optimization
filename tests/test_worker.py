@@ -104,7 +104,7 @@ def test_a_reply_later_than_the_deadline_is_saved_by_the_next_hand_over(monkeypa
     assert hand_over(worker) == [('shot-1.h5', 'main')]
 
 
-def test_a_failure_after_a_reply_stops_the_session_and_is_raised_next():
+def test_a_failure_after_a_reply_stops_the_session_and_is_raised_next(capsys):
     class FailsOnStatus(FakeInterface):
         def shot_status(self, shot_ids):
             raise RuntimeError('runmanager went away')
@@ -116,16 +116,20 @@ def test_a_failure_after_a_reply_stops_the_session_and_is_raised_next():
         hand_over(worker, 'shot-0')
         hand_over(worker)
     shown.wait_for(lambda status: status.get('stopped') == 'stopped by an error')
+    # Shown at once, in case no later pass comes to raise it.
+    assert 'runmanager went away' in capsys.readouterr().err
 
 
 def test_a_failed_opening_leaves_the_worker_up_and_reset_retries():
     attempts = []
+    shown_while_checking = []
 
     class AbsentAtFirst(FakeInterface):
         def check_ready(self):
             attempts.append(None)
             if len(attempts) == 1:
                 raise RuntimeError('runmanager did not answer')
+            shown_while_checking.append(shown[-1])
 
     worker, commands, shown = start(AbsentAtFirst)
     assert shown[-1] == {'stopped': 'runmanager did not answer'}
@@ -134,6 +138,8 @@ def test_a_failed_opening_leaves_the_worker_up_and_reset_retries():
     commands.put(('start', None, None))
     hand_over(worker)
     assert shown[-1]['submitted'] == 2
+    # The window read Opening while the reset waited for runmanager.
+    assert shown_while_checking == [{}]
 
 
 def test_a_session_thread_that_has_died_is_reported(monkeypatch):
@@ -147,6 +153,8 @@ def test_a_session_thread_that_has_died_is_reported(monkeypatch):
     worker.thread.join(timeout=10)
     with pytest.raises(RuntimeError, match='thread has stopped'):
         hand_over(worker)
+    # Nothing is left awaiting a reply that cannot come.
+    assert not worker.unsaved
 
 
 def test_a_session_that_reaches_a_limit_says_why_once(capsys):

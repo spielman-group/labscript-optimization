@@ -128,7 +128,7 @@ def test_no_trust_region_means_the_whole_space(space):
 
 
 def test_a_trust_region_near_an_edge_does_not_reach_past_it(space):
-    """The region is clipped to the space, not centred on the point.
+    """The region is clipped to the space, not centered on the point.
 
     Every learner that searches near a point goes through this, so a region
     that ran past the boundary would put proposals outside the bounds from
@@ -149,10 +149,10 @@ def test_bounds_near_nothing_are_the_whole_space(space):
 
 
 def test_a_uniform_draw_can_be_confined_to_a_trust_region(space, rng):
-    centre = np.array([4.8, 0.0])
-    draws = space.uniform(rng, 200, centre, space.absolute_trust_region(0.05))
+    center = np.array([4.8, 0.0])
+    draws = space.uniform(rng, 200, center, space.absolute_trust_region(0.05))
     assert space.contains(draws).all()
-    assert (np.abs(draws - centre) <= 0.5 + 1e-9).all()
+    assert (np.abs(draws - center) <= 0.5 + 1e-9).all()
 
 
 @pytest.mark.parametrize(

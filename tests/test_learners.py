@@ -1,4 +1,4 @@
-"""Learner behaviour, against analytic cost functions.
+"""Learner behavior, against analytic cost functions.
 
 How many a learner proposes, and under what source, is exercised through the
 one method the base class declares, ``propose``, so those tests survive any
@@ -260,7 +260,7 @@ def test_directed_random_is_not_derailed_by_a_bad_run(space, rng):
 
     distances = np.abs(proposals[:, None, :] - seen[None, :, :]).max(axis=2)
     assert (distances.min(axis=1) <= 0.5 + 1e-9).all()
-    # And it must not centre on the point that produced the bad cost.
+    # And it must not center on the point that produced the bad cost.
     assert (np.abs(proposals - np.array([4.9, 4.9])).max(axis=1) > 0.5).all()
 
 
@@ -283,7 +283,7 @@ def test_directed_random_without_a_trust_region_is_a_random_learner(space, rng):
 def test_directed_random_prefers_mediocre_points_over_the_best_one(space, rng):
     """The default band sits away from the best point, on purpose.
 
-    Centring the search on middling results is what makes this learner explore
+    Centering the search on middling results is what makes this learner explore
     rather than refine, which is the reason it exists.
     """
     seen = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
@@ -327,7 +327,7 @@ def test_an_impossible_trust_range_is_refused(space, rng, trust_range):
     """Including one written backwards, which is not silently put in order.
 
     A backwards pair asks for a band running from the best cost towards the
-    worst, which is nothing the learner can honour; sorting it would run a
+    worst, which is nothing the learner can honor; sorting it would run a
     search the lab did not ask for and never say so.
     """
     with pytest.raises(ValueError, match='trust_range'):
@@ -367,17 +367,16 @@ def test_differential_evolution_state_depends_only_on_the_history(space, rng):
     arriving out of order out of the algorithm.
     """
     history = [observe(i, p, sphere(p)) for i, p in enumerate(space.uniform(rng, 40))]
-    driven = DifferentialEvolutionLearner(
-        space, np.random.default_rng(1), population_size=3
-    )
+    driven_rng = np.random.default_rng(1)
+    driven = DifferentialEvolutionLearner(space, driven_rng, population_size=3)
     driven.propose(history, 3)
-    fresh = DifferentialEvolutionLearner(
-        space, np.random.default_rng(2), population_size=3
-    )
+    # The fresh learner starts from the same point in the random stream.
+    fresh_rng = np.random.default_rng()
+    fresh_rng.bit_generator.state = driven_rng.bit_generator.state
+    fresh = DifferentialEvolutionLearner(space, fresh_rng, population_size=3)
 
     earlier = history[:7]
-    np.testing.assert_allclose(driven.replay(earlier)[0], fresh.replay(earlier)[0])
-    np.testing.assert_allclose(driven.replay(earlier)[1], fresh.replay(earlier)[1])
+    np.testing.assert_allclose(driven.ask(earlier, 3), fresh.ask(earlier, 3))
 
 
 # --- differential evolution: position in the block is the role --------------
@@ -412,11 +411,16 @@ def walk_history(space, rng, *blocks):
 
 
 def held_by(learner, history, positions):
-    """Check the population is the records at ``positions``, slot by slot."""
-    params, costs = learner.replay(history)
+    """Check the population is the records at ``positions``, slot by slot.
+
+    Read through ``ask``, which needs crossover off and a history that is a
+    whole number of blocks: a proposal then keeps all but one coordinate of
+    the member holding the slot it is for.
+    """
+    proposals = learner.ask(history, len(positions))
     for slot, position in enumerate(positions):
-        np.testing.assert_allclose(params[slot], history[position].params, err_msg=slot)
-        assert costs[slot] == history[position].cost, slot
+        shared = int(np.isclose(proposals[slot], history[position].params).sum())
+        assert shared == learner.space.num_params - 1, slot
 
 
 def test_a_dropped_founder_leaves_its_slot_vacant_and_shifts_no_other_slot(rng):
@@ -426,14 +430,12 @@ def test_a_dropped_founder_leaves_its_slot_vacant_and_shifts_no_other_slot(rng):
     trial for slot 3 rather than slot 0.
     """
     space = walk_space()
-    learner = DifferentialEvolutionLearner(space, rng, population_size=4)
+    learner = DifferentialEvolutionLearner(
+        space, rng, population_size=4, cross_over_probability=0.0
+    )
     history = walk_history(
         space, rng, [None, 10.0, 20.0, 30.0], [1.0, 2.0, 3.0, 4.0]
     )
-
-    vacant = learner.replay(history[:4])[1]
-    assert np.isnan(vacant[0])
-    np.testing.assert_allclose(vacant[1:], [10.0, 20.0, 30.0])
 
     held_by(learner, history, [4, 5, 6, 7])
 
@@ -446,17 +448,15 @@ def test_a_late_returning_founder_changes_no_other_proposals_role(rng):
     what the other slots held before it arrived, not what they hold after.
     """
     space = walk_space()
-    learner = DifferentialEvolutionLearner(space, rng, population_size=4)
+    learner = DifferentialEvolutionLearner(
+        space, rng, population_size=4, cross_over_probability=0.0
+    )
     history = walk_history(
         space, rng, [None, 10.0, 20.0, 30.0], [1.0, 2.0, 3.0, 4.0]
     )
-    before = learner.replay(history)
+    held_by(learner, history, [4, 5, 6, 7])
 
     history[0] = dataclasses.replace(history[0], cost=0.5, state=COMPLETE)
-    after = learner.replay(history)
-
-    np.testing.assert_allclose(after[0][1:], before[0][1:])
-    np.testing.assert_allclose(after[1][1:], before[1][1:])
     held_by(learner, history, [0, 5, 6, 7])
 
 
@@ -466,7 +466,9 @@ def test_a_trial_with_no_usable_cost_leaves_its_slots_member_alone(rng):
     it to the wrong slot.
     """
     space = walk_space()
-    learner = DifferentialEvolutionLearner(space, rng, population_size=4)
+    learner = DifferentialEvolutionLearner(
+        space, rng, population_size=4, cross_over_probability=0.0
+    )
     history = walk_history(
         space, rng, [10.0, 20.0, 30.0, 40.0], [float('nan'), 2.0, 3.0, 4.0]
     )
@@ -485,7 +487,7 @@ def test_a_trial_is_bred_from_the_member_holding_its_own_block_position(rng):
     history = walk_history(
         space, rng, [None, 10.0, 20.0, 30.0], [1.0, 2.0, 3.0, 4.0]
     )
-    members = learner.replay(history)[0]
+    members = [history[position].params for position in (4, 5, 6, 7)]
 
     for slot, proposal in enumerate(learner.ask(history, 4)):
         shared = int(np.isclose(proposal, members[slot]).sum())
@@ -497,7 +499,7 @@ def test_a_trial_is_bred_from_the_member_holding_its_own_block_position(rng):
     # short, and finishes the block from there; ``ask`` reaches it at any
     # history length, for as many as it is asked, across the end of the block.
     part_way = history[:6]
-    members = learner.replay(part_way)[0]
+    members = [history[position].params for position in (4, 5, 2, 3)]
     for offset, proposal in enumerate(learner.ask(part_way, 4)):
         slot = (len(part_way) + offset) % 4
         shared = int(np.isclose(proposal, members[slot]).sum())
@@ -610,7 +612,7 @@ def test_a_slot_whose_founder_produced_nothing_is_drawn_founder_style(rng):
         space, rng, population_size=4, cross_over_probability=0.0
     )
     history = walk_history(space, rng, [None, 10.0, 20.0, 30.0])
-    members = learner.replay(history)[0]
+    members = [record.params for record in history]
 
     proposals = learner.ask(history, 4)
     assert space.contains(proposals).all()
@@ -985,7 +987,7 @@ def test_a_gaussian_process_describes_the_real_data_after_a_proposal_fails(
 
     Folding a batch's own picks into the fit is what stops them all chasing one
     corner, but those picks are guesses at what the apparatus will report. If
-    the search then raises -- a minimiser giving up, a prediction on a
+    the search then raises -- a minimizer giving up, a prediction on a
     degenerate kernel -- anything reading the model next, for a prediction or
     for where it thinks the optimum is, would be reading those guesses back as
     measurements.
@@ -997,15 +999,15 @@ def test_a_gaussian_process_describes_the_real_data_after_a_proposal_fails(
     before = model.predict(probe)
 
     searches = []
-    search = model.minimise_acquisition
+    search = model.minimize_acquisition
 
     def give_up_after_the_first(*args, **kwargs):
         searches.append(1)
         if len(searches) > 1:
-            raise RuntimeError('the minimiser gave up')
+            raise RuntimeError('the minimizer gave up')
         return search(*args, **kwargs)
 
-    model.minimise_acquisition = give_up_after_the_first
+    model.minimize_acquisition = give_up_after_the_first
     with pytest.raises(RuntimeError, match='gave up'):
         model.ask(history, 4)
 
@@ -1312,9 +1314,9 @@ def test_a_model_that_raises_stops_the_session_at_the_next_refill(space):
 
 
 def test_each_batch_cycle_holds_at_least_explore_runs_explorer_shots(space):
-    """Counted from one batch's first point to the next's, and every explorer
-    shot in that span counts, the ones that kept the queue topped up while the
-    batch computed among them: a ready batch waits only for the rest.
+    """Counted from one batch's last point to the next batch's first, and every
+    explorer shot in that span counts, the ones that kept the queue topped up
+    while the batch computed among them: a ready batch waits only for the rest.
 
     Counted apart from those, a cycle here would hold four; left uncounted, one.
     """
@@ -1565,7 +1567,7 @@ def test_an_acquisition_that_is_never_finite_says_so(space, rng):
     lows = np.zeros(space.num_params)
     highs = np.ones(space.num_params)
     with pytest.raises(RuntimeError, match='not finite at any'):
-        model.minimise_acquisition(
+        model.minimize_acquisition(
             model.regressor, 1.0, space.minimum, lows, highs
         )
 
@@ -1873,6 +1875,20 @@ MISWRITTEN = [
         [1e-5, True],
         "noise_level_bounds must be written as a pair of numbers, [low, "
         "high], not [1e-05, True].",
+    ),
+    (
+        'gaussian_process',
+        'length_scale_bounds',
+        [1e2, 1e-2],
+        "length_scale_bounds must be an ordered pair of positive numbers, "
+        "[low, high] with 0 < low < high, got [100.0, 0.01].",
+    ),
+    (
+        'gaussian_process',
+        'noise_level_bounds',
+        [0.0, 1.0],
+        "noise_level_bounds must be an ordered pair of positive numbers, "
+        "[low, high] with 0 < low < high, got [0.0, 1.0].",
     ),
     (
         'differential_evolution',

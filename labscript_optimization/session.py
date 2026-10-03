@@ -3,7 +3,7 @@
 There is no count of shots in flight. How many of this session's shots are
 still coming is runmanager's answer, asked for afresh each time it matters,
 because a number kept here can only be decremented by a shot coming back --
-and a shot that never comes back would hold its place for ever.
+and a shot that never comes back would hold its place forever.
 
 History holds every proposal the session has made, in the order it made them,
 each carrying what proposed it and what became of it: a cost arriving out of
@@ -357,9 +357,9 @@ class Session:
         returns it for the shot whose cost it takes.
         """
         best = self.best
-        # The routine flips a maximised quantity once on the way in, so that
-        # everything here minimises. This is the mirror of that flip, and the
-        # only place it is undone: minimising is the package's own business
+        # The routine flips a maximized quantity once on the way in, so that
+        # everything here minimizes. This is the mirror of that flip, and the
+        # only place it is undone: minimizing is the package's own business
         # and has no place in a column a physicist reads.
         best_cost = None if best is None else best.cost
         if best_cost is not None and self.config.maximize:

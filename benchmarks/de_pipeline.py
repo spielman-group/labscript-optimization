@@ -3,7 +3,7 @@
 Each run is a real :class:`~labscript_optimization.session.Session`, built by
 the shipped configuration loader from a real configuration file, with a fake
 runmanager standing in for the queue. The generation barrier in the learner's
-``propose``, the position walk in ``replay`` and the history's pending entries
+``propose``, the position walk in ``_replay`` and the history's pending entries
 are therefore exercised as they are in a lab, rather than by a reimplementation
 written to match them.
 
@@ -31,7 +31,7 @@ generation still in the queue, and charges the generational arm for shots it
 was never allowed to use. See ``README.md`` beside this file.
 
 This is a benchmark, not a test: it measures quality, where the suite in
-``tests/`` proves behaviour. Its standing value is regression checking of what
+``tests/`` proves behavior. Its standing value is regression checking of what
 ships. The one part of it the suite does run is the ``smoke`` sweep, which
 proves the harness still drives the current learner.
 

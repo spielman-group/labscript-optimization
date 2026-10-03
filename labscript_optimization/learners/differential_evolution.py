@@ -38,7 +38,7 @@ from ..space import ParameterSpace
 from .base import ParameterSpaceLearner
 
 #: The mutation strategies, and how many other population members each one
-#: draws on. The counts are read by :meth:`DifferentialEvolutionLearner.mutant`
+#: draws on. The counts are read by ``DifferentialEvolutionLearner._mutant``
 #: and by the population guard, so neither can drift from the other.
 STRATEGIES = {"best1": 2, "best2": 4, "rand1": 3, "rand2": 5}
 
@@ -57,10 +57,10 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
             eight members is where one stops converging prematurely, and a
             budget over a thousand shots is worth sixteen. Both numbers are
             read off a sweep over four analytic test functions at two to eight
-            parameters; ``benchmarks/README.md``, under "What the sweep
-            found", has the tables and the caveats. Rules of thumb scaling it
-            with the parameter count are for choosing a number, not the shape
-            of the setting.
+            parameters; `benchmarks/README.md <https://github.com/spielman-group/labscript-optimization/blob/Development/benchmarks/README.md>`__,
+            under "What the sweep found", has the tables and the caveats.
+            Rules of thumb scaling it with the parameter count are for
+            choosing a number, not the shape of the setting.
         evolution_strategy: Which mutation to use, one of :data:`STRATEGIES`.
         mutation_scale: ``(low, high)`` bounds on the differential weight,
             which is drawn once per ``ask`` call and shared by every trial it
@@ -133,7 +133,7 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         """
         return self.population_size
 
-    def replay(self, history: Sequence[Observation]):
+    def _replay(self, history: Sequence[Observation]):
         """The population as the history so far leaves it.
 
         Returns the members' parameters and costs, one row and one cost per
@@ -155,16 +155,17 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
                 costs[slot] = record.cost
         return params, costs
 
-    def sample_new_member(self, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
+    def _sample_new_member(self, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
         """Draw a point for a slot that has nothing to evolve."""
         if np.isnan(costs).all():
             return self.space.uniform(self.rng, 1)[0]
         best = params[int(np.nanargmin(costs))]
         return self.space.uniform(self.rng, 1, best, self.trust_region)[0]
 
-    def mutant(
+    def _mutant(
         self, slot: int, params: np.ndarray, costs: np.ndarray, scale: float
     ) -> np.ndarray:
+        """The mutant for ``slot``, which the strategy builds from other members."""
         occupied = np.flatnonzero(~np.isnan(costs))
         best = params[int(np.nanargmin(costs))]
         others = occupied[occupied != slot]
@@ -181,17 +182,18 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
             return best + scale * (drawn[0] + drawn[1] - drawn[2] - drawn[3])
         return drawn[0] + scale * (drawn[1] + drawn[2] - drawn[3] - drawn[4])
 
-    def trial(
+    def _trial(
         self, slot: int, params: np.ndarray, costs: np.ndarray, scale: float
     ) -> np.ndarray:
+        """Breed a point for ``slot``: its mutant crossed over with its member."""
         draws = STRATEGIES[self.evolution_strategy]
         if int((~np.isnan(costs)).sum()) < draws + 1:
             # Too few slots hold a member for the mutation to draw distinct
             # ones from around this slot, so there is no population to breed
             # from and the point is drawn the way a founder is.
-            return self.sample_new_member(params, costs)
+            return self._sample_new_member(params, costs)
 
-        mutant = self.mutant(slot, params, costs, scale)
+        mutant = self._mutant(slot, params, costs, scale)
 
         crossovers = self.rng.random(self.space.num_params) < self.cross_over_probability
         # At least one coordinate must come from the mutant, or the trial would
@@ -211,10 +213,11 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         """The next ``k`` proposals, each for the slot its position names.
 
         The algorithm without the barrier, as a ``(k, num_params)`` array: what
-        :meth:`propose` sends a generation out with, and what a caller holding
-        no barrier asks for at any history length and any ``k``.
+        :meth:`~labscript_optimization.learners.base.Learner.propose` sends a
+        generation out with, and what a caller holding no barrier asks for at
+        any history length and any ``k``.
         """
-        params, costs = self.replay(history)
+        params, costs = self._replay(history)
         # One differential weight per call: per generation when selected, as
         # textbook differential evolution and scipy draw it, and per trial or
         # two as the Gaussian process's explorer, the variant known as dither.
@@ -228,7 +231,7 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
                 # founding generation, where every slot is empty, and later on
                 # a slot whose founder produced no cost, which stays empty
                 # until one of its trials lands.
-                proposals[i] = self.sample_new_member(params, costs)
+                proposals[i] = self._sample_new_member(params, costs)
             else:
-                proposals[i] = self.trial(slot, params, costs, scale)
+                proposals[i] = self._trial(slot, params, costs, scale)
         return proposals

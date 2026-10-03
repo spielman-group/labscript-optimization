@@ -99,12 +99,12 @@ def test_the_shot_id_says_which_proposal_the_shot_answers(config, shot):
     assert shot_id == 'row-3'
 
 
-def test_a_maximised_quantity_has_its_sign_flipped(config, shot):
+def test_a_maximized_quantity_has_its_sign_flipped(config, shot):
     _, [(_, cost, _, bad)] = extract(frame([shot(cost=7.0)]), config)
     assert cost == -7.0 and not bad
 
 
-def test_a_minimised_quantity_is_passed_through(shot):
+def test_a_minimized_quantity_is_passed_through(shot):
     config = config_module.loads(CONFIG.replace('maximize = true', 'maximize = false'))
     _, [(_, cost, _, _)] = extract(frame([shot(cost=7.0)]), config)
     assert cost == 7.0
@@ -176,8 +176,8 @@ def test_the_shots_lyse_names_are_asked_of_its_dataframe_in_one_request(
 
     monkeypatch.setattr(routine_module.lyse, 'data', data)
     paths = [row['filepath'] for row in rows]
-    assert routine_module.analysed([]) == []
-    assert len(routine_module.analysed(paths)) == 2
+    assert routine_module.analyzed([]) == []
+    assert len(routine_module.analyzed(paths)) == 2
     assert asked == [{'filepath': paths}]
 
 
@@ -197,7 +197,7 @@ def test_lyse_s_unsorted_columns_are_read_without_a_warning(
     monkeypatch.setattr(routine_module.lyse, 'data', lambda where: unsorted)
     with warnings.catch_warnings():
         warnings.simplefilter('error', pd.errors.PerformanceWarning)
-        _, observations = extract(routine_module.analysed([row['filepath']]), config)
+        _, observations = extract(routine_module.analyzed([row['filepath']]), config)
     assert [o[0] for o in observations] == ['row-1']
 
 
@@ -252,7 +252,7 @@ def results(monkeypatch):
     monkeypatch.setattr(worker, '_updated_data', {})
 
     def read(row):
-        # Spelt out rather than read back from the module that wrote it: the
+        # Spelled out rather than read back from the module that wrote it: the
         # group name is the promise, df[('labscript_optimization', ...)].
         saved = worker._updated_data.get(row['filepath'], {})
         return {
@@ -332,11 +332,11 @@ def lyse_column(shot, results):
     ``FileBox.update_row`` sets each value with ``dataframe.at``. So the first
     shot's values make the columns and fix their dtypes, and every later value
     has to go into them. That assignment is the line the lab's traceback ends
-    on. It is spelt out here rather than called because ``update_row`` is
+    on. It is spelled out here rather than called because ``update_row`` is
     welded to the Qt model, but everything either side of it is lyse's own
     code.
 
-    Its recovery is spelt out with it: when the assignment raises
+    Its recovery is spelled out with it: when the assignment raises
     ``ValueError``, which is what a list raises, lyse makes the column if it is
     missing and widens it to ``object`` if not, and retries, so leaving it out
     would fail a case lyse survives. It does not catch ``TypeError``, which is

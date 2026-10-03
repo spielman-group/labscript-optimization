@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 256 256" role="img" aria-labelledby="title description">
+  <title id="title">labscript optimizer</title>
+  <desc id="description">A blue O with a descending red search path ending at a green optimum, inside a rounded square.</desc>
+
+  <rect x="4" y="4" width="248" height="248" rx="43" fill="#fafafa" stroke="#050505" stroke-width="8"/>
+
+  <path fill="#004bd7" fill-rule="evenodd" d="
+    M 128,27
+    C 186,27 230,72 230,128
+    C 230,184 186,229 128,229
+    C 70,229 26,184 26,128
+    C 26,72 70,27 128,27 Z
+    M 128,36
+    C 94,36 68,77 68,128
+    C 68,179 94,219 128,219
+    C 162,219 188,179 188,128
+    C 188,77 162,36 128,36 Z"/>
+
+  <path d="M 86,82 103,118 121,148 142,166 168,170"
+        fill="none" stroke="#dc0644" stroke-width="5.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#dc0644">
+    <circle cx="86" cy="82" r="7"/>
+    <circle cx="103" cy="118" r="7"/>
+    <circle cx="121" cy="148" r="7"/>
+    <circle cx="142" cy="166" r="7"/>
+  </g>
+  <circle cx="168" cy="170" r="8" fill="#008c17"/>
+</svg>

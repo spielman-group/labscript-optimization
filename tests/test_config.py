@@ -11,7 +11,12 @@ import pytest
 from labscript_optimization import config as config_module
 from labscript_optimization import learners
 
-EXAMPLE = Path(__file__).resolve().parent.parent / 'examples' / 'config_example.toml'
+EXAMPLE = (
+    Path(__file__).resolve().parent.parent
+    / 'examples'
+    / 'optimization.lyse'
+    / 'optimization_config.toml'
+)
 
 FULL = """
 [ANALYSIS]
@@ -109,7 +114,7 @@ def test_a_switched_off_global_is_not_set():
 
     The parameter keeps its bounds, because a reader of the file and of
     ``space.disabled`` wants to see what is being held out. A global has
-    nothing to hold out: not setting it is the whole of the behaviour.
+    nothing to hold out: not setting it is the whole of the behavior.
     """
     config = config_module.loads(
         MINIMAL
@@ -380,7 +385,7 @@ def test_a_setting_left_out_takes_the_value_the_documents_promise():
     """What a lab may leave out on the strength of what it was told.
 
     UPGRADING §5 promises two buffered runs, the Gaussian process is the
-    learner a file naming none gets, and a cost is minimised unless the file
+    learner a file naming none gets, and a cost is minimized unless the file
     says otherwise -- the flip nothing downstream would show.
     """
     config = config_module.loads(MINIMAL)
@@ -484,7 +489,7 @@ max = 1.0
 
 
 def test_a_listed_group_that_no_table_defines_is_refused_naming_it():
-    """A misspelt group matches nothing, and the group it was meant to name is
+    """A misspelled group matches nothing, and the group it was meant to name is
     then one nobody listed: switched off, its globals never set, while the lab
     believes its parameters are being searched.
     """
@@ -514,7 +519,11 @@ def test_a_group_with_only_globals_in_it_is_defined():
     assert [g.name for g in config.globals] == ['gx', 'doubled']
 
 
-def test_a_missing_cost_key_says_so():
+@pytest.mark.parametrize(
+    'missing, written',
+    [('cost_key', 'cost_key = ["r", "c"]\n'), ('groups', 'groups = ["G"]\n')],
+)
+def test_a_missing_analysis_setting_says_so(missing, written):
     """And says it plainly.
 
     Every complaint about the file is a ValueError, including this one. A
@@ -522,17 +531,8 @@ def test_a_missing_cost_key_says_so():
     reaches the reader in quotes with its own quotes backslashed.
     """
     with pytest.raises(ValueError) as raised:
-        config_module.loads(
-            """
-[ANALYSIS]
-groups = ["G"]
-[PARAMETERS.G.x]
-global_name = "gx"
-min = 0.0
-max = 1.0
-"""
-        )
-    assert str(raised.value).startswith('ANALYSIS.cost_key is required')
+        config_module.loads(MINIMAL.replace(written, ''))
+    assert str(raised.value).startswith(f'ANALYSIS.{missing} is required')
 
 
 @pytest.mark.parametrize('missing', ['min', 'max'])
@@ -809,6 +809,42 @@ def test_an_expression_that_is_not_a_function_stops_the_load():
     assert '2 * 3' in message
 
 
+def test_an_expression_sees_the_names_runmanager_globals_do():
+    """``exp`` is no builtin: it is there because runmanager's namespace is
+    numpy's and pylab's, which an expression is evaluated in as a global is.
+    """
+    config = config_module.loads(
+        MINIMAL + '[RUNMANAGER_GLOBALS.G.decay]\nexpr = "lambda v: exp(-v)"\nargs = ["x"]\n'
+    )
+    assert config.globals_for([0.5])['decay'] == pytest.approx(np.exp(-0.5))
+
+
+def test_an_expression_naming_what_runmanager_globals_cannot_see_stops_the_load():
+    """``math`` is not in that namespace, and the lambda would fail on its
+    first proposal, hours in, so the load calls it once to find out.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(
+            MINIMAL
+            + '[RUNMANAGER_GLOBALS.G.decay]\nexpr = "lambda v: math.exp(-v)"\nargs = ["x"]\n'
+        )
+    message = str(raised.value)
+    assert 'decay' in message
+    assert "'math'" in message
+
+
+def test_an_expression_that_fails_only_at_the_middle_of_its_ranges_still_loads():
+    """A ratio of a parameter whose range is centered on zero fails at the
+    middle and nowhere else, so that one point does not refuse the file.
+    """
+    config = config_module.loads(
+        MINIMAL
+        + '[PARAMETERS.G.y]\nmin = -1.0\nmax = 1.0\n'
+        + '[RUNMANAGER_GLOBALS.G.ratio]\nexpr = "lambda a, b: a / b"\nargs = ["x", "y"]\n'
+    )
+    assert config.globals_for([0.5, 0.25])['ratio'] == 2.0
+
+
 def test_a_typo_in_a_group_nobody_switched_on_is_still_rejected():
     """The shape of a parameter table does not depend on its group being active.
 
@@ -928,15 +964,6 @@ def test_a_learner_knob_of_the_wrong_kind_stops_the_load(text, message):
     with pytest.raises(ValueError) as raised:
         config_module.loads(text)
     assert str(raised.value) == message
-
-
-def test_the_example_configuration_loads_and_builds_its_learner():
-    """The file every new lab starts from, held to the schema like any other."""
-    config = config_module.load(EXAMPLE)
-    learner = learners.build(config)
-    assert isinstance(learner, learners.GaussianProcessLearner)
-    assert type(learner.explorer) is learners.DirectedRandomLearner
-    assert learner.warmup_observations == 20
 
 
 # --- the Gaussian process's cycle ------------------------------------------

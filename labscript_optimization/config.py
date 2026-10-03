@@ -8,43 +8,53 @@
 
 ``[RUNMANAGER_GLOBALS.<group>.<name>]``
     A runmanager global computed from one or more parameters, with ``args``
-    naming them and ``expr`` a lambda taking them in that order. Used when
-    several parameters feed one global.
+    naming them, ``expr`` a lambda taking them in that order, and optional
+    ``enable`` (default true). Used when several parameters feed one global.
 
-``[ANALYSIS] groups`` selects which groups take part. A parameter in a group
-that is not listed is left out entirely; one with ``enable = false`` in a group
-that is listed is carried but not searched, and gets no mapping, so its
-runmanager global keeps whatever value it already holds. A name listed there
-that no table defines is refused, because it is a misspelling of a group that
-would otherwise be left out without a word.
+``[ANALYSIS]``
+    ``cost_key`` is ``[routine_name, result_name]``, the lyse dataframe column
+    holding the cost; optional ``maximize`` (default false) makes larger costs
+    better; ``groups`` selects which groups take part.
+
+A parameter in a group that is not listed in ``groups`` is left out entirely;
+one with ``enable = false`` in a group that is listed is carried but not
+searched, and gets no mapping, so its runmanager global keeps whatever value it
+already holds. A name listed there that no table defines is refused, because it
+is a misspelling of a group that would otherwise be left out without a word.
 
 Every key must be one this package knows: a spelling it does not is refused
 rather than accepted and ignored, so a stale file has to be cut down to the
 keys named here before it will load.
 
-``[GENERAL]`` carries the session's own settings -- which learner runs, how
-deep the queue is, what stops the run -- and a learner's knobs are written in
-``[LEARNER.<name>]``, the table of the learner that takes them. A named table
-is held to that learner's constructor, so every key in it is a knob that
-learner takes and every value is of the kind that knob takes, and a knob found
-in ``[GENERAL]`` is refused with the tables it belongs in named. The Gaussian
-process runs an explorer beside itself, so two learners run whenever it is the
-one selected, and a knob both take is written twice, once in each table, and
-each gets its own value.
+``[GENERAL]`` carries the session's own settings -- ``learner``, which runs;
+``num_buffered_runs``, how deep the queue is; ``max_num_runs`` and
+``max_num_runs_without_better_params``, what stops the run; and ``seed`` -- and
+a learner's knobs are written in ``[LEARNER.<name>]``, the table of the learner
+that takes them. A named table is held to that learner's constructor: every key
+in it must be a knob that learner takes, and every value must be of the kind
+that knob takes, and a knob found in ``[GENERAL]`` is refused with the tables
+it belongs in named. The Gaussian process runs an explorer beside itself, so
+two learners run whenever it is the one selected, and a knob both take is
+written twice, once in each table, and each gets its own value.
 
-Known is not the same as acted on: a table written for a learner no session
-builds goes unread, which is what lets one file carry the settings for several
-learners and switch between them.
+The keys of every named table are checked, but its values only when its
+learner is built: a table written for a learner no session builds has its
+keys checked and its values not, which is what lets one file carry the
+settings for several learners and switch between them.
 
 A parameter name and a global name are each unique across the active groups:
 both are looked up by name when a proposal is turned into runmanager globals,
 so a repeat would quietly give one value to two places.
+
+The Configuration page of the documentation describes every key.
 """
 
 import inspect
 import tomllib
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Sequence
+
+import numpy as np
 
 from . import knobs
 from .space import Parameter, ParameterSpace
@@ -156,8 +166,9 @@ class GlobalMapping:
 
     Args:
         name: The runmanager global to set.
-        expr: Source of a lambda taking ``args`` in order, or ``None`` to pass
-            the single argument through unchanged.
+        expr: Source of a lambda taking ``args`` in order, evaluated in the
+            namespace runmanager evaluates globals in, or ``None`` to pass the
+            single argument through unchanged.
         args: Names of the parameters feeding this global.
     """
 
@@ -188,10 +199,16 @@ class GlobalMapping:
                     f"name one parameter."
                 )
             return
+        # The namespace runmanager evaluates its globals in, built the same
+        # way, so an expr sees the names a global does. Imported here, so a
+        # file without an expr loads neither matplotlib nor runmanager.
+        namespace = {}
+        exec("from pylab import *", namespace, namespace)
+        exec("from runmanager.functions import *", namespace, namespace)
         try:
             # The expression comes from the lab's own configuration file,
             # which is as trusted as the analysis routines themselves.
-            function = eval(self.expr)  # noqa: S307
+            function = eval(self.expr, namespace)  # noqa: S307
         except Exception as error:
             raise ValueError(
                 f"the expr for global {self.name!r} cannot be evaluated: "
@@ -224,25 +241,34 @@ class GlobalMapping:
         arguments = [values[a] for a in self.args]
         if self.function is None:
             return arguments[0]
-        return self.function(*arguments)
+        result = self.function(*arguments)
+        return result.item() if isinstance(result, np.generic) else result
 
 
 @dataclass
 class Config:
     """Everything a session needs to run."""
 
+    #: The searched parameters and their bounds.
     space: ParameterSpace
+    #: How each runmanager global the session sets is computed from the
+    #: parameters.
     globals: tuple[GlobalMapping, ...]
+    #: ``(routine_name, result_name)``, the lyse dataframe column holding the
+    #: cost.
     cost_key: tuple[str, str]
+    #: Whether larger costs are better.
     maximize: bool = False
+    #: The learner that runs, a key of
+    #: :data:`~labscript_optimization.learners.LEARNERS`.
     learner: str = "gaussian_process"
     #: One table of knobs per learner, by learner name. A knob is written in
     #: the table of the learner that takes it and reaches no other, which is
     #: what lets the Gaussian process and its explorer be given different
     #: values of the same knob.
     learner_options: dict[str, dict[str, Any]] = field(default_factory=dict)
-    #: How many of this session's shots to keep in runmanager's queue: the
-    #: hint every learner is handed. One of the shots in flight is always the
+    #: How many of this session's shots to keep in runmanager's queue. This is
+    #: the hint every learner is handed. One of the shots in flight is always the
     #: one BLACS is running, so at two one is waiting whenever BLACS asks for
     #: the next. Every learner declaring no generation keeps exactly this many
     #: in flight, and so would propose nothing at zero. A learner declaring a
@@ -250,13 +276,16 @@ class Config:
     #: this beside one is refused rather than left with two settings for the
     #: same number.
     num_buffered_runs: int = 2
+    #: The run budget, or ``None`` for no limit.
     max_num_runs: int | None = None
     #: Stop after this many completed shots without a better cost. Every
     #: completed shot counts, including one whose cost was not usable: it is
     #: still a shot spent, and counting only the usable ones would let a
-    #: session whose detector has died run for ever on the limit meant to
+    #: session whose detector has died run forever on the limit meant to
     #: stop it.
     max_num_runs_without_better_params: int | None = None
+    #: Seed of the random number generator the learners draw from, or ``None``
+    #: to seed it from system entropy.
     seed: int | None = None
 
     def __post_init__(self) -> None:
@@ -314,11 +343,12 @@ class Config:
         return routine, f"u_{result}"
 
     def globals_for(self, params: Sequence[float]) -> dict[str, Any]:
-        """The runmanager globals that realise one parameter vector.
+        """The runmanager globals that realize one parameter vector.
 
-        Each parameter reaches its mappings as a Python ``float``, so a
-        global's value -- the parameter itself, or what an ``expr`` builds
-        from several -- holds no numpy scalar however the vector arrived.
+        Each parameter reaches its mappings as a Python ``float``, and a numpy
+        scalar an ``expr`` returns is converted, so a global's value -- the
+        parameter itself, or what an ``expr`` builds from several -- holds no
+        numpy scalar however the vector arrived.
         runmanager writes a submitted value into its global's expression as
         the value's ``repr``, and a numpy scalar's repr names numpy:
         ``np.float64(0.25)`` would be what the operator reads in runmanager
@@ -427,12 +457,12 @@ def reject_misplaced_knobs(general: dict) -> None:
     # Lazily, so importing this module alone stays lightweight.
     from .learners import knobs_by_learner
 
-    knobs = knobs_by_learner()
-    misplaced = [key for key in sorted(general) if key in knobs]
+    taken_by = knobs_by_learner()
+    misplaced = [key for key in sorted(general) if key in taken_by]
     if misplaced:
         written = []
         for key in misplaced:
-            tables = [f"[LEARNER.{name}]" for name in knobs[key]]
+            tables = [f"[LEARNER.{name}]" for name in taken_by[key]]
             last = tables.pop()
             joined = f"{', '.join(tables)} or {last}" if tables else last
             written.append(f"{key!r} in {joined}")
@@ -455,11 +485,13 @@ def check_keys(raw: dict) -> None:
     knob in the wrong place, not a spelling nothing here knows.
 
     Parameter and global tables are checked whether or not their group is
-    active: a typo left to load in a switched-off group waits for the day
-    somebody switches the group on. Their depth is checked before their keys
-    are, because a table written one level short puts settings where entries
-    belong and every check after that reads the wrong thing; see
-    :func:`require_tables`.
+    listed in ``groups``, so a typo in a switched-off group does not wait for
+    the day somebody lists it. In a group that is not listed, keys, required
+    keys and types are checked, and nothing more: bounds, ``args`` and ``expr``
+    are checked only once the group is listed, in :func:`from_dict`. Their
+    depth is checked before their keys are, because a table written one level
+    short puts settings where entries belong and every check after that reads
+    the wrong thing; see :func:`require_tables`.
 
     A table this package has renamed is refused ahead of both, naming its
     replacement, because the spelling check would call it a typo and leave the
@@ -531,12 +563,48 @@ def check_keys(raw: dict) -> None:
 
 
 def loads(text: str) -> Config:
-    """Parse a configuration from TOML text."""
+    """Parse a configuration from TOML text.
+
+    Parameters
+    ----------
+    text : str
+        The contents of a configuration file.
+
+    Returns
+    -------
+    Config
+        The configuration, checked as :func:`from_dict` checks it.
+
+    Raises
+    ------
+    ValueError
+        If ``text`` is not valid TOML (:class:`tomllib.TOMLDecodeError`), or
+        names a table or setting that is unknown, missing, of the wrong type,
+        or refused by the learner it configures. The message names it.
+    """
     return from_dict(tomllib.loads(text))
 
 
 def load(path) -> Config:
-    """Read a configuration from a TOML file."""
+    """Read a configuration from a TOML file.
+
+    Parameters
+    ----------
+    path : str or os.PathLike
+        The file to read.
+
+    Returns
+    -------
+    Config
+        The configuration, checked as :func:`from_dict` checks it.
+
+    Raises
+    ------
+    OSError
+        If the file cannot be opened.
+    ValueError
+        For a file that is not valid TOML or is refused, as :func:`loads`.
+    """
     with open(path, "rb") as f:
         return from_dict(tomllib.load(f))
 
@@ -557,7 +625,12 @@ def from_dict(raw: dict) -> Config:
     analysis = raw.get("ANALYSIS", {})
     general = raw.get("GENERAL", {})
 
-    active_groups = require_type(analysis.get("groups", []), list, "ANALYSIS.groups")
+    if "groups" not in analysis:
+        raise ValueError(
+            "ANALYSIS.groups is required: the list of groups whose parameters "
+            "and globals take part. A group not listed is switched off."
+        )
+    active_groups = require_type(analysis["groups"], list, "ANALYSIS.groups")
     # A group is defined by the tables written under it, so a name listed with
     # no table is a misspelling rather than a group with nothing in it -- and
     # left to load, it takes part as nothing, while the group it was meant to
@@ -641,6 +714,22 @@ def from_dict(raw: dict) -> Config:
                 f"Give it a global_name, or name it in the args of an entry "
                 f"under RUNMANAGER_GLOBALS."
             )
+
+    # A name an expr cannot see fails only when its lambda is called, so call
+    # each mapping once with its parameters at the middle of their ranges.
+    middle = {p.name: (p.minimum + p.maximum) / 2 for p in parameters}
+    for mapping in mappings:
+        try:
+            mapping.evaluate(middle)
+        except NameError as error:
+            raise ValueError(
+                f"the expr for global {mapping.name!r} uses {error.name!r}, "
+                f"which runmanager's globals cannot see: {mapping.expr!r}"
+            ) from error
+        except Exception:
+            # Failing at this one point says nothing about the rest of the
+            # range, so any other error is left for the first submission.
+            pass
 
     if "cost_key" not in analysis:
         raise ValueError("ANALYSIS.cost_key is required: [routine_name, result_name]")

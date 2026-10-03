@@ -53,3 +53,17 @@ def test_window_shows_progress_and_controls(qt_application):
     qt_application.processEvents()
     assert window.ui.phase_value.text() == "Ended: reached max_num_runs (2)"
     assert not window.ui.start_button.isEnabled()
+
+    # An empty status is a session opening: no control works until it has.
+    window.update({}, False, (), True, False)
+    qt_application.processEvents()
+    assert window.ui.phase_value.text() == "Opening"
+    buttons = window.ui.start_button, window.ui.pause_button, window.ui.reset_button
+    assert not any(button.isEnabled() for button in buttons)
+
+    # A source no learner in the package names is plotted, not refused.
+    shots = (("explore", 2.0), ("other", 1.0))
+    window.update({"paused": False}, False, shots, False, False)
+    qt_application.processEvents()
+    plotted = [item.getData()[0] for item in window.plot.listDataItems()]
+    assert [2] in [list(x) for x in plotted if x is not None]

@@ -17,9 +17,9 @@ A lab adds a routine folder, named with a `.lyse` suffix, to lyse's multishot
 routines, holding its configuration and a `lyse_routine.py`:
 
 ```
-optimization_multishot.lyse/
+optimization.lyse/
     lyse_routine.py
-    mloop_config.toml
+    optimization_config.toml
 ```
 
 ```python
@@ -27,7 +27,7 @@ from labscript_optimization.routine import OptimizationRoutine
 
 
 class Optimization(OptimizationRoutine):
-    config_path = "mloop_config.toml"
+    config_path = "optimization_config.toml"
 ```
 
 - `OptimizationRoutine` subclasses `lyse.Routine`. lyse counts only classes
@@ -68,7 +68,7 @@ class Optimization(OptimizationRoutine):
 | --- | --- |
 | Reading the configuration, building the window, `close()`, button slots | GUI main thread |
 | Greeting runmanager, recording costs, reconciling, proposing, submitting | Session thread |
-| Reading the analysed shots and saving their status columns | lyse's analysis thread, in `run()` |
+| Reading the analyzed shots and saving their status columns | lyse's analysis thread, in `run()` |
 | A Gaussian-process batch | The learner's background thread |
 
 The session is touched by the session thread alone. It handles each request,
@@ -102,7 +102,7 @@ lyse sets `self.path` and `self.paths` before each `run()`.
 1. Raise if `self.paths` is `None`: the routine is a singleshot one.
 2. Read the rows for `self.paths` with `lyse.data(where={"filepath": ...})`,
    and extract the shot ids and costs. An empty pass, from Run multishot with
-   nothing analysed, has `self.paths == []` and reads nothing.
+   nothing analyzed, has `self.paths == []` and reads nothing.
 3. Hand them to the worker, which saves each shot's status with
    `save_status`.
 
@@ -151,7 +151,7 @@ run as ordinary shots, as when any routine is killed.
 
 ## Documentation and the demo
 
-- The README's "Using it" and UPGRADING's lyse step show the routine folder.
+- The docs' Getting started page and UPGRADING's lyse step show the routine folder.
   Its window opens when the routine is added, not on Run multishot.
 - Ian's demo in the userlib's `example_apparatus` is the routine folder
   `optimization_multishot.lyse/`.
@@ -177,7 +177,7 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
 
 - **A live trial,** by Ian, of the demo in lyse against runmanager:
   - the window opens when the routine is added;
-  - Start submits, and the analysed shots get their status columns;
+  - Start submits, and the analyzed shots get their status columns;
   - an opening with runmanager absent shows why, and Reset recovers once
     runmanager is up;
   - restarting and removing the routine end it cleanly.

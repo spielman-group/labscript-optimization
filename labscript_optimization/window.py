@@ -13,6 +13,8 @@
 
 """The optimizer's live controls and status window."""
 
+import itertools
+
 import pyqtgraph as pg
 from qtutils import inmain_decorator
 from qtutils.qt import QtGui, QtWidgets
@@ -55,11 +57,18 @@ class WindowController:
             "main": "#009e73",
             "explore": "#cc79a7",
         }
-        self.points = {
-            source: self.plot.plot([], [], pen=None, symbol="o", symbolBrush=color)
-            for source, color in colors.items()
-        }
+        # The rest of the Okabe-Ito palette, for a source the window does not
+        # name.
+        self.spare_colors = itertools.cycle(["#d55e00", "#56b4e9", "#f0e442"])
+        self.points = {}
+        for source, color in colors.items():
+            self._add_points(source, color)
         self.best_line = self.plot.plot([], [], pen=pg.mkPen("#eeeeee", width=2))
+
+    def _add_points(self, source, color):
+        self.points[source] = self.plot.plot(
+            [], [], pen=None, symbol="o", symbolBrush=color
+        )
 
     @inmain_decorator(wait_for_return=False)
     def show_config(self, config, text):
@@ -81,9 +90,13 @@ class WindowController:
     @inmain_decorator(wait_for_return=False)
     def update(self, status, computing, observations, gaussian_process, maximize):
         stopped = status.get("stopped")
+        # An empty status is a session still opening.
+        opening = not status
         paused = status.get("paused", True)
         if stopped:
             phase = f"Ended: {stopped}"
+        elif opening:
+            phase = "Opening"
         elif paused:
             phase = "Paused"
         elif computing:
@@ -113,7 +126,7 @@ class WindowController:
             cell = "—" if params is None else f"{params[row]:g}"
             table.setItem(row, 4, QtWidgets.QTableWidgetItem(cell))
 
-        self.ui.start_button.setEnabled(not stopped and paused)
+        self.ui.start_button.setEnabled(not stopped and paused and not opening)
         self.ui.pause_button.setEnabled(not stopped and not paused)
         # Reset also retries an opening that failed.
         self.ui.reset_button.setEnabled("paused" in status or bool(stopped))
@@ -124,7 +137,9 @@ class WindowController:
         for shot, (source, cost) in enumerate(observations, start=1):
             if cost is None:
                 continue
-            x, y = points[source]
+            if source not in self.points:
+                self._add_points(source, next(self.spare_colors))
+            x, y = points.setdefault(source, ([], []))
             x.append(shot)
             y.append(cost)
             best = cost if best is None else (max if maximize else min)(best, cost)

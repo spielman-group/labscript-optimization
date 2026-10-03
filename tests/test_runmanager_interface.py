@@ -176,8 +176,12 @@ def holds_only_python_values(value):
 
 @pytest.mark.parametrize(
     'name, submitted',
-    [('gx', [1.0, 3.0]), ('shim', [(1.0, 2.0), (3.0, 4.0)])],
-    ids=['a global_name mapping', 'an expr building a tuple'],
+    [
+        ('gx', [1.0, 3.0]),
+        ('shim', [(1.0, 2.0), (3.0, 4.0)]),
+        ('decay', [float(np.exp(-1.0)), float(np.exp(-3.0))]),
+    ],
+    ids=['a global_name mapping', 'an expr building a tuple', 'an expr using exp'],
 )
 def test_a_global_is_submitted_as_a_python_value(client, name, submitted):
     """runmanager writes a submitted value into its global's expression as the
@@ -201,6 +205,9 @@ max = 10.0
 [RUNMANAGER_GLOBALS.G.shim]
 expr = "lambda a, b: (a, b)"
 args = ["x", "y"]
+[RUNMANAGER_GLOBALS.G.decay]
+expr = "lambda a: exp(-a)"
+args = ["x"]
 """
     )
     RunmanagerInterface(config, client).submit(np.array([[1.0, 2.0], [3.0, 4.0]]))

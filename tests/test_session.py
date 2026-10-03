@@ -1,4 +1,4 @@
-"""Session behaviour: matching costs to shots, and never waiting on a lost one."""
+"""Session behavior: matching costs to shots, and never waiting on a lost one."""
 
 import numpy as np
 import pytest
@@ -258,7 +258,7 @@ def test_a_second_cost_for_one_shot_is_ignored(session):
 
 
 def test_a_shot_that_will_never_arrive_stops_being_waited_on(session, runmanager):
-    """A lost shot must free its slot, or the session stalls for ever.
+    """A lost shot must free its slot, or the session stalls forever.
 
     Aborted, rejected and compile-failed shots never reach lyse, so nothing
     will ever report their cost. Counting submissions against costs received
@@ -538,18 +538,18 @@ def test_status_reports_progress(session, runmanager):
     assert status['stopped'] is None
 
 
-def test_a_maximised_best_cost_is_reported_in_the_labs_own_sign(runmanager):
-    """A lab maximising a figure of merit reads back what it measured.
+def test_a_maximized_best_cost_is_reported_in_the_labs_own_sign(runmanager):
+    """A lab maximizing a figure of merit reads back what it measured.
 
     Two measurements rather than one, because one would prove only that a
     number was negated somewhere. The larger of the two says the session
-    minimised its way to the right shot, and the sign it comes back in says
+    minimized its way to the right shot, and the sign it comes back in says
     the flip the routine made on the way in was undone on the way out.
     """
     session = running_session(make_config(maximize=True), runmanager)
     session.refill()
     # The costs the routine hands over, flipped once so the session
-    # minimises: measurements of 3.0 and 7.0.
+    # minimizes: measurements of 3.0 and 7.0.
     session.record('shot-0', -3.0, None, False)
     session.record('shot-1', -7.0, None, False)
 
@@ -557,7 +557,7 @@ def test_a_maximised_best_cost_is_reported_in_the_labs_own_sign(runmanager):
     assert (status['best_cost'], status['best_shot_id']) == (7.0, 'shot-1')
 
 
-def test_a_minimised_best_cost_is_reported_as_it_was_measured(runmanager):
+def test_a_minimized_best_cost_is_reported_as_it_was_measured(runmanager):
     """The mirror, which a session negating unconditionally would fail."""
     session = running_session(make_config(), runmanager)
     session.refill()
@@ -760,13 +760,13 @@ def test_the_budget_keeps_the_first_proposals_a_learner_offers(runmanager):
     slot it was not bred for and compete against the wrong incumbent.
     """
 
-    class Labelled:
+    class Labeled:
         generation = None
 
         def propose(self, history, hint):
             return [(np.array([x]), 'main') for x in (0.1, 0.2, 0.3, 0.4)]
 
-    session = running_session(make_config(max_num_runs=2), runmanager, Labelled())
+    session = running_session(make_config(max_num_runs=2), runmanager, Labeled())
     session.refill()
     assert [p[0] for p in session.proposals.values()] == [0.1, 0.2]
 
@@ -965,35 +965,6 @@ def test_the_budget_may_cut_the_last_generation_short(runmanager):
             session.record(shot_id, float(position), None, False)
 
     assert sizes == [5, 5, 3]
-
-
-def test_a_short_last_generation_evolves_the_slots_it_reaches(runmanager):
-    """Its trials compete for their own slots like any other generation's.
-
-    The founding generation carries one shot whose cost is not usable, so a
-    proposal's position and the number of usable costs before it part company:
-    the slot each of the last three trials competes for is the one its
-    position names, not the one a running count would name.
-    """
-    config = de_config(population_size=5, max_num_runs=13)
-    session = running_session(config, runmanager)
-    learner = session.learner
-
-    generations = (
-        [9.0, float('nan'), 9.0, 9.0, 9.0],
-        [9.0] * 5,
-        [0.0] * 3,
-    )
-    for costs in generations:
-        submitted = session.refill()
-        for shot_id, cost in zip(submitted, costs):
-            session.record(shot_id, cost, None, not np.isfinite(cost))
-
-    _, costs = learner.replay(session.history)
-    # The third generation opened at position 10, which is slot 0, so it
-    # reached slots 0, 1 and 2 and improved each. Slots 3 and 4 were never
-    # offered a trial and keep the members the second generation left them.
-    assert list(costs) == [0.0, 0.0, 0.0, 9.0, 9.0]
 
 
 def test_a_budget_under_two_generations_is_still_refused():

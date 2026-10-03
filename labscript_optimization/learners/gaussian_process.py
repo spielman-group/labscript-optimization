@@ -23,7 +23,7 @@ The cycle, which :meth:`GaussianProcessLearner.acquire` is the whole of:
   computed once every point of the last has completed or been dropped, so it
   has every answer it asked for. Explorer shots never hold it up.
 - **Exploring.** A batch's first point waits until ``explore_runs`` explorer
-  shots have gone out since the previous batch's first point, wherever in that
+  shots have gone out since the previous batch's last point, wherever in that
   cycle they fell.
 
 The explorer is handed the part of the history its ``history_scope`` names:
@@ -49,7 +49,7 @@ start, which the session proposes itself, reads ``start``. The batch barrier
 is read off those sources, so a history whose records carry none -- one built
 outside a session -- holds no barrier.
 
-Exploration within the batch comes from the acquisition, which minimises
+Exploration within the batch comes from the acquisition, which minimizes
 
     cost_bias * predicted_cost - uncer_bias * predicted_standard_deviation
 
@@ -188,6 +188,17 @@ class GaussianProcess:
             "length_scale_bounds", length_scale_bounds
         )
         self.noise_level_bounds = knobs.pair("noise_level_bounds", noise_level_bounds)
+        # Refused here as trust_range is: scikit-learn rejects a reversed pair
+        # only at the first fit, and a zero or negative one makes numpy warn.
+        for name, (low, high) in (
+            ("length_scale_bounds", self.length_scale_bounds),
+            ("noise_level_bounds", self.noise_level_bounds),
+        ):
+            if not 0 < low < high:
+                raise ValueError(
+                    f"{name} must be an ordered pair of positive numbers, "
+                    f"[low, high] with 0 < low < high, got {[low, high]}."
+                )
         self.cost_bias = knobs.number("cost_bias", cost_bias)
         # Written out rather than derived from a step and a period, because
         # the schedule a session runs is what a lab wants to read off the
@@ -251,6 +262,7 @@ class GaussianProcess:
         )
 
     def new_kernel(self):
+        """A fresh RBF kernel, with a white-noise term when ``cost_has_noise``."""
         from sklearn.gaussian_process.kernels import RBF, WhiteKernel
 
         kernel = RBF(
@@ -264,7 +276,7 @@ class GaussianProcess:
         return kernel
 
     def point_variances(self, seen: Sequence[Observation], scaler):
-        """Per-point variances for the regressor, in standardised cost units.
+        """Per-point variances for the regressor, in standardized cost units.
 
         An observation with no uncertainty of its own gets zero here rather
         than the scalar floor, because ``uncers_array`` fills it in as exact.
@@ -299,7 +311,7 @@ class GaussianProcess:
         """Fit the cost scaling and the kernel hyperparameters to ``seen``.
 
         The scaling belongs with them because it sets the units the noise level
-        is measured in: restandardising as each observation arrived would leave
+        is measured in: restandardizing as each observation arrived would leave
         a cached kernel describing units that had since moved. The fit starts
         from the kernel of the last refit, or from :meth:`new_kernel` at the
         first, and runs no restarts, so a refit is one descent from where the
@@ -462,7 +474,7 @@ class GaussianProcess:
             self.cost_bias * (dk.T @ regressor.alpha_) - uncer_weight * dstd,
         )
 
-    def minimise_acquisition(
+    def minimize_acquisition(
         self, regressor, uncer_weight: float, best: np.ndarray, lows, highs
     ):
         """Multi-start L-BFGS-B over the acquisition. Returns scaled parameters.
@@ -564,7 +576,7 @@ class GaussianProcess:
             # greedy one, by default -- and a batch as long as the schedule
             # spends one point at each weight.
             weight = self.uncer_bias[i % len(self.uncer_bias)]
-            scaled = self.minimise_acquisition(
+            scaled = self.minimize_acquisition(
                 regressor, weight, best_params, lows, highs
             )
             proposals[i] = self.space.clip(self.space.unscale(scaled))
@@ -595,12 +607,13 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         the history is mixed.
     length_scale_bounds : (float, float)
         Bounds on the RBF length scale, in units of the unit cube the
-        parameters are scaled onto.
+        parameters are scaled onto. ``0 < low < high``.
     noise_level_bounds : (float, float)
-        Bounds on the white-noise level, in units of the standardised cost.
+        Bounds on the white-noise level, in units of the standardized cost.
+        ``0 < low < high``.
     cost_bias : float
         Weight on predicted cost in the acquisition.
-    uncer_bias : float or sequence of float
+    uncer_bias : float or Sequence[float]
         The weights on predicted uncertainty the exploration schedule walks
         through, one per point of a batch, starting again from the first at
         every batch. A single number is a cycle of one step, and so a fixed
@@ -610,14 +623,14 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         How many points the Gaussian process computes at a time, each
         conditioned on the ones before it. The kernel hyperparameters are
         refit once per batch.
-    trust_region : float or sequence of float, optional
+    trust_region : float or Sequence[float] or None
         Restrict the search to this distance around the best point seen.
-    warmup_observations : int, optional
+    warmup_observations : int or None
         How many usable observations the explorer gathers before the Gaussian
         process computes, counted as observations a fit can use and not as
         shots. Defaults to max(5, twice the parameter count). Warmup ends at
         the count, and explorer shots already queued then still run.
-    explorer : str or learner
+    explorer : str or ParameterSpaceLearner
         The learner whose shots run the warmup and fill the queue after it:
         ``"random"``, ``"directed_random"`` or ``"differential_evolution"``,
         built from its defaults, or an instance of one. A configuration names
@@ -625,10 +638,10 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         instance built from that learner's own ``[LEARNER.<name>]`` table.
     explore_runs : int
         How many explorer shots each batch cycle holds at the least, from one
-        batch's first point to the next's, wherever in the cycle they fall.
-        Zero guarantees none, and the explorer only fills the queue. Filling
-        alone already puts about ``num_buffered_runs`` in each cycle, so a
-        smaller ``explore_runs`` changes nothing.
+        batch's last point to the next batch's first, wherever in the cycle
+        they fall. Zero guarantees none, and the explorer only fills the
+        queue. Filling alone already puts about ``num_buffered_runs`` in each
+        cycle, so a smaller ``explore_runs`` changes nothing.
     """
 
     def __init__(
@@ -727,8 +740,9 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         released = []
         if self.ready:
             # Only a whole batch waits, for explore_runs explorer shots since
-            # the run began or the last batch's first point. A batch goes out
-            # unbroken, so its last point will do, however many the budget cut.
+            # the run began or the last batch's last point. A batch goes out
+            # unbroken, so that is the count from its first, however many the
+            # budget cut.
             mains = [i for i, o in enumerate(history) if o.source == BATCH_SOURCE]
             since = (mains or [0])[-1]
             explored = sum(

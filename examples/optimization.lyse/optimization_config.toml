@@ -1,0 +1,82 @@
+# labscript-optimization configuration. Commented keys are at their defaults;
+# where that is unset, they show an example.
+
+[ANALYSIS]
+# The lyse column holding the cost; u_<result> beside it is its uncertainty.
+cost_key = ["my_routine", "atom_number"]
+maximize = true
+# Which groups of the tables below take part.
+groups = ["MOT"]
+
+[GENERAL]
+# random, directed_random, differential_evolution or gaussian_process
+learner = "gaussian_process"
+max_num_runs = 400
+max_num_runs_without_better_params = 80
+# Shots kept queued in runmanager; refused with differential_evolution.
+# num_buffered_runs = 2
+# seed = 12345
+
+# global_name is the runmanager global that takes the parameter's value.
+[PARAMETERS.MOT.detuning]
+global_name = "mot_detuning"
+min = -3.0
+max = -0.5
+start = -1.5
+# false leaves the parameter out of the search and its global untouched.
+# enable = true
+
+[PARAMETERS.MOT.ramp_start]
+min = 0.0
+max = 10.0
+start = 5.0
+
+[PARAMETERS.MOT.ramp_span]
+min = 1.0
+max = 20.0
+start = 10.0
+
+# A global computed from parameters: expr is a lambda taking args in order.
+# It sees the names runmanager globals do, so exp, sqrt, pi and np work.
+[RUNMANAGER_GLOBALS.MOT.ramp_end]
+args = ["ramp_start", "ramp_span"]
+expr = "lambda t0, dt: t0 + dt"
+# enable = true
+
+# A table is read only when its learner is built: the selected one, or the
+# Gaussian process's explorer.
+[LEARNER.gaussian_process]
+# random, directed_random or differential_evolution; knobs in its own table.
+# explorer = "directed_random"
+# Usable observations gathered before fitting; default max(5, 2 * parameters).
+# warmup_observations = 6
+# batch_size = 4
+# Least explorer shots between one batch and the next.
+# explore_runs = 1
+# Weight on predicted uncertainty for each point of a batch; 0 is greedy.
+# uncer_bias = [0.0, 1.0, 2.0, 3.0]
+# cost_bias = 1.0
+# Around the best point, as for directed_random; unset searches everywhere.
+# trust_region = 0.1
+# cost_has_noise = true
+# In units of the unit cube the parameters are scaled onto.
+# length_scale_bounds = [1e-2, 1e2]
+# In units of the standardized cost.
+# noise_level_bounds = [1e-5, 1e1]
+
+[LEARNER.directed_random]
+# A fraction of each parameter's range, or a list of absolute distances.
+# trust_region = 0.05
+# Which costs may center a draw: 0 is the worst seen, 1 the best.
+# trust_range = [0.1, 0.25]
+# trust_gaussian = false
+# explore_fraction = 0.0
+
+[LEARNER.differential_evolution]
+# population_size = 8
+# best1, best2, rand1 or rand2
+# evolution_strategy = "best1"
+# mutation_scale = [0.5, 1.0]
+# cross_over_probability = 0.7
+# As for directed_random; unset searches the whole space.
+# trust_region = 0.1

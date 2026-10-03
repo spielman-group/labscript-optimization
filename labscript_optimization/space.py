@@ -25,7 +25,8 @@ class Parameter:
         minimum: Lower bound, in real units.
         maximum: Upper bound, in real units.
         start: Preferred first value, or ``None`` to start from a random draw.
-        enable: False leaves the parameter out of the search at its start value.
+        enable: False drops the parameter from the search, start included. Its
+            runmanager global is not set, so it keeps the value runmanager holds.
     """
 
     name: str
@@ -77,7 +78,7 @@ class ParameterSpace:
             )
         # A start is the whole space's or it is nobody's: it is proposed as
         # one point over every parameter, so there is nothing to do with one
-        # written for some of them. Refused rather than honoured for those and
+        # written for some of them. Refused rather than honored for those and
         # drawn for the rest, because a file that names a start has a reason
         # for it and a draw is not that reason -- and refused rather than
         # dropped, because a start on three parameters of five dropped for
@@ -141,17 +142,17 @@ class ParameterSpace:
         self,
         rng: np.random.Generator,
         k: int = 1,
-        centre: np.ndarray | None = None,
+        center: np.ndarray | None = None,
         region: np.ndarray | None = None,
     ) -> np.ndarray:
         """``k`` points drawn uniformly from the space.
 
-        A ``centre`` and a ``region`` confine the draw to that trust region as
+        A ``center`` and a ``region`` confine the draw to that trust region as
         :meth:`bounds_near` clips it; neither covers the whole space.
         """
         low, high = self.minimum, self.maximum
-        if centre is not None:
-            low, high = self.bounds_near(centre, region)
+        if center is not None:
+            low, high = self.bounds_near(center, region)
         return rng.uniform(low, high, size=(k, self.num_params))
 
     def absolute_trust_region(self, trust_region) -> np.ndarray | None:
@@ -194,9 +195,9 @@ class ParameterSpace:
         return region
 
     def bounds_near(
-        self, centre: np.ndarray, region: np.ndarray | None
+        self, center: np.ndarray, region: np.ndarray | None
     ) -> tuple[np.ndarray, np.ndarray]:
-        """The bounds within ``region`` of ``centre``, kept inside the space.
+        """The bounds within ``region`` of ``center``, kept inside the space.
 
         ``region`` is an absolute per-parameter distance, as
         :meth:`absolute_trust_region` returns it; ``None`` gives back the whole
@@ -205,6 +206,6 @@ class ParameterSpace:
         if region is None:
             return self.minimum, self.maximum
         return (
-            np.maximum(self.minimum, centre - region),
-            np.minimum(self.maximum, centre + region),
+            np.maximum(self.minimum, center - region),
+            np.minimum(self.maximum, center + region),
         )
