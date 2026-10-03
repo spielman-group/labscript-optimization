@@ -9,7 +9,7 @@ A session that has stopped shows ``Ended:`` and the reason in the window's phase
 How an error is reported depends on what the session was doing:
 
 * During the opening, Start and Reset, and when a Gaussian process batch finishes, the message becomes the reason in the window. The traceback goes to the Output dock. The routine does not raise, and lyse goes on analysing.
-* During the work after a shot, the window reads ``Ended: stopped by an error``. The routine raises the error in lyse, in that pass or the next, and lyse then pauses analysis. When you resume, the shots of the failed pass are part of the next pass.
+* During the work after a shot, the window reads ``Ended: stopped by an error``. The routine raises the error in lyse, in that pass or the next, and lyse then pauses analysis. An error raised in the next pass has its traceback in the Output dock as soon as it happens. When you resume, the shots of the failed pass are part of the next pass.
 
 The messages quoted below are the reason in the first case and the error the routine raises in the second.
 

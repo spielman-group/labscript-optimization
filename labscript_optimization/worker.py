@@ -82,6 +82,8 @@ class Worker:
         if not self.failures.empty():
             raise self.failures.get()
         if not reply.done() and not self.thread.is_alive():
+            # With the thread dead, nothing will complete these.
+            self.unsaved = [entry for entry in self.unsaved if entry[1].done()]
             raise RuntimeError(
                 "The optimization session's thread has stopped, so nothing will "
                 "answer; its traceback is above. Restart the routine."
@@ -105,6 +107,9 @@ class Worker:
                 if command == "reset":
                     # Opening is a reset too, so a failed one is retried by Reset.
                     session = None
+                    # An empty status is the window's Opening, until the new
+                    # session's own status replaces it.
+                    self.window.update({}, False, (), False, False)
                     interface = self.interface_factory(self.config)
                     interface.check_ready()
                     session = Session(self.config, interface)
@@ -143,6 +148,8 @@ class Worker:
                 elif not reply.done():
                     reply.set_exception(exc)
                 else:
+                    # The next hand-over raises this, and may never come.
+                    traceback.print_exc()
                     self.failures.put(exc)
             finally:
                 if session is not None:

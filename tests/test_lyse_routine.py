@@ -14,7 +14,12 @@ with warnings.catch_warnings():
 from conftest import SESSION_CONFIG
 
 ROUTINE = '''
+import os
+
 from labscript_optimization.routine import OptimizationRoutine
+
+# lyse works in the routine folder, and a routine can leave it.
+os.chdir(os.path.dirname(os.path.dirname(__file__)))
 
 
 class Runmanager:

@@ -20,6 +20,7 @@ rather than once per shot, and names that batch's files in ``paths``. Every
 one of them is a run the session spent, so every one of them is handed over.
 """
 
+import inspect
 import queue
 import sys
 from pathlib import Path
@@ -52,9 +53,9 @@ RESULTS_GROUP = "labscript_optimization"
 #: ``stopped`` is here rather than with the bookkeeping because it is a marker
 #: and not a tally. A counter carries a running total onto every shot and says
 #: nothing about the one it lands on; ``stopped`` is empty until the session
-#: ends, so the first shot carrying a reason is the shot the run ended on, and
-#: where it sits in the column is the answer to the question a lab asks of a
-#: finished run.
+#: ends, and every shot of the pass that stopped it carries the reason, so the
+#: first shot carrying one is in the pass the run ended on, and where it sits
+#: in the column is the answer to the question a lab asks of a finished run.
 SHOT_RESULTS = ("phase", "best_cost", "best_params", "best_shot_id", "stopped")
 
 #: What each of :data:`SHOT_RESULTS` is saved as while the session has
@@ -198,7 +199,9 @@ class OptimizationRoutine(lyse.Routine):
                 f"{type(self).__name__} must set config_path to its TOML "
                 f"configuration file."
             )
-        text = Path(self.config_path).read_text(encoding="utf-8")
+        # The folder of the lab's subclass, whatever the working directory is.
+        folder = Path(inspect.getfile(type(self))).parent
+        text = (folder / self.config_path).read_text(encoding="utf-8")
         self.config = config_module.loads(text)
         ui = self.load_ui(Path(__file__).with_name("window.ui"))
         commands = queue.Queue()
