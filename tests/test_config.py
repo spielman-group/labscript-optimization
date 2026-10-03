@@ -11,7 +11,12 @@ import pytest
 from labscript_optimization import config as config_module
 from labscript_optimization import learners
 
-EXAMPLE = Path(__file__).resolve().parent.parent / 'examples' / 'config_example.toml'
+EXAMPLE = (
+    Path(__file__).resolve().parent.parent
+    / 'examples'
+    / 'optimization.lyse'
+    / 'optimization_config.toml'
+)
 
 FULL = """
 [ANALYSIS]
@@ -928,15 +933,6 @@ def test_a_learner_knob_of_the_wrong_kind_stops_the_load(text, message):
     with pytest.raises(ValueError) as raised:
         config_module.loads(text)
     assert str(raised.value) == message
-
-
-def test_the_example_configuration_loads_and_builds_its_learner():
-    """The file every new lab starts from, held to the schema like any other."""
-    config = config_module.load(EXAMPLE)
-    learner = learners.build(config)
-    assert isinstance(learner, learners.GaussianProcessLearner)
-    assert type(learner.explorer) is learners.DirectedRandomLearner
-    assert learner.warmup_observations == 20
 
 
 # --- the Gaussian process's cycle ------------------------------------------

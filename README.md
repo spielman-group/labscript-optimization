@@ -153,11 +153,11 @@ from a multishot routine above this one in the list. A column that is not there
 yet is not waited for either: the shot is recorded as a bad observation, and so
 is every other shot of the run, with nothing anywhere saying why.
 
-See [`examples/config_example.toml`](examples/config_example.toml) for the
-configuration. Every key must be one this package knows, and a spelling it does
-not stops the load with a message naming it, rather than being accepted and
-ignored — a setting nothing reads is one a lab believes is in force when it is
-not.
+See [`examples/optimization.lyse`](examples/optimization.lyse), a routine
+folder to copy, for the configuration. Every key must be one this package
+knows, and a spelling it does not stops the load with a message naming it,
+rather than being accepted and ignored — a setting nothing reads is one a lab
+believes is in force when it is not.
 
 `[GENERAL]` carries the session's own settings — which learner runs, how deep
 the queue is, what stops the run. A learner's knobs go in `[LEARNER.<name>]`,
