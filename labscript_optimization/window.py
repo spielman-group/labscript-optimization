@@ -13,6 +13,8 @@
 
 """The optimizer's live controls and status window."""
 
+import itertools
+
 import pyqtgraph as pg
 from qtutils import inmain_decorator
 from qtutils.qt import QtGui, QtWidgets
@@ -55,6 +57,9 @@ class WindowController:
             "main": "#009e73",
             "explore": "#cc79a7",
         }
+        # The rest of the Okabe-Ito palette, for a source the window does not
+        # name.
+        self.spare_colors = itertools.cycle(["#d55e00", "#56b4e9", "#f0e442"])
         self.points = {}
         for source, color in colors.items():
             self.add_points(source, color)
@@ -133,7 +138,7 @@ class WindowController:
             if cost is None:
                 continue
             if source not in self.points:
-                self.add_points(source, pg.intColor(len(self.points)))
+                self.add_points(source, next(self.spare_colors))
             x, y = points.setdefault(source, ([], []))
             x.append(shot)
             y.append(cost)

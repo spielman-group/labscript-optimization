@@ -38,7 +38,7 @@ from ..space import ParameterSpace
 from .base import ParameterSpaceLearner
 
 #: The mutation strategies, and how many other population members each one
-#: draws on. The counts are read by :meth:`DifferentialEvolutionLearner.mutant`
+#: draws on. The counts are read by ``DifferentialEvolutionLearner._mutant``
 #: and by the population guard, so neither can drift from the other.
 STRATEGIES = {"best1": 2, "best2": 4, "rand1": 3, "rand2": 5}
 
@@ -133,7 +133,7 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         """
         return self.population_size
 
-    def replay(self, history: Sequence[Observation]):
+    def _replay(self, history: Sequence[Observation]):
         """The population as the history so far leaves it.
 
         Returns the members' parameters and costs, one row and one cost per
@@ -162,7 +162,7 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         best = params[int(np.nanargmin(costs))]
         return self.space.uniform(self.rng, 1, best, self.trust_region)[0]
 
-    def mutant(
+    def _mutant(
         self, slot: int, params: np.ndarray, costs: np.ndarray, scale: float
     ) -> np.ndarray:
         """The mutant for ``slot``, which the strategy builds from other members."""
@@ -182,7 +182,7 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
             return best + scale * (drawn[0] + drawn[1] - drawn[2] - drawn[3])
         return drawn[0] + scale * (drawn[1] + drawn[2] - drawn[3] - drawn[4])
 
-    def trial(
+    def _trial(
         self, slot: int, params: np.ndarray, costs: np.ndarray, scale: float
     ) -> np.ndarray:
         """Breed a point for ``slot``: its mutant crossed over with its member."""
@@ -193,7 +193,7 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
             # from and the point is drawn the way a founder is.
             return self._sample_new_member(params, costs)
 
-        mutant = self.mutant(slot, params, costs, scale)
+        mutant = self._mutant(slot, params, costs, scale)
 
         crossovers = self.rng.random(self.space.num_params) < self.cross_over_probability
         # At least one coordinate must come from the mutant, or the trial would
@@ -217,7 +217,7 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         generation out with, and what a caller holding no barrier asks for at
         any history length and any ``k``.
         """
-        params, costs = self.replay(history)
+        params, costs = self._replay(history)
         # One differential weight per call: per generation when selected, as
         # textbook differential evolution and scipy draw it, and per trial or
         # two as the Gaussian process's explorer, the variant known as dither.
@@ -233,5 +233,5 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
                 # until one of its trials lands.
                 proposals[i] = self._sample_new_member(params, costs)
             else:
-                proposals[i] = self.trial(slot, params, costs, scale)
+                proposals[i] = self._trial(slot, params, costs, scale)
         return proposals

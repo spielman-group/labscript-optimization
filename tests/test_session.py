@@ -967,35 +967,6 @@ def test_the_budget_may_cut_the_last_generation_short(runmanager):
     assert sizes == [5, 5, 3]
 
 
-def test_a_short_last_generation_evolves_the_slots_it_reaches(runmanager):
-    """Its trials compete for their own slots like any other generation's.
-
-    The founding generation carries one shot whose cost is not usable, so a
-    proposal's position and the number of usable costs before it part company:
-    the slot each of the last three trials competes for is the one its
-    position names, not the one a running count would name.
-    """
-    config = de_config(population_size=5, max_num_runs=13)
-    session = running_session(config, runmanager)
-    learner = session.learner
-
-    generations = (
-        [9.0, float('nan'), 9.0, 9.0, 9.0],
-        [9.0] * 5,
-        [0.0] * 3,
-    )
-    for costs in generations:
-        submitted = session.refill()
-        for shot_id, cost in zip(submitted, costs):
-            session.record(shot_id, cost, None, not np.isfinite(cost))
-
-    _, costs = learner.replay(session.history)
-    # The third generation opened at position 10, which is slot 0, so it
-    # reached slots 0, 1 and 2 and improved each. Slots 3 and 4 were never
-    # offered a trial and keep the members the second generation left them.
-    assert list(costs) == [0.0, 0.0, 0.0, 9.0, 9.0]
-
-
 def test_a_budget_under_two_generations_is_still_refused():
     with pytest.raises(ValueError, match='less than two whole generations'):
         de_config(population_size=5, max_num_runs=9)

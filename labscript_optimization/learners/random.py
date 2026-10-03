@@ -123,7 +123,7 @@ class DirectedRandomLearner(RandomLearner):
         candidates = params[inside]
         return candidates[self.rng.integers(len(candidates))]
 
-    def draw_near(self, center: np.ndarray) -> np.ndarray:
+    def _draw_near(self, center: np.ndarray) -> np.ndarray:
         """One draw about a center point, Gaussian or uniform per ``trust_gaussian``."""
         if self.trust_gaussian:
             return self.space.clip(self.rng.normal(center, self.trust_region))
@@ -140,5 +140,5 @@ class DirectedRandomLearner(RandomLearner):
             if self.rng.uniform() < self.explore_fraction:
                 proposals[i] = self.space.uniform(self.rng, 1)[0]
             else:
-                proposals[i] = self.draw_near(self._center(params, costs))
+                proposals[i] = self._draw_near(self._center(params, costs))
         return proposals

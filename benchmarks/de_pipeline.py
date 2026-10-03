@@ -3,7 +3,7 @@
 Each run is a real :class:`~labscript_optimization.session.Session`, built by
 the shipped configuration loader from a real configuration file, with a fake
 runmanager standing in for the queue. The generation barrier in the learner's
-``propose``, the position walk in ``replay`` and the history's pending entries
+``propose``, the position walk in ``_replay`` and the history's pending entries
 are therefore exercised as they are in a lab, rather than by a reimplementation
 written to match them.
 
