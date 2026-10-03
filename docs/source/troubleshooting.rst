@@ -11,6 +11,8 @@ How an error is reported depends on what the session was doing:
 * During the opening, Start and Reset, and when a Gaussian process batch finishes, the message becomes the reason in the window. The traceback goes to the Output dock. The routine does not raise, and lyse goes on analysing.
 * During the work after a shot, the window reads ``Ended: stopped by an error``. The routine raises the error in lyse, in that pass or the next, and lyse then pauses analysis. When you resume, the shots of the failed pass are part of the next pass.
 
+The messages quoted below are the reason in the first case and the error the routine raises in the second.
+
 An ended session cannot be resumed. After fixing the cause, press Reset and then Start.
 
 runmanager is not running when the session opens
@@ -49,7 +51,7 @@ The routine reads the cost from the column that ``cost_key`` names. If the colum
 
 Check that:
 
-* ``cost_key`` names the group and the result as they are saved: the file name of a classic script, or the class of a GUI routine, then the result.
+* ``cost_key`` names the group and the result as they are saved: the file name of a classic script without its ``.py``, or the class of a GUI routine, then the result.
 * The routine that saves the cost is in the Singleshot routines box, or above the optimization routine in the Multishot routines box.
 * That routine does not fail on the shots.
 

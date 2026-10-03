@@ -140,7 +140,7 @@ A runmanager global computed from one or more parameters. ``<name>`` is the glob
     * - ``expr``
       - string
       - none
-      - The source of a Python lambda taking ``args`` in order, such as ``"lambda t0, dt: t0 + dt"``. Without it, ``args`` must name one parameter and the global takes its value. The expression is evaluated with ``eval`` when the file loads, so the file is as trusted as your analysis routines. A lambda that cannot be built, is not callable, or cannot take that many arguments is refused at load. It sees Python's builtins and its arguments only: a free name such as ``math`` loads without complaint and fails when the first proposal is turned into globals.
+      - The source of a Python lambda taking ``args`` in order, such as ``"lambda t0, dt: t0 + dt"``. Without it, ``args`` must name one parameter and the global takes its value. The expression is evaluated with ``eval`` when the file loads, so the file is as trusted as your analysis routines. A lambda that cannot be built, is not callable, or cannot take that many arguments is refused at load. Nothing is imported for it, so a free name such as ``math`` loads without complaint and fails when the first proposal is turned into globals.
     * - ``enable``
       - boolean
       - ``true``
@@ -194,7 +194,7 @@ Takes no knobs. A table written for it must be empty.
     * - ``trust_region``
       - number or list
       - 0.05
-      - The largest distance of a draw from its center, in the form described above.
+      - How far a draw lands from its center, in the form described above: the largest distance of a uniform draw, or the width of a Gaussian one.
     * - ``trust_range``
       - ordered pair in [0, 1]
       - ``[0.1, 0.25]``

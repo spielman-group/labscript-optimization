@@ -42,7 +42,8 @@ args = ["ramp_start", "ramp_span"]
 expr = "lambda t0, dt: t0 + dt"
 # enable = true
 
-# A learner's knobs are read only when that learner runs.
+# A table is read only when its learner is built: the selected one, or the
+# Gaussian process's explorer.
 [LEARNER.gaussian_process]
 # random, directed_random or differential_evolution; knobs in its own table.
 # explorer = "directed_random"
@@ -65,7 +66,7 @@ expr = "lambda t0, dt: t0 + dt"
 [LEARNER.directed_random]
 # A fraction of each parameter's range, or a list of absolute distances.
 # trust_region = 0.05
-# Which costs may centre a draw: 0 is the worst seen, 1 the best.
+# Which costs may center a draw: 0 is the worst seen, 1 the best.
 # trust_range = [0.1, 0.25]
 # trust_gaussian = false
 # explore_fraction = 0.0
