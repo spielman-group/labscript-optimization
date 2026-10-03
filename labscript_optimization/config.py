@@ -54,6 +54,8 @@ import tomllib
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Sequence
 
+import numpy as np
+
 from . import knobs
 from .space import Parameter, ParameterSpace
 
@@ -239,7 +241,8 @@ class GlobalMapping:
         arguments = [values[a] for a in self.args]
         if self.function is None:
             return arguments[0]
-        return self.function(*arguments)
+        result = self.function(*arguments)
+        return result.item() if isinstance(result, np.generic) else result
 
 
 @dataclass
@@ -342,9 +345,10 @@ class Config:
     def globals_for(self, params: Sequence[float]) -> dict[str, Any]:
         """The runmanager globals that realize one parameter vector.
 
-        Each parameter reaches its mappings as a Python ``float``, so a
-        global's value -- the parameter itself, or what an ``expr`` builds
-        from several -- holds no numpy scalar however the vector arrived.
+        Each parameter reaches its mappings as a Python ``float``, and a numpy
+        scalar an ``expr`` returns is converted, so a global's value -- the
+        parameter itself, or what an ``expr`` builds from several -- holds no
+        numpy scalar however the vector arrived.
         runmanager writes a submitted value into its global's expression as
         the value's ``repr``, and a numpy scalar's repr names numpy:
         ``np.float64(0.25)`` would be what the operator reads in runmanager

@@ -62,10 +62,10 @@ class WindowController:
         self.spare_colors = itertools.cycle(["#d55e00", "#56b4e9", "#f0e442"])
         self.points = {}
         for source, color in colors.items():
-            self.add_points(source, color)
+            self._add_points(source, color)
         self.best_line = self.plot.plot([], [], pen=pg.mkPen("#eeeeee", width=2))
 
-    def add_points(self, source, color):
+    def _add_points(self, source, color):
         self.points[source] = self.plot.plot(
             [], [], pen=None, symbol="o", symbolBrush=color
         )
@@ -138,7 +138,7 @@ class WindowController:
             if cost is None:
                 continue
             if source not in self.points:
-                self.add_points(source, next(self.spare_colors))
+                self._add_points(source, next(self.spare_colors))
             x, y = points.setdefault(source, ([], []))
             x.append(shot)
             y.append(cost)
