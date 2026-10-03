@@ -1,2 +1,100 @@
 The optimizer window
 ====================
+
+Adding the routine to lyse opens the optimizer window, shown in :numref:`fig-window`. It is the routine's lyse window: the controls below are its central widget, and lyse adds an Output dock and a View menu. The window is titled with the routine folder's name. Messages from the session, including tracebacks, appear in its Output dock.
+
+.. _fig-window:
+
+.. figure:: img/window.png
+    :alt: The optimizer window during a Gaussian process run
+
+    The optimizer window, loaded with the example configuration and illustrative data. The Status tab is above and the plot below.
+
+Controls
+--------
+
+Start
+    Starts or resumes submission. It is enabled while the session is paused and has not ended.
+
+Pause
+    Stops new submissions. It is enabled while the session is running. Shots already queued still run, and the session still takes their costs and applies its limits.
+
+Reset
+    Discards the history and opens a new paused session from the configuration loaded when the routine started. The new session starts a new runmanager sequence. Shots the old session queued stay in runmanager's queue and run, but the new session ignores their costs. Reset does not read the file again: restart the routine after editing it.
+
+A session that has ended can only be reset. All three buttons are disabled while the window reads "Opening", and Reset is enabled as soon as the session has opened or ended.
+
+Status tab
+----------
+
+Phase
+    What the session is doing:
+
+    ``Opening``
+        The session is checking runmanager.
+
+    ``Paused``
+        The session has not been started, or has been paused.
+
+    ``Running``
+        A learner other than ``gaussian_process`` is proposing.
+
+    ``Warmup``
+        The Gaussian process has not yet proposed, and its explorer is gathering observations.
+
+    ``Batch computing``
+        The Gaussian process is computing a batch in the background, while its explorer keeps the queue filled.
+
+    ``Batch out``
+        The Gaussian process has proposed a batch, and none is computing.
+
+    ``Ended: <reason>``
+        The session has stopped, because it reached ``max_num_runs`` or ``max_num_runs_without_better_params``, or because something failed. :doc:`troubleshooting` lists the reasons.
+
+Method
+    The learner, such as "Gaussian process".
+
+Counters
+    These count shots. They are the session's own tallies and are not saved into lyse's dataframe.
+
+    .. list-table::
+        :widths: 20 80
+
+        * - Submitted
+          - Shots the session has submitted to runmanager.
+        * - Completed
+          - Shots whose cost the session has taken, usable or not.
+        * - Awaiting
+          - Submitted shots that have neither reported a cost nor been given up on.
+        * - Dropped
+          - Shots that will not produce a cost: deleted from runmanager's queue, failed to compile, refused by BLACS, or stuck behind a queue row an operator has to clear. A cost that arrives later is still taken, and its shot stops counting as dropped.
+        * - Blocked
+          - The dropped shots stuck behind a queue row only an operator can clear, such as a shot that failed to compile. They are counted in Dropped too.
+        * - Starved
+          - How often the session ran and found none of its shots queued, so runmanager gave BLACS a default shot. ``differential_evolution`` empties the queue by design and does not count it. See :ref:`troubleshooting:Starved counts`.
+
+Best cost
+    The best usable cost so far, in the units and sign of your cost column, so a maximized cost is shown as measured. It reads "—" until a usable cost has arrived.
+
+Parameter table
+    One row for each enabled parameter, with its name, ``min``, ``max`` and ``start``, which reads "—" when the parameter has none. The Best column holds the parameter values of the shot with the best cost, in real units, and reads "—" until there is one.
+
+Configuration tab
+-----------------
+
+The Configuration tab shows the text of the TOML file as the routine loaded it. It is read only.
+
+The plot
+--------
+
+The plot shows each usable cost against the position of its shot among the session's proposals. Costs have the sign of your cost column. Shots that are pending, dropped or bad leave gaps. The color of a point says what proposed the shot, the same value as the ``phase`` column of :doc:`results`: the configured start, warmup shots, the main learner, or explorer shots. A white line follows the best cost so far. The legend above the plot lists a source once it has a point on the plot, and "Best so far" once there is a best cost.
+
+Closing the window
+------------------
+
+Closing the window hides it and leaves the session running. To show it again, right-click the routine in lyse's Multishot routines box and choose "show windows for selected routines". Removing or restarting the routine ends the session. Shots it has queued stay in runmanager's queue.
+
+When the opening fails
+----------------------
+
+When the session opens, it checks that runmanager answers and that its globals evaluate. If it cannot, the phase reads ``Ended:`` followed by the reason, and only Reset is enabled. Fix the cause, then press Reset, which tries the opening again. See :doc:`troubleshooting`.
