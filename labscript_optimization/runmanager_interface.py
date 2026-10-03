@@ -2,7 +2,7 @@
 
 runmanager never stops. Submitting appends to the running queue; there is no
 queue to start, drain or wait on. A shot is complete when runmanager has sent
-it to lyse and lyse has analysed it, which is the routine being handed its
+it to lyse and lyse has analyzed it, which is the routine being handed its
 row. Every shot carries the identifier runmanager minted for its queue row,
 written into the shot file: that is what a cost is matched to a proposal by.
 """

@@ -8,7 +8,7 @@ A session that has stopped shows ``Ended:`` and the reason in the window's phase
 
 How an error is reported depends on what the session was doing:
 
-* During the opening, Start and Reset, and when a Gaussian process batch finishes, the message becomes the reason in the window. The traceback goes to the Output dock. The routine does not raise, and lyse goes on analysing.
+* During the opening, Start and Reset, and when a Gaussian process batch finishes, the message becomes the reason in the window. The traceback goes to the Output dock. The routine does not raise, and lyse goes on analyzing.
 * During the work after a shot, the window reads ``Ended: stopped by an error``. The routine raises the error in lyse, in that pass or the next, and lyse then pauses analysis. An error raised in the next pass has its traceback in the Output dock as soon as it happens. When you resume, the shots of the failed pass are part of the next pass.
 
 The messages quoted below are the reason in the first case and the error the routine raises in the second.
@@ -42,7 +42,7 @@ The session notes runmanager's labscript file at the opening and compares it bef
 A refused sequence join
 -----------------------
 
-A run is one runmanager sequence, and runmanager remembers a sequence only until it restarts. If runmanager restarts during a run, it refuses the next submission, and the session stops with runmanager's reason, such as ``Cannot add shots to sequence <id>: runmanager has no record of it, or has two and was not told which``. runmanager also refuses to join a sequence of a different labscript file. The session does not raise: the routine prints the reason once and lyse goes on analysing. Press Reset. The new session starts a new sequence, with an empty history.
+A run is one runmanager sequence, and runmanager remembers a sequence only until it restarts. If runmanager restarts during a run, it refuses the next submission, and the session stops with runmanager's reason, such as ``Cannot add shots to sequence <id>: runmanager has no record of it, or has two and was not told which``. runmanager also refuses to join a sequence of a different labscript file. The session does not raise: the routine prints the reason once and lyse goes on analyzing. Press Reset. The new session starts a new sequence, with an empty history.
 
 A missing cost column
 ---------------------

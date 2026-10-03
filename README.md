@@ -43,7 +43,7 @@ and open `docs/build/index.html`.
 <!-- Link the hosted Read the Docs documentation here once its address is decided. -->
 
 
-## Licence
+## License
 
 MIT. Carries code from M-LOOP (MIT, Michael Hush) and analysislib-mloop
 (BSD 3-clause); both notices are in [LICENSE](https://github.com/spielman-group/labscript-optimization/blob/Development/LICENSE).

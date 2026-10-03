@@ -1,4 +1,4 @@
-"""Learner behaviour, against analytic cost functions.
+"""Learner behavior, against analytic cost functions.
 
 How many a learner proposes, and under what source, is exercised through the
 one method the base class declares, ``propose``, so those tests survive any
@@ -260,7 +260,7 @@ def test_directed_random_is_not_derailed_by_a_bad_run(space, rng):
 
     distances = np.abs(proposals[:, None, :] - seen[None, :, :]).max(axis=2)
     assert (distances.min(axis=1) <= 0.5 + 1e-9).all()
-    # And it must not centre on the point that produced the bad cost.
+    # And it must not center on the point that produced the bad cost.
     assert (np.abs(proposals - np.array([4.9, 4.9])).max(axis=1) > 0.5).all()
 
 
@@ -283,7 +283,7 @@ def test_directed_random_without_a_trust_region_is_a_random_learner(space, rng):
 def test_directed_random_prefers_mediocre_points_over_the_best_one(space, rng):
     """The default band sits away from the best point, on purpose.
 
-    Centring the search on middling results is what makes this learner explore
+    Centering the search on middling results is what makes this learner explore
     rather than refine, which is the reason it exists.
     """
     seen = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
@@ -327,7 +327,7 @@ def test_an_impossible_trust_range_is_refused(space, rng, trust_range):
     """Including one written backwards, which is not silently put in order.
 
     A backwards pair asks for a band running from the best cost towards the
-    worst, which is nothing the learner can honour; sorting it would run a
+    worst, which is nothing the learner can honor; sorting it would run a
     search the lab did not ask for and never say so.
     """
     with pytest.raises(ValueError, match='trust_range'):
@@ -985,7 +985,7 @@ def test_a_gaussian_process_describes_the_real_data_after_a_proposal_fails(
 
     Folding a batch's own picks into the fit is what stops them all chasing one
     corner, but those picks are guesses at what the apparatus will report. If
-    the search then raises -- a minimiser giving up, a prediction on a
+    the search then raises -- a minimizer giving up, a prediction on a
     degenerate kernel -- anything reading the model next, for a prediction or
     for where it thinks the optimum is, would be reading those guesses back as
     measurements.
@@ -997,15 +997,15 @@ def test_a_gaussian_process_describes_the_real_data_after_a_proposal_fails(
     before = model.predict(probe)
 
     searches = []
-    search = model.minimise_acquisition
+    search = model.minimize_acquisition
 
     def give_up_after_the_first(*args, **kwargs):
         searches.append(1)
         if len(searches) > 1:
-            raise RuntimeError('the minimiser gave up')
+            raise RuntimeError('the minimizer gave up')
         return search(*args, **kwargs)
 
-    model.minimise_acquisition = give_up_after_the_first
+    model.minimize_acquisition = give_up_after_the_first
     with pytest.raises(RuntimeError, match='gave up'):
         model.ask(history, 4)
 
@@ -1312,9 +1312,9 @@ def test_a_model_that_raises_stops_the_session_at_the_next_refill(space):
 
 
 def test_each_batch_cycle_holds_at_least_explore_runs_explorer_shots(space):
-    """Counted from one batch's first point to the next's, and every explorer
-    shot in that span counts, the ones that kept the queue topped up while the
-    batch computed among them: a ready batch waits only for the rest.
+    """Counted from one batch's last point to the next batch's first, and every
+    explorer shot in that span counts, the ones that kept the queue topped up
+    while the batch computed among them: a ready batch waits only for the rest.
 
     Counted apart from those, a cycle here would hold four; left uncounted, one.
     """
@@ -1565,7 +1565,7 @@ def test_an_acquisition_that_is_never_finite_says_so(space, rng):
     lows = np.zeros(space.num_params)
     highs = np.ones(space.num_params)
     with pytest.raises(RuntimeError, match='not finite at any'):
-        model.minimise_acquisition(
+        model.minimize_acquisition(
             model.regressor, 1.0, space.minimum, lows, highs
         )
 

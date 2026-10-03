@@ -1,4 +1,4 @@
-# Upgrading from M-LOOP and analysislib-mloop
+# Migrating from M-LOOP
 
 Your existing `mloop_config.toml` will not load as it stands, and the two
 runmanager globals the old plugin needed are no longer used. Everything else
@@ -193,7 +193,7 @@ changing `[GENERAL] learner`.
 ## 4. Remove the tag globals
 
 **Delete `mloop_session` and `mloop_iteration` from runmanager.** The old
-plugin stamped them on every shot so it could recognise its own results. A
+plugin stamped them on every shot so it could recognize its own results. A
 shot is now identified by the id runmanager mints for its queue row and writes
 into the shot file, which lyse reads as the `shot_id` column, so there is
 nothing for you to create and nothing to keep in step.
@@ -246,7 +246,7 @@ functions, two to eight parameters, budgets of 120 to 1200 shots, and the
 nineteen of the twenty-eight (parameters, budget, function) cells and sixteen
 members in the other nine; counted by blocks of four functions, eight wins
 five of the seven and sixteen takes a block only at the largest budget. Four
-members, at two and at four parameters, improves by under a per cent when
+members, at two and at four parameters, improves by under a percent when
 given two and a half times the budget, which is what converging prematurely
 looks like. [`benchmarks/README.md`](https://github.com/spielman-group/labscript-optimization/blob/Development/benchmarks/README.md),
 under "What the sweep found", has the tables, the caveats, and the harness and
@@ -272,9 +272,8 @@ goes out whole.
   above -- and `[RUNMANAGER_GLOBALS.<group>.<name>]` takes `expr`, `args` and
   `enable`. `[ANALYSIS] groups` still selects which groups take part, and
   `enable = false` still keeps a parameter in the file but out of the search. A
-  name in
-  `groups` that no table defines is refused, naming it, so a misspelt group
-  cannot leave the one it meant switched off.
+  name in `groups` that no table defines is refused, naming it, so a misspelled
+  group cannot leave the one it meant switched off.
 - `cost_key` is still `[routine_name, result_name]`, `maximize` still means
   your cost column holds something to be made large, and an optional
   `u_<result>` column alongside is still read as the uncertainty and weights
@@ -284,8 +283,6 @@ goes out whole.
   never computes one.
 - `max_num_runs` and `max_num_runs_without_better_params` mean what they
   meant.
-- Adding the routine to lyse opens a paused session; Start begins submitting.
-  Removing or restarting it, or reaching the run budget, stops it.
 
 ## What changed in the algorithms
 

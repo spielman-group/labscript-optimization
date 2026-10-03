@@ -114,7 +114,7 @@ def test_a_switched_off_global_is_not_set():
 
     The parameter keeps its bounds, because a reader of the file and of
     ``space.disabled`` wants to see what is being held out. A global has
-    nothing to hold out: not setting it is the whole of the behaviour.
+    nothing to hold out: not setting it is the whole of the behavior.
     """
     config = config_module.loads(
         MINIMAL
@@ -385,7 +385,7 @@ def test_a_setting_left_out_takes_the_value_the_documents_promise():
     """What a lab may leave out on the strength of what it was told.
 
     UPGRADING §5 promises two buffered runs, the Gaussian process is the
-    learner a file naming none gets, and a cost is minimised unless the file
+    learner a file naming none gets, and a cost is minimized unless the file
     says otherwise -- the flip nothing downstream would show.
     """
     config = config_module.loads(MINIMAL)
@@ -489,7 +489,7 @@ max = 1.0
 
 
 def test_a_listed_group_that_no_table_defines_is_refused_naming_it():
-    """A misspelt group matches nothing, and the group it was meant to name is
+    """A misspelled group matches nothing, and the group it was meant to name is
     then one nobody listed: switched off, its globals never set, while the lab
     believes its parameters are being searched.
     """

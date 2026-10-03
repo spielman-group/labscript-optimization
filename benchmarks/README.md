@@ -7,7 +7,7 @@ a command below, from the rows in `results/`, and is set out under "What the
 sweep found".
 
 This is not a second test suite. A benchmark measures search quality, which is
-a number that moves; the suite in `tests/` proves behaviour, which is a thing
+a number that moves; the suite in `tests/` proves behavior, which is a thing
 that either holds or does not. What the suite does run is the `smoke` sweep
 (`tests/test_benchmarks.py`), because a harness nobody runs rots, and a check
 that does not run looks exactly like one that passes.

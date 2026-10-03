@@ -1,6 +1,6 @@
 """The optimization session's thread, and the queue everything reaches it by.
 
-The lyse routine hands over the shots lyse has analysed and returns within
+The lyse routine hands over the shots lyse has analyzed and returns within
 :data:`REPLY_TIMEOUT`, so the fitting and the runmanager traffic happen here,
 on a thread of the routine's own. The thread is purely reactive: it proposes
 only in response to a request or a window command.
@@ -30,7 +30,7 @@ class Worker:
         The view the thread updates after each request.
     command_queue : queue.Queue
         Where the window puts its commands, and the thread takes its requests.
-    interface_factory : callable
+    interface_factory : Callable
         What a configuration is turned into a runmanager interface by.
     """
 

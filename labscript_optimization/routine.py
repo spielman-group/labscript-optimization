@@ -82,7 +82,7 @@ NO_VALUE_YET = {
 }
 
 
-def analysed(paths):
+def analyzed(paths):
     """The rows of lyse's dataframe for the files in ``paths``.
 
     The rows come in one request, in the dataframe's order. A file named twice,
@@ -107,10 +107,10 @@ def extract(shots, config):
     there does not make the shot the session's -- runmanager mints one for
     every row it compiles, a user's own shots included -- and which ids belong
     to the session is the session's own answer. A shot with an id is read
-    whether or not its cost is usable: it has run and lyse has analysed it, so
+    whether or not its cost is usable: it has run and lyse has analyzed it, so
     withholding it would leave its id awaited until a reconcile quietly dropped
     it, understating the runs spent. The sign flip for ``maximize`` happens
-    here, on the way in, so everything downstream minimises; the session puts
+    here, on the way in, so everything downstream minimizes; the session puts
     it back in the best cost it reports.
 
     Parameters
@@ -240,7 +240,7 @@ class OptimizationRoutine(lyse.Routine):
                 "labscript_optimization's routine runs on the shots of a "
                 "multishot pass; add it to lyse's multishot routines."
             )
-        filepaths, observations = extract(analysed(self.paths), self.config)
+        filepaths, observations = extract(analyzed(self.paths), self.config)
         self.worker.hand_over(filepaths, observations, save_status)
 
     def close(self):

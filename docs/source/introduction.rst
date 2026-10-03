@@ -12,7 +12,7 @@ Behind the routine is one *session*: the history of every proposal made, one lea
 
 #. The session submits the learner's proposals to runmanager, one shot per proposal. runmanager compiles each shot and adds it to its running queue, which is never stopped or waited on. The globals in runmanager's window are left at the last proposal submitted.
 #. BLACS runs the shots. lyse analyses each one, and your singleshot routine computes its cost.
-#. lyse runs the optimization routine on the batch of shots it has just analysed. The routine reads each shot's id and cost from lyse's dataframe, hands them to the session and returns. The session takes the costs, saves its progress into the dataframe (see :doc:`results`), and submits what the learner proposes next.
+#. lyse runs the optimization routine on the batch of shots it has just analyzed. The routine reads each shot's id and cost from lyse's dataframe, hands them to the session and returns. The session takes the costs, saves its progress into the dataframe (see :doc:`results`), and submits what the learner proposes next.
 
 A run is one runmanager sequence: the first submission starts it and every later one joins it.
 
@@ -21,14 +21,14 @@ Shot ids
 
 runmanager mints an id for every queue row it compiles and writes it into the shot file, and lyse reads it as the ``shot_id`` column. The session records the id of each shot it submits and matches costs to proposals by it. Shots can therefore come back in any order, and shots that are not the session's pass through unharmed: your own shots in the same queue, and the default shots runmanager makes to keep the apparatus busy, which carry no id. The session takes a cost for an id once, so a shot that BLACS reruns is not counted twice.
 
-The session keeps no count of shots in flight. Each time the routine runs it asks runmanager which of the awaited shots can still produce a cost, and gives up on a shot that was cancelled or deleted instead of waiting for it for ever. The window counts such shots as dropped.
+The session keeps no count of shots in flight. Each time the routine runs it asks runmanager which of the awaited shots can still produce a cost, and gives up on a shot that was canceled or deleted instead of waiting for it forever. The window counts such shots as dropped.
 
 The session thread
 ~~~~~~~~~~~~~~~~~~
 
 lyse runs a multishot routine inline, so a slow one delays every shot behind it. The routine therefore does no fitting and no runmanager traffic. It hands the observations to the session thread and waits at most two seconds for the reply, which the thread sends before it talks to runmanager again. A reply that arrives later is saved onto its shots at the next pass.
 
-lyse runs the routine once per batch of analysed shots, not once per shot, and names every shot of the batch in the routine's ``paths``. The routine hands over all of them.
+lyse runs the routine once per batch of analyzed shots, not once per shot, and names every shot of the batch in the routine's ``paths``. The routine hands over all of them.
 
 Learners
 --------
@@ -45,7 +45,7 @@ The ``learner`` setting of the configuration chooses what proposes shots. :doc:`
     Evolves a population. It proposes a whole generation at once and waits for all of it.
 
 ``gaussian_process``
-    Fits a Gaussian process to the usable observations and proposes the points it favours, in batches computed on a background thread. An explorer learner keeps runmanager's queue filled meanwhile.
+    Fits a Gaussian process to the usable observations and proposes the points it favors, in batches computed on a background thread. An explorer learner keeps runmanager's queue filled meanwhile.
 
 Relation to M-LOOP
 ------------------

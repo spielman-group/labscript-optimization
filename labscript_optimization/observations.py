@@ -16,7 +16,7 @@ import numpy as np
 #: Submitted, and a cost may still arrive.
 PENDING = "pending"
 
-#: No cost will ever arrive. The shot was cancelled, deleted, refused, or is
+#: No cost will ever arrive. The shot was canceled, deleted, refused, or is
 #: behind a row only an operator can clear.
 DROPPED = "dropped"
 
@@ -38,7 +38,7 @@ class Observation:
         params: The parameter vector that was requested, in real units, in
             :class:`~labscript_optimization.space.ParameterSpace` order.
         cost: The measured cost, or ``None`` while there is none. Lower is
-            better; a maximised quantity has already had its sign flipped by
+            better; a maximized quantity has already had its sign flipped by
             the time it gets here.
         uncer: Standard error on ``cost``, or ``None`` when the configuration
             names no uncertainty column.

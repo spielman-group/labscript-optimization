@@ -47,33 +47,33 @@ class RandomLearner(ParameterSpaceLearner):
 
 
 class DirectedRandomLearner(RandomLearner):
-    """Random draws centred on a previously seen point.
+    """Random draws centered on a previously seen point.
 
     Each proposal is either a pure random draw, with probability
-    ``explore_fraction``, or a draw from a trust region centred on one of the
+    ``explore_fraction``, or a draw from a trust region centered on one of the
     observations whose cost falls inside ``trust_range``.
 
     ``trust_range`` is measured as a fraction of the way from the worst cost
-    seen to the best, so ``[1, 1]`` centres on the best point and values near
-    zero centre on poor ones. The default sits near the worst end: spreading
+    seen to the best, so ``[1, 1]`` centers on the best point and values near
+    zero center on poor ones. The default sits near the worst end: spreading
     the search over mediocre points is what makes this learner an explorer.
 
     Args:
         space: The parameter space to search.
         rng: Source of randomness.
-        trust_region: Maximum distance from the centre point. A float in (0, 1)
+        trust_region: Maximum distance from the center point. A float in (0, 1)
             is a fraction of each parameter's range; a sequence is absolute
             distances. ``None`` searches the whole space, which makes this
             learner equivalent to :class:`RandomLearner`.
         trust_range: Two fractions, in order, bounding which observations may
-            be chosen as the centre.
+            be chosen as the center.
         trust_gaussian: Draw from a Gaussian of width ``trust_region`` about
-            the centre instead of uniformly within it.
+            the center instead of uniformly within it.
         explore_fraction: Share of proposals that ignore the trust region and
             draw from the whole space.
     """
 
-    #: It centres its draws on the shots seen, whoever proposed them.
+    #: It centers its draws on the shots seen, whoever proposed them.
     history_scope = "all"
 
     def __init__(
@@ -123,11 +123,11 @@ class DirectedRandomLearner(RandomLearner):
         candidates = params[inside]
         return candidates[self.rng.integers(len(candidates))]
 
-    def draw_near(self, centre: np.ndarray) -> np.ndarray:
+    def draw_near(self, center: np.ndarray) -> np.ndarray:
         """One draw about a center point, Gaussian or uniform per ``trust_gaussian``."""
         if self.trust_gaussian:
-            return self.space.clip(self.rng.normal(centre, self.trust_region))
-        return self.space.uniform(self.rng, 1, centre, self.trust_region)[0]
+            return self.space.clip(self.rng.normal(center, self.trust_region))
+        return self.space.uniform(self.rng, 1, center, self.trust_region)[0]
 
     def ask(self, history: Sequence[Observation], k: int) -> np.ndarray:
         seen = usable(history)

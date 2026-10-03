@@ -278,7 +278,7 @@ class Config:
     #: Stop after this many completed shots without a better cost. Every
     #: completed shot counts, including one whose cost was not usable: it is
     #: still a shot spent, and counting only the usable ones would let a
-    #: session whose detector has died run for ever on the limit meant to
+    #: session whose detector has died run forever on the limit meant to
     #: stop it.
     max_num_runs_without_better_params: int | None = None
     #: Seed of the random number generator the learners draw from, or ``None``
@@ -340,7 +340,7 @@ class Config:
         return routine, f"u_{result}"
 
     def globals_for(self, params: Sequence[float]) -> dict[str, Any]:
-        """The runmanager globals that realise one parameter vector.
+        """The runmanager globals that realize one parameter vector.
 
         Each parameter reaches its mappings as a Python ``float``, so a
         global's value -- the parameter itself, or what an ``expr`` builds

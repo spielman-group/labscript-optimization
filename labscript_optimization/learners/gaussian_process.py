@@ -49,7 +49,7 @@ start, which the session proposes itself, reads ``start``. The batch barrier
 is read off those sources, so a history whose records carry none -- one built
 outside a session -- holds no barrier.
 
-Exploration within the batch comes from the acquisition, which minimises
+Exploration within the batch comes from the acquisition, which minimizes
 
     cost_bias * predicted_cost - uncer_bias * predicted_standard_deviation
 
@@ -276,7 +276,7 @@ class GaussianProcess:
         return kernel
 
     def point_variances(self, seen: Sequence[Observation], scaler):
-        """Per-point variances for the regressor, in standardised cost units.
+        """Per-point variances for the regressor, in standardized cost units.
 
         An observation with no uncertainty of its own gets zero here rather
         than the scalar floor, because ``uncers_array`` fills it in as exact.
@@ -311,7 +311,7 @@ class GaussianProcess:
         """Fit the cost scaling and the kernel hyperparameters to ``seen``.
 
         The scaling belongs with them because it sets the units the noise level
-        is measured in: restandardising as each observation arrived would leave
+        is measured in: restandardizing as each observation arrived would leave
         a cached kernel describing units that had since moved. The fit starts
         from the kernel of the last refit, or from :meth:`new_kernel` at the
         first, and runs no restarts, so a refit is one descent from where the
@@ -474,7 +474,7 @@ class GaussianProcess:
             self.cost_bias * (dk.T @ regressor.alpha_) - uncer_weight * dstd,
         )
 
-    def minimise_acquisition(
+    def minimize_acquisition(
         self, regressor, uncer_weight: float, best: np.ndarray, lows, highs
     ):
         """Multi-start L-BFGS-B over the acquisition. Returns scaled parameters.
@@ -576,7 +576,7 @@ class GaussianProcess:
             # greedy one, by default -- and a batch as long as the schedule
             # spends one point at each weight.
             weight = self.uncer_bias[i % len(self.uncer_bias)]
-            scaled = self.minimise_acquisition(
+            scaled = self.minimize_acquisition(
                 regressor, weight, best_params, lows, highs
             )
             proposals[i] = self.space.clip(self.space.unscale(scaled))
@@ -609,7 +609,7 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         Bounds on the RBF length scale, in units of the unit cube the
         parameters are scaled onto. ``0 < low < high``.
     noise_level_bounds : (float, float)
-        Bounds on the white-noise level, in units of the standardised cost.
+        Bounds on the white-noise level, in units of the standardized cost.
         ``0 < low < high``.
     cost_bias : float
         Weight on predicted cost in the acquisition.
