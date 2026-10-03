@@ -25,7 +25,8 @@ class Parameter:
         minimum: Lower bound, in real units.
         maximum: Upper bound, in real units.
         start: Preferred first value, or ``None`` to start from a random draw.
-        enable: False leaves the parameter out of the search at its start value.
+        enable: False drops the parameter from the search, start included. Its
+            runmanager global is not set, so it keeps the value runmanager holds.
     """
 
     name: str

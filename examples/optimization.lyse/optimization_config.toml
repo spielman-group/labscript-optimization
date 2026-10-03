@@ -37,6 +37,7 @@ max = 20.0
 start = 10.0
 
 # A global computed from parameters: expr is a lambda taking args in order.
+# It sees the names runmanager globals do, so exp, sqrt, pi and np work.
 [RUNMANAGER_GLOBALS.MOT.ramp_end]
 args = ["ramp_start", "ramp_span"]
 expr = "lambda t0, dt: t0 + dt"

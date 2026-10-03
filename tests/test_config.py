@@ -519,7 +519,11 @@ def test_a_group_with_only_globals_in_it_is_defined():
     assert [g.name for g in config.globals] == ['gx', 'doubled']
 
 
-def test_a_missing_cost_key_says_so():
+@pytest.mark.parametrize(
+    'missing, written',
+    [('cost_key', 'cost_key = ["r", "c"]\n'), ('groups', 'groups = ["G"]\n')],
+)
+def test_a_missing_analysis_setting_says_so(missing, written):
     """And says it plainly.
 
     Every complaint about the file is a ValueError, including this one. A
@@ -527,17 +531,8 @@ def test_a_missing_cost_key_says_so():
     reaches the reader in quotes with its own quotes backslashed.
     """
     with pytest.raises(ValueError) as raised:
-        config_module.loads(
-            """
-[ANALYSIS]
-groups = ["G"]
-[PARAMETERS.G.x]
-global_name = "gx"
-min = 0.0
-max = 1.0
-"""
-        )
-    assert str(raised.value).startswith('ANALYSIS.cost_key is required')
+        config_module.loads(MINIMAL.replace(written, ''))
+    assert str(raised.value).startswith(f'ANALYSIS.{missing} is required')
 
 
 @pytest.mark.parametrize('missing', ['min', 'max'])
@@ -812,6 +807,42 @@ def test_an_expression_that_is_not_a_function_stops_the_load():
     message = str(raised.value)
     assert 'doubled' in message
     assert '2 * 3' in message
+
+
+def test_an_expression_sees_the_names_runmanager_globals_do():
+    """``exp`` is no builtin: it is there because runmanager's namespace is
+    numpy's and pylab's, which an expression is evaluated in as a global is.
+    """
+    config = config_module.loads(
+        MINIMAL + '[RUNMANAGER_GLOBALS.G.decay]\nexpr = "lambda v: exp(-v)"\nargs = ["x"]\n'
+    )
+    assert config.globals_for([0.5])['decay'] == pytest.approx(np.exp(-0.5))
+
+
+def test_an_expression_naming_what_runmanager_globals_cannot_see_stops_the_load():
+    """``math`` is not in that namespace, and the lambda would fail on its
+    first proposal, hours in, so the load calls it once to find out.
+    """
+    with pytest.raises(ValueError) as raised:
+        config_module.loads(
+            MINIMAL
+            + '[RUNMANAGER_GLOBALS.G.decay]\nexpr = "lambda v: math.exp(-v)"\nargs = ["x"]\n'
+        )
+    message = str(raised.value)
+    assert 'decay' in message
+    assert "'math'" in message
+
+
+def test_an_expression_that_fails_only_at_the_middle_of_its_ranges_still_loads():
+    """A ratio of a parameter whose range is centered on zero fails at the
+    middle and nowhere else, so that one point does not refuse the file.
+    """
+    config = config_module.loads(
+        MINIMAL
+        + '[PARAMETERS.G.y]\nmin = -1.0\nmax = 1.0\n'
+        + '[RUNMANAGER_GLOBALS.G.ratio]\nexpr = "lambda a, b: a / b"\nargs = ["x", "y"]\n'
+    )
+    assert config.globals_for([0.5, 0.25])['ratio'] == 2.0
 
 
 def test_a_typo_in_a_group_nobody_switched_on_is_still_rejected():

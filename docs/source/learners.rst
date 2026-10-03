@@ -40,7 +40,7 @@ Draws every point uniformly over the box. It reads no history and fits nothing. 
 ``directed_random``
 -------------------
 
-Draws each point near one already seen. A draw is centered on a usable observation whose cost lies in the band ``trust_range`` sets, measured from the worst cost seen (0) to the best (1), and lands within ``trust_region`` of that center, drawn uniformly, or with ``trust_gaussian`` from a Gaussian of that width, clipped to the box. A share ``explore_fraction`` of the draws ignores the band and the region and covers the whole box. With no usable observation yet, it draws uniformly. When no observation's cost lies in the band, it centers on the best point.
+Draws each point near one already seen. A draw is centered on a usable observation whose cost lies in the band ``trust_range`` sets, measured from the worst cost seen (0) to the best (1), and lands within ``trust_region`` of that center, drawn uniformly, or with ``trust_gaussian`` from a Gaussian of that width, clipped to the box. A share ``explore_fraction`` of the draws ignores the band and the region and covers the whole box. ``trust_region`` is always a region, so to search the whole box set ``explore_fraction = 1``, or choose ``random``. With no usable observation yet, it draws uniformly. When no observation's cost lies in the band, it centers on the best point.
 
 The default band lies toward the poor end of the costs, so the search spreads over mediocre points and explores. That is why ``gaussian_process`` uses it as its default explorer. A band near the best end, such as ``trust_range = [0.9, 1.0]``, makes it refine around the best points instead. Choose it for a search that needs no fit and stays close to what has been measured.
 

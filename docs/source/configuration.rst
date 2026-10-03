@@ -140,7 +140,7 @@ A runmanager global computed from one or more parameters. ``<name>`` is the glob
     * - ``expr``
       - string
       - none
-      - The source of a Python lambda taking ``args`` in order, such as ``"lambda t0, dt: t0 + dt"``. Without it, ``args`` must name one parameter and the global takes its value. The expression is evaluated with ``eval`` when the file loads, so the file is as trusted as your analysis routines. A lambda that cannot be built, is not callable, or cannot take that many arguments is refused at load. Nothing is imported for it, so a free name such as ``math`` loads without complaint and fails when the first proposal is turned into globals.
+      - The source of a Python lambda taking ``args`` in order, such as ``"lambda t0, dt: t0 + dt"``. Without it, ``args`` must name one parameter and the global takes its value. The expression is evaluated with ``eval`` when the file loads, so the file is as trusted as your analysis routines. A lambda that cannot be built, is not callable, or cannot take that many arguments is refused at load. It is evaluated in the namespace runmanager evaluates its globals in, so it sees the names a runmanager global does, such as ``exp``, ``sqrt``, ``pi`` and ``np``. At load each global is called once with its parameters at the middle of their ranges, and a name it cannot see refuses the file, naming the global and the name. Any other error in that call does not refuse the file, and appears when the first proposal is turned into globals.
     * - ``enable``
       - boolean
       - ``true``
@@ -194,7 +194,7 @@ Takes no knobs. A table written for it must be empty.
     * - ``trust_region``
       - number or list
       - 0.05
-      - How far a draw lands from its center, in the form described above: the largest distance of a uniform draw, or the width of a Gaussian one.
+      - How far a draw lands from its center, in the form described above: the largest distance of a uniform draw, or the width of a Gaussian one. It is always a region, so to search the whole space set ``explore_fraction`` to 1, or use the ``random`` learner.
     * - ``trust_range``
       - ordered pair in [0, 1]
       - ``[0.1, 0.25]``
@@ -290,7 +290,7 @@ Takes no knobs. A table written for it must be empty.
     * - ``length_scale_bounds``
       - pair of numbers, ``[low, high]``
       - ``[1e-2, 1e2]``
-      - The bounds on each parameter's length scale, in units of the unit cube the parameters are scaled onto. The load checks only that there are two numbers, and the fit expects them positive and in order. When a fit leaves length scales at an end of the bounds, a warning names the parameters, and is repeated only when that set changes.
+      - The bounds on each parameter's length scale, in units of the unit cube the parameters are scaled onto. Both numbers must be positive, with ``low`` below ``high``. When a fit leaves length scales at an end of the bounds, a warning names the parameters, and is repeated only when that set changes.
     * - ``noise_level_bounds``
       - pair of numbers, ``[low, high]``
       - ``[1e-5, 1e1]``
@@ -310,4 +310,4 @@ The whole file is checked when it loads, and the first problem stops the load wi
 * ``num_buffered_runs`` beside ``differential_evolution``, and a ``max_num_runs`` below two generations of it, are refused.
 * A parameter that is searched and reaches no global, a global whose ``args`` name a parameter that is not searched, and a repeated parameter or global name are refused.
 
-What the load cannot know is found later: that the globals exist in runmanager, a free name in an ``expr``, whether the Gaussian process's bounds are positive and in order, and the values in the table of a learner the session does not build.
+What the load cannot know is found later: that the globals exist in runmanager, and the values in the table of a learner the session does not build.

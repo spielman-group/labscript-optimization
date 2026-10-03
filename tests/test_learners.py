@@ -1875,6 +1875,20 @@ MISWRITTEN = [
         "high], not [1e-05, True].",
     ),
     (
+        'gaussian_process',
+        'length_scale_bounds',
+        [1e2, 1e-2],
+        "length_scale_bounds must be an ordered pair of positive numbers, "
+        "[low, high] with 0 < low < high, got [100.0, 0.01].",
+    ),
+    (
+        'gaussian_process',
+        'noise_level_bounds',
+        [0.0, 1.0],
+        "noise_level_bounds must be an ordered pair of positive numbers, "
+        "[low, high] with 0 < low < high, got [0.0, 1.0].",
+    ),
+    (
         'differential_evolution',
         'mutation_scale',
         0.8,

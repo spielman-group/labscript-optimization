@@ -25,16 +25,17 @@ keys named here before it will load.
 ``[GENERAL]`` carries the session's own settings -- which learner runs, how
 deep the queue is, what stops the run -- and a learner's knobs are written in
 ``[LEARNER.<name>]``, the table of the learner that takes them. A named table
-is held to that learner's constructor, so every key in it is a knob that
-learner takes and every value is of the kind that knob takes, and a knob found
-in ``[GENERAL]`` is refused with the tables it belongs in named. The Gaussian
-process runs an explorer beside itself, so two learners run whenever it is the
-one selected, and a knob both take is written twice, once in each table, and
-each gets its own value.
+is held to that learner's constructor: every key in it must be a knob that
+learner takes, and every value must be of the kind that knob takes, and a knob
+found in ``[GENERAL]`` is refused with the tables it belongs in named. The
+Gaussian process runs an explorer beside itself, so two learners run whenever
+it is the one selected, and a knob both take is written twice, once in each
+table, and each gets its own value.
 
-Known is not the same as acted on: a table written for a learner no session
-builds goes unread, which is what lets one file carry the settings for several
-learners and switch between them.
+The keys of every named table are checked, but its values only when its
+learner is built: a table written for a learner no session builds has its
+keys checked and its values not, which is what lets one file carry the
+settings for several learners and switch between them.
 
 A parameter name and a global name are each unique across the active groups:
 both are looked up by name when a proposal is turned into runmanager globals,
@@ -156,8 +157,9 @@ class GlobalMapping:
 
     Args:
         name: The runmanager global to set.
-        expr: Source of a lambda taking ``args`` in order, or ``None`` to pass
-            the single argument through unchanged.
+        expr: Source of a lambda taking ``args`` in order, evaluated in the
+            namespace runmanager evaluates globals in, or ``None`` to pass the
+            single argument through unchanged.
         args: Names of the parameters feeding this global.
     """
 
@@ -188,10 +190,16 @@ class GlobalMapping:
                     f"name one parameter."
                 )
             return
+        # The namespace runmanager evaluates its globals in, built the same
+        # way, so an expr sees the names a global does. Imported here, so a
+        # file without an expr loads neither matplotlib nor runmanager.
+        namespace = {}
+        exec("from pylab import *", namespace, namespace)
+        exec("from runmanager.functions import *", namespace, namespace)
         try:
             # The expression comes from the lab's own configuration file,
             # which is as trusted as the analysis routines themselves.
-            function = eval(self.expr)  # noqa: S307
+            function = eval(self.expr, namespace)  # noqa: S307
         except Exception as error:
             raise ValueError(
                 f"the expr for global {self.name!r} cannot be evaluated: "
@@ -427,12 +435,12 @@ def reject_misplaced_knobs(general: dict) -> None:
     # Lazily, so importing this module alone stays lightweight.
     from .learners import knobs_by_learner
 
-    knobs = knobs_by_learner()
-    misplaced = [key for key in sorted(general) if key in knobs]
+    taken_by = knobs_by_learner()
+    misplaced = [key for key in sorted(general) if key in taken_by]
     if misplaced:
         written = []
         for key in misplaced:
-            tables = [f"[LEARNER.{name}]" for name in knobs[key]]
+            tables = [f"[LEARNER.{name}]" for name in taken_by[key]]
             last = tables.pop()
             joined = f"{', '.join(tables)} or {last}" if tables else last
             written.append(f"{key!r} in {joined}")
@@ -455,11 +463,13 @@ def check_keys(raw: dict) -> None:
     knob in the wrong place, not a spelling nothing here knows.
 
     Parameter and global tables are checked whether or not their group is
-    active: a typo left to load in a switched-off group waits for the day
-    somebody switches the group on. Their depth is checked before their keys
-    are, because a table written one level short puts settings where entries
-    belong and every check after that reads the wrong thing; see
-    :func:`require_tables`.
+    listed in ``groups``, so a typo in a switched-off group does not wait for
+    the day somebody lists it. In a group that is not listed, keys, required
+    keys and types are checked, and nothing more: bounds, ``args`` and ``expr``
+    are checked only once the group is listed, in :func:`from_dict`. Their
+    depth is checked before their keys are, because a table written one level
+    short puts settings where entries belong and every check after that reads
+    the wrong thing; see :func:`require_tables`.
 
     A table this package has renamed is refused ahead of both, naming its
     replacement, because the spelling check would call it a typo and leave the
@@ -557,7 +567,12 @@ def from_dict(raw: dict) -> Config:
     analysis = raw.get("ANALYSIS", {})
     general = raw.get("GENERAL", {})
 
-    active_groups = require_type(analysis.get("groups", []), list, "ANALYSIS.groups")
+    if "groups" not in analysis:
+        raise ValueError(
+            "ANALYSIS.groups is required: the list of groups whose parameters "
+            "and globals take part. A group not listed is switched off."
+        )
+    active_groups = require_type(analysis["groups"], list, "ANALYSIS.groups")
     # A group is defined by the tables written under it, so a name listed with
     # no table is a misspelling rather than a group with nothing in it -- and
     # left to load, it takes part as nothing, while the group it was meant to
@@ -641,6 +656,22 @@ def from_dict(raw: dict) -> Config:
                 f"Give it a global_name, or name it in the args of an entry "
                 f"under RUNMANAGER_GLOBALS."
             )
+
+    # A name an expr cannot see fails only when its lambda is called, so call
+    # each mapping once with its parameters at the middle of their ranges.
+    middle = {p.name: (p.minimum + p.maximum) / 2 for p in parameters}
+    for mapping in mappings:
+        try:
+            mapping.evaluate(middle)
+        except NameError as error:
+            raise ValueError(
+                f"the expr for global {mapping.name!r} uses {error.name!r}, "
+                f"which runmanager's globals cannot see: {mapping.expr!r}"
+            ) from error
+        except Exception:
+            # Failing at this one point says nothing about the rest of the
+            # range, so any other error is left for the first submission.
+            pass
 
     if "cost_key" not in analysis:
         raise ValueError("ANALYSIS.cost_key is required: [routine_name, result_name]")

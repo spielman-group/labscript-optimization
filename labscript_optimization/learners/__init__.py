@@ -90,11 +90,11 @@ def knobs_by_learner() -> dict[str, tuple[str, ...]]:
     spelling nothing here knows: the two want different messages, and only the
     constructors can say which is which.
     """
-    knobs: dict[str, list[str]] = {}
+    taken_by: dict[str, list[str]] = {}
     for name in LEARNERS:
         for key in _option_names(name):
-            knobs.setdefault(key, []).append(name)
-    return {key: tuple(names) for key, names in knobs.items()}
+            taken_by.setdefault(key, []).append(name)
+    return {key: tuple(names) for key, names in taken_by.items()}
 
 
 def validate_options(config) -> None:
