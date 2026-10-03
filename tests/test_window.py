@@ -11,14 +11,19 @@
 #                                                                   #
 #####################################################################
 
+from pathlib import Path
 from queue import Queue
 
+from qtutils import UiLoader
+
+from labscript_optimization import window as window_module
 from labscript_optimization.window import WindowController
 
 
-def test_window_shows_progress_controls_and_can_reopen(qt_application):
+def test_window_shows_progress_and_controls(qt_application):
     commands = Queue()
-    window = WindowController(commands)
+    ui = UiLoader().load(str(Path(window_module.__file__).with_suffix('.ui')))
+    window = WindowController(ui, commands)
     window.ui.show()
     qt_application.processEvents()
 
@@ -48,7 +53,3 @@ def test_window_shows_progress_controls_and_can_reopen(qt_application):
     qt_application.processEvents()
     assert window.ui.phase_value.text() == "Ended: reached max_num_runs (2)"
     assert not window.ui.start_button.isEnabled()
-    window.ui.close()
-    assert not window.ui.isVisible()
-    window.ui.show()
-    assert window.ui.isVisible()

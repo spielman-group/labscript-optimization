@@ -42,7 +42,7 @@ Repository = "https://github.com/spielman-group/labscript-optimization/"
 Tracker = "https://github.com/spielman-group/labscript-optimization/issues/"
 
 [project.optional-dependencies]
-# The lyse routine and its worker need the suite; the learners do not. Keeping
+# The lyse routine needs the suite; the learners do not. Keeping
 # these separate is what lets the learners be unit tested without a lab.
 lyse = [
     "labscript_utils>=3.4.2",

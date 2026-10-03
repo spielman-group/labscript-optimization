@@ -1,49 +1,40 @@
 """The lyse multishot routine.
 
-A lab analysis routine is two lines::
+A lab's routine is a folder, ``<name>.lyse``, whose ``lyse_routine.py`` holds a
+subclass of :class:`OptimizationRoutine`::
 
-    from labscript_optimization.routine import optimize
-    optimize('optimization_config.toml')
+    from labscript_optimization.routine import OptimizationRoutine
 
-Adding the routine to lyse opens a paused session; a Start command begins
-submitting shots. Removing or restarting the routine, or reaching the run
-budget, stops it. :data:`SHOT_RESULTS` is saved into lyse's
-dataframe, as lyse results under :data:`RESULTS_GROUP` in the row of each
-shot the session proposed, so the best cost, where the search has got to, and
-what proposed each shot are columns of it.
+    class Optimization(OptimizationRoutine):
+        config_path = "optimization_config.toml"
 
-The routine itself does almost nothing: it reads the costs of the shots lyse
-has analysed since it last ran, hands them to the worker, and waits for the
-worker to say where the session has got to.
-
-Each message it sends carries a request number, and each message the worker
-sends carries the number of the request it belongs to. A worker still inside
-the work behind an earlier reply takes longer to answer than the routine is
-willing to wait, which is ordinary under generational submission; the number
-is what puts that answer onto the shots that earned it when it comes.
+Adding it to lyse's multishot routines opens the optimizer window with a
+paused session; Start begins submitting shots. Removing or restarting the
+routine, or reaching the run budget, stops it. :data:`SHOT_RESULTS` is saved
+into lyse's dataframe, as lyse results under :data:`RESULTS_GROUP` in the row
+of each shot the session proposed, so the best cost, where the search has got
+to, and what proposed each shot are columns of it.
 
 lyse runs a multishot routine once per drained batch of singleshot analyses
-rather than once per shot. Where analysis keeps up that is one shot an
-invocation, and where it does not -- a shot arriving while the one before it
-is still being analysed, analysis paused and resumed, or lyse started with
-shots already in the box -- it is several. lyse names them in ``lyse.paths``.
-Every one of them is a run the session spent, so every one of them is handed
-over.
+rather than once per shot, and names that batch's files in ``paths``. Every
+one of them is a run the session spent, so every one of them is handed over.
 """
 
-import atexit
-import os
-import subprocess
+import queue
 import sys
-import time
+from pathlib import Path
 
+import lyse
 import numpy as np
 
-from . import runmanager_interface
+from . import config as config_module
+from .runmanager_interface import RunmanagerInterface
+from .window import WindowController
+from .worker import Worker
 
 #: The lyse results group the session's status is written to, and so the first
 #: level of every column it produces: ``df[('labscript_optimization',
-#: 'best_cost')]``. lyse names a routine's group after the routine's file, so a
+#: 'best_cost')]``. lyse names a routine's group after the routine, so a
 #: lab collides with this only by naming a routine after the package it imports.
 RESULTS_GROUP = "labscript_optimization"
 
@@ -55,8 +46,8 @@ RESULTS_GROUP = "labscript_optimization"
 #: not the phase of whatever was proposed most recently, which is another shot
 #: whenever more than one is in flight. The other four come from the session's
 #: status, whose remaining keys are its bookkeeping, one answer for the whole
-#: run that would be repeated onto every shot of it; :func:`optimize` returns
-#: all of it.
+#: run that would be repeated onto every shot of it; the window shows all of
+#: it.
 #:
 #: ``stopped`` is here rather than with the bookkeeping because it is a marker
 #: and not a tally. A counter carries a running total onto every shot and says
@@ -88,42 +79,15 @@ NO_VALUE_YET = {
     "stopped": "",
 }
 
-#: Seconds the routine waits for the worker to answer the message it has just
-#: sent. Generous for an answer that is a dictionary and a socket hop, and
-#: short against a shot cycle.
-REPLY_TIMEOUT = 2.0
 
-#: Seconds :func:`configure_timeout` allows the worker on top of the runmanager
-#: traffic it is derived from: reading the configuration file and building the
-#: learner. That is work rather than a bounded wait, so it brings no deadline
-#: of its own to the sum.
-CONFIGURE_MARGIN = 10.0
+def analysed(paths):
+    """The rows of lyse's dataframe for the files in ``paths``.
 
-#: Seconds between one look at the worker's process and the next while waiting
-#: for a reply. A worker that has died is reported as dead within about this
-#: long, so a deadline is only ever reached by a live worker doing slow work.
-LIVENESS_POLL = 0.5
-
-#: The number carried by the ``configure`` request, and so where the routine's
-#: request counter starts. Every later message the routine sends is numbered
-#: from here upwards, and every message the worker sends carries the number of
-#: the request it belongs to.
-CONFIGURE_REQUEST = 0
-
-
-def analysed():
-    """The rows of lyse's dataframe for the shots analysed since the last pass.
-
-    ``lyse.paths`` names them, and is ``None`` outside lyse: with none named
-    there is nothing to ask lyse for, and this is ``[]``. The rows come in one
-    request, in the dataframe's order. A file named twice, after a failed
-    pass, is one row, and a BLACS rerun is a file of its own carrying the same
-    shot id, which passes through harmlessly because the session takes a cost
-    for an id once.
+    The rows come in one request, in the dataframe's order. A file named twice,
+    after a failed pass, is one row, and a BLACS rerun is a file of its own
+    carrying the same shot id, which passes through harmlessly because the
+    session takes a cost for an id once.
     """
-    import lyse
-
-    paths = lyse.paths
     if not paths:
         return []
     # Columns sorted, because lyse keeps them in the order they were added and
@@ -209,305 +173,47 @@ def save_status(filepath, status) -> None:
         )
 
 
-def configure_timeout():
-    """Seconds the worker is allowed to configure itself in.
+class OptimizationRoutine(lyse.Routine):
+    """One optimization session, as a lyse GUI routine.
 
-    The sum of the waits it contains, because a deadline shorter than that sum
-    fires first and names the wrong cause: the worker killed mid-wait, and the
-    lab told that the worker was slow when runmanager was the one that stopped
-    answering. The terms are
+    A lab's ``lyse_routine.py`` subclasses this and sets :attr:`config_path`. The
+    configuration is read once, when lyse starts the routine; restart the
+    routine after editing it.
 
-    * :data:`~labscript_optimization.runmanager_interface.GREETING_TIMEOUT`,
-      the one request runmanager is held to a short deadline for;
-    * the client's own deadline once for each request ``check_ready`` makes
-      after the greeting, of which there are
-      :data:`~labscript_optimization.runmanager_interface.CHECK_READY_REQUESTS`,
-      so that a third question asked there is visibly a reason to change this;
-    * :data:`CONFIGURE_MARGIN`, for the worker's own startup work.
-
-    The client's deadline is labconfig's ``timeouts/communication_timeout``,
-    read here as ``runmanager.client.RunmanagerClient`` reads it, with the
-    same ``COMMUNICATION_DEFAULT_TIMEOUT`` fallback, because that is the number
-    the worker's client will wait. With the fallback the sum is a little over
-    two minutes, which is a long time for a stalled lyse routine -- and
-    affordable because :func:`_drain` looks at the worker's process while it
-    waits, so a worker that has died is reported within :data:`LIVENESS_POLL`
-    and only a live worker ever reaches the deadline.
+    Attributes
+    ----------
+    config_path : str
+        The TOML configuration, relative to the routine folder.
+    interface_factory : callable
+        What the configuration is turned into a runmanager interface by.
     """
-    # Deferred, so that importing this module reads no files: the routine is
-    # imported by lyse whether or not a session is ever started.
-    from labscript_utils.labconfig import LabConfig
-    from labscript_utils.ls_zprocess import COMMUNICATION_DEFAULT_TIMEOUT
 
-    client_timeout = LabConfig().getfloat(
-        "timeouts", "communication_timeout", fallback=COMMUNICATION_DEFAULT_TIMEOUT
-    )
-    return (
-        runmanager_interface.GREETING_TIMEOUT
-        + runmanager_interface.CHECK_READY_REQUESTS * client_timeout
-        + CONFIGURE_MARGIN
-    )
+    config_path = None
+    icon = str(Path(__file__).with_name("optimizer.svg"))
+    interface_factory = RunmanagerInterface
 
-
-def start_worker(config_path, process_tree=None):
-    """Spawn the optimization worker and configure it.
-
-    Configuring is :data:`CONFIGURE_REQUEST`, the session's first request, and
-    it is given :func:`configure_timeout`. Waits for its reply, then returns
-    ``(to_worker, from_worker, popen)``.
-    """
-    # zprocess sends the class itself to the child, so the parent needs it.
-    # Imported here rather than above so that a routine which never starts a
-    # session does not pay for the learners the worker brings with it.
-    from .worker import Worker
-
-    if process_tree is None:
-        from labscript_utils.ls_zprocess import ProcessTree
-
-        # Inside a lyse analysis subprocess this is the tree already connected
-        # to lyse, so the worker becomes a child of this routine's process and
-        # goes away with it.
-        process_tree = ProcessTree.instance()
-
-    # zprocess's own deadline, and a different wait: how long the child has to
-    # start and connect back, which is over before the configure request goes
-    # out and the deadline below starts.
-    worker = Worker(process_tree, startup_timeout=30)
-    to_worker, from_worker = worker.start()
-    handles = to_worker, from_worker, worker.child
-    try:
-        # Inside the try: a worker already spawned is reaped even if its
-        # deadline is what could not be worked out.
-        allowed = configure_timeout()
-        to_worker.put(
-            ("configure", CONFIGURE_REQUEST, os.path.abspath(config_path))
-        )
-        status = _drain(
-            from_worker, worker.child, CONFIGURE_REQUEST, {}, allowed
-        )
-        if status is None:
-            raise TimeoutError(
-                f"the optimization worker did not configure within "
-                f"{allowed:g} seconds"
+    def __init__(self):
+        if self.config_path is None:
+            raise ValueError(
+                f"{type(self).__name__} must set config_path to its TOML "
+                f"configuration file."
             )
-    except BaseException:
-        _stop_worker(handles)
-        raise
-    # The Popen, not the Process: stopping the worker escalates from a
-    # request to terminate and then to kill, which zprocess does not do.
-    return handles
+        text = Path(self.config_path).read_text(encoding="utf-8")
+        self.config = config_module.loads(text)
+        ui = self.load_ui(Path(__file__).with_name("window.ui"))
+        commands = queue.Queue()
+        window = WindowController(ui, commands)
+        window.show_config(self.config, text)
+        self.worker = Worker(self.config, window, commands, self.interface_factory)
 
+    def run(self):
+        if self.paths is None:
+            raise ValueError(
+                "labscript_optimization's routine runs on the shots of a "
+                "multishot pass; add it to lyse's multishot routines."
+            )
+        filepaths, observations = extract(analysed(self.paths), self.config)
+        self.worker.hand_over(filepaths, observations, save_status)
 
-def _drain(from_worker, popen, request, pending, timeout=None):
-    """Wait for the worker's reply to ``request``, and return the status in it.
-
-    The reply to a request is the first message carrying its number. Every
-    other message is handled by what it means rather than by when it arrived,
-    which is what keeps a reply the routine stopped waiting for from being
-    read as the answer to the shots it is holding now.
-
-    ``pending`` maps a request number to the shot files that request handed
-    over. A status is written onto the shots held against its own number, for
-    each shot the session took, whichever drain it arrives in, and its number
-    is dropped from ``pending`` once it has been. Each of those shots is
-    written with its own ``phase``, the source its verdict carries. A status
-    whose number ``pending`` no longer holds -- a request that handed nothing
-    over, or one written to already -- has nothing to write.
-
-    An error raises with the worker's message, and its traceback in a note
-    naming the request it carries. That is the reply to a request whose
-    handling failed, and trailing work that failed behind a request already
-    answered; the session has stopped either way.
-
-    ``timeout`` bounds the wait and defaults to :data:`REPLY_TIMEOUT`;
-    reaching it returns ``None`` and the shots this request handed over are
-    written to when its status arrives in a later drain. The worker's process
-    is looked at every :data:`LIVENESS_POLL` seconds while waiting, so a
-    worker that has died is reported as one rather than waited out.
-
-    Anything behind the reply is swept up too, but only if it is already
-    waiting: waiting for more would hand lyse back the delay the worker exists
-    to absorb, once per shot.
-    """
-    deadline = time.monotonic() + (REPLY_TIMEOUT if timeout is None else timeout)
-    answer = None
-    while True:
-        if answer is None:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return None
-            waiting = min(LIVENESS_POLL, remaining)
-        else:
-            waiting = 0
-        try:
-            kind, number, payload = from_worker.get(timeout=waiting)
-        except TimeoutError:
-            if answer is not None:
-                return answer
-            if popen.poll() is not None:
-                raise RuntimeError(
-                    f"the optimization worker died without answering request "
-                    f"{request}"
-                )
-            continue
-        if kind == "error":
-            message, worker_traceback = payload
-            error = RuntimeError(message)
-            error.add_note(f"Worker traceback, request {number}:\n{worker_traceback}")
-            raise error
-        recorded, status = payload
-        for filepath, source in zip(pending.pop(number, ()), recorded):
-            # The session taking a cost is what says the shot is one it
-            # proposed: the id alone does not, because runmanager mints one
-            # for every queue row it compiles, and writing the status onto a
-            # shot the session never proposed would put a column of somebody
-            # else's numbers against a user's own shot.
-            if source is not None:
-                save_status(filepath, status | {"phase": source})
-        if number == request:
-            answer = status
-
-
-def optimize(config_path, storage=None, shots=None):
-    """Hand over the shots analysed since last time. The lyse routine entry point.
-
-    Args:
-        config_path: The TOML configuration.
-        storage: Where to keep the worker between invocations. Defaults to
-            ``lyse.routine_storage``.
-        shots: The shots to hand over, rows of lyse's dataframe. Defaults to
-            :func:`analysed`.
-
-    Returns:
-        The whole status the worker sends in answer to this invocation, or
-        ``None`` if the worker does not answer within :data:`REPLY_TIMEOUT`.
-        For each shot the session took, :func:`save_status` has written
-        :data:`SHOT_RESULTS` onto it: that shot's own ``phase``, and the rest
-        from that status. The status holds no ``phase`` of its own, because
-        one request can hand over shots that different learners proposed. An
-        answer that misses the deadline is not lost: the shots this
-        invocation handed over are remembered against its request number, and
-        a later invocation writes that status onto them when it arrives.
-        Worker configuration is acknowledged before the worker is stored, so
-        the first invocation receives its own answer like every later one.
-        The first invocation whose status carries a stop reason prints why;
-        later invocations of the same session get the same status back and do
-        not print it again.
-    """
-    if storage is None:
-        import lyse
-
-        storage = lyse.routine_storage
-
-    if getattr(storage, "optimization_worker", None) is None:
-        from . import config as config_module
-
-        # Read once and kept for the life of the session. The worker holds the
-        # configuration it was started with, so re-reading the file each shot
-        # would let an edit mid-session leave the two disagreeing about what
-        # the cost is -- a flipped maximize driving the search the wrong way.
-        storage.optimization_config = config_module.load(config_path)
-        storage.optimization_worker = start_worker(config_path)
-        # Configuring was this session's first request; the counter carries
-        # on from it.
-        storage.optimization_request = CONFIGURE_REQUEST
-        # The shots handed over by each request still awaiting its status, so
-        # that a status arriving after the routine gave up waiting for it is
-        # written onto the shots that produced it. A handful of entries at
-        # most: the worker owes one status per request.
-        storage.optimization_pending = {}
-        # Whether this session has already told lyse why it stopped. Every
-        # pass of a stopped session gets the same status back, and this is
-        # what keeps it from being printed again on each one.
-        storage.optimization_stop_printed = False
-        # The ordinary shutdown, where lyse asks the analysis subprocess to
-        # quit. A killed subprocess does not run this and the worker is left
-        # to zprocess's heartbeat.
-        atexit.register(stop_worker, storage)
-
-    config = storage.optimization_config
-    to_worker, from_worker, popen = storage.optimization_worker
-    if shots is None:
-        shots = analysed()
-    handed, observations = extract(shots, config)
-
-    storage.optimization_request += 1
-    request = storage.optimization_request
-    # Remembered before the message goes out, because the reply is what clears
-    # it: whether it arrives inside this invocation's wait or three
-    # invocations later, it is written onto these shots and no others.
-    storage.optimization_pending[request] = handed
-    if observations:
-        # One message however many shots it carries. The routine waits for one
-        # reply, so the verdicts a second message earned would go unread until
-        # a later invocation, leaving shots of this batch unwritten for as long
-        # as that took.
-        to_worker.put(("observe", request, tuple(observations)))
-    else:
-        # An invocation with nothing to report still sends one. Reconciling
-        # and refilling happen in the worker's trailing work, after it has
-        # replied, so a routine that returned here would stop the session
-        # giving up on shots that are not coming and stop it reviving a
-        # generation an operator has unblocked.
-        to_worker.put(("shot", request, None))
-
-    status = _drain(from_worker, popen, request, storage.optimization_pending)
-    stopped = status is not None and status.get("stopped")
-    if stopped and not storage.optimization_stop_printed:
-        # lyse shows what a routine prints. Nothing is raised, so lyse goes on
-        # analysing and the shots still in flight are still taken. Printed
-        # once per session: every later pass gets the same status back.
-        print(f"The optimization has stopped: {status['stopped']}")
-        storage.optimization_stop_printed = True
-    return status
-
-
-def exited_within(popen, timeout=5) -> bool:
-    """Whether the worker has exited, waiting up to ``timeout`` seconds for it.
-
-    Waiting is also reaping: a child nobody waits for stays a zombie for as
-    long as the lyse analysis subprocess lives.
-    """
-    try:
-        popen.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return False
-    return True
-
-
-def _stop_worker(handles) -> None:
-    """Stop and reap one spawned worker, including a partly started one."""
-    to_worker, _, popen = handles
-    try:
-        # Numberless: nothing is owed in reply, and nothing is waiting for one.
-        to_worker.put(("quit", None, None))
-    except Exception:
-        # A pipe that will not carry the request changes nothing about what
-        # follows: the worker is signalled and reaped either way.
-        pass
-    if exited_within(popen):
-        return
-    popen.terminate()
-    if exited_within(popen):
-        return
-    popen.kill()
-    # Nothing stronger is available, and blocking lyse's shutdown on a worker
-    # stuck in the kernel would help nobody.
-    exited_within(popen)
-
-
-def stop_worker(storage=None) -> None:
-    """Ask the worker to quit, and see that it has. Safe to call when there is none.
-
-    Restarting the routine is the ordinary way to begin a fresh session, so a
-    worker left behind here is one left behind every time.
-    """
-    if storage is None:
-        import lyse
-
-        storage = lyse.routine_storage
-    handles = getattr(storage, "optimization_worker", None)
-    if handles is None:
-        return
-    storage.optimization_worker = None
-    _stop_worker(handles)
+    def close(self):
+        self.worker.quit()

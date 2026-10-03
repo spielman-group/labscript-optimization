@@ -13,24 +13,15 @@
 
 """The optimizer's live controls and status window."""
 
-from pathlib import Path
-
 import pyqtgraph as pg
-from qtutils import UiLoader, inmain_decorator
+from qtutils import inmain_decorator
 from qtutils.qt import QtGui, QtWidgets
 
 
-class OptimizerWindow(QtWidgets.QMainWindow):
-    def closeEvent(self, event):
-        event.ignore()
-        self.hide()
-
-
 class WindowController:
-    def __init__(self, command_queue):
+    def __init__(self, ui, command_queue):
         self.command_queue = command_queue
-        path = Path(__file__).with_suffix(".ui")
-        self.ui = UiLoader().load(str(path), OptimizerWindow())
+        self.ui = ui
         for button, name in (
             (self.ui.start_button, "start"),
             (self.ui.pause_button, "pause"),
@@ -124,7 +115,8 @@ class WindowController:
 
         self.ui.start_button.setEnabled(not stopped and paused)
         self.ui.pause_button.setEnabled(not stopped and not paused)
-        self.ui.reset_button.setEnabled("paused" in status)
+        # Reset also retries an opening that failed.
+        self.ui.reset_button.setEnabled("paused" in status or bool(stopped))
 
         points = {source: ([], []) for source in self.points}
         best_x, best_y = [], []
