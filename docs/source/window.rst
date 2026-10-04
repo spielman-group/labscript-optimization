@@ -27,7 +27,7 @@ A session that has ended can only be reset. All three buttons are disabled while
 The runmanager indicator
 ------------------------
 
-To the right of the buttons are runmanager's icon, its name and a light that shows whether runmanager is answering. The window asks runmanager every two seconds. A tick means it answers, an exclamation mark means it does not, and an hourglass means it has not yet been asked. The light's tooltip names the host runmanager is expected on, and gives the reason when runmanager does not answer. Nothing is printed to the Output dock for a runmanager that is not answering.
+To the right of the buttons are runmanager's icon, its name and a light that shows whether runmanager is answering. The window asks runmanager every two seconds. A tick means it answers, an exclamation mark means it does not, and an hourglass means it has not yet been asked. Beside the icon the light shows a short status, "Checking...", "Responding" or "Not responding", and hovering it shows the whole status. The light's tooltip names the host runmanager is expected on, and gives the reason when runmanager does not answer. Nothing is printed to the Output dock for a runmanager that is not answering.
 
 Start needs the tick. It enables itself once runmanager answers, with no Reset, and disables itself when runmanager stops.
 

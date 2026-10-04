@@ -23,7 +23,8 @@ from labscript_optimization.window import WindowController
 def test_window_shows_progress_and_controls(qt_application):
     commands = Queue()
     ui = UiLoader().load(str(Path(window_module.__file__).with_suffix('.ui')))
-    window = WindowController(ui, commands)
+    # The indicator is never started, so nothing is probed.
+    window = WindowController(ui, commands, lambda: None)
     window.ui.show()
     qt_application.processEvents()
 
@@ -41,7 +42,7 @@ def test_window_shows_progress_and_controls(qt_application):
     # Start needs runmanager answering as well as a session that can start, and
     # needs no Reset once it does.
     assert not window.ui.start_button.isEnabled()
-    window.show_link(True, None)
+    window.link.on_answer(True, None)
     qt_application.processEvents()
     window.ui.start_button.click()
     assert commands.get_nowait()[0] == "start"
@@ -58,13 +59,13 @@ def test_window_shows_progress_and_controls(qt_application):
     # waits for runmanager to be heard again.
     reason = {"paused": True, "pause_reason": "runmanager is not answering"}
     window.update(reason, False, (), True, False)
-    window.show_link(False, "gone")
+    window.link.on_answer(False, "gone")
     qt_application.processEvents()
     assert window.ui.phase_value.text() == "Paused: runmanager is not answering"
     assert not window.ui.start_button.isEnabled()
 
     # Answering again does not start a session that has ended.
-    window.show_link(True, None)
+    window.link.on_answer(True, None)
     window.update({"stopped": "reached max_num_runs (2)"}, False, (), True, False)
     qt_application.processEvents()
     assert window.ui.phase_value.text() == "Ended: reached max_num_runs (2)"

@@ -27,7 +27,6 @@ from pathlib import Path
 
 import lyse
 import numpy as np
-from labscript_utils.qtwidgets.link_indicator import LinkMonitor
 
 from . import config as config_module
 from .runmanager_interface import RunmanagerInterface
@@ -233,13 +232,13 @@ class OptimizationRoutine(lyse.Routine):
         client = RunmanagerClient()
         ui = self.load_ui(Path(__file__).with_name("window.ui"))
         commands = queue.Queue()
-        window = WindowController(ui, commands, host=client.host)
+        window = WindowController(
+            ui, commands, lambda: client.say_hello(timeout=1), host=client.host
+        )
         window.show_config(self.config, text)
         self.worker = Worker(self.config, window, commands, self.interface_factory)
-        self.monitor = LinkMonitor(
-            lambda: client.say_hello(timeout=1), window.show_link
-        )
-        self.monitor.start()
+        self.link = window.link
+        self.link.start()
 
     def run(self):
         """Hand the shots of lyse's current multishot pass to the session."""
@@ -256,5 +255,5 @@ class OptimizationRoutine(lyse.Routine):
 
         Called when lyse removes or restarts the routine.
         """
-        self.monitor.shutdown()
+        self.link.shutdown()
         self.worker.quit()

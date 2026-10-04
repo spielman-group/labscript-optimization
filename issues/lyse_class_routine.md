@@ -60,10 +60,10 @@ class Optimization(OptimizationRoutine):
   - the window's buttons put `start`, `pause` and `reset` on its queue;
   - `quit()` asks the thread to stop, and does not wait for it.
 - **`routine.py`'s `OptimizationRoutine`** is the lyse side alone: it builds the
-  window, reads shots out of lyse and saves their status columns into it. It
-  also runs labscript-utils' `LinkMonitor`, which probes runmanager with
-  `say_hello(timeout=1)` every 2 s, and the window shows each answer with
-  labscript-utils' `LinkIndicator`.
+  window, reads shots out of lyse and saves their status columns into it. The
+  window builds labscript-utils' `LinkIndicator`, which probes runmanager with
+  `say_hello(timeout=1)` every 2 s and whose answers gate Start; the routine
+  starts it and shuts it down in `close()`.
 
 ## Threads
 
@@ -71,7 +71,7 @@ class Optimization(OptimizationRoutine):
 | --- | --- |
 | Reading the configuration, building the window, `close()`, button slots | GUI main thread |
 | Recording costs, reconciling, proposing, submitting | Session thread |
-| Asking runmanager whether it answers | The monitor's thread |
+| Asking runmanager whether it answers | The indicator's thread |
 | Reading the analyzed shots and saving their status columns | lyse's analysis thread, in `run()` |
 | A Gaussian-process batch | The learner's background thread |
 
@@ -93,7 +93,7 @@ puts `refresh` on the queue.
    figures.
 3. Build the `Worker`, with the `interface_factory` class attribute, which is
    `RunmanagerInterface`.
-4. Start the `LinkMonitor`, reporting to the window.
+4. Start the window's `LinkIndicator`.
 
 `__init__` makes no runmanager round trip, so the window appears at once. The
 session thread builds the session, and the window shows "Opening" until it
@@ -127,7 +127,8 @@ failed by its end, so lyse shows it as that analysis's error.
   contacting runmanager. If that fails, the window shows why, the traceback is
   printed, and the routine stays up.
 - **The runmanager indicator** is a row in the window's top bar, right of the
-  buttons: runmanager's icon, the label `runmanager` and a status light. The
+  buttons: runmanager's icon, the label `runmanager` and a status light with
+  its status beside it: `Checking...`, `Responding` or `Not responding`. The
   light is an hourglass before the first answer, a tick while runmanager
   answers and an exclamation mark while it does not, and its tooltip names
   the host and gives the reason. Nothing is printed for runmanager not
@@ -164,7 +165,7 @@ arrive; lyse's spec rules this out for every routine.
 ## `close()`
 
 lyse calls `close()` on the GUI thread once the last `run()` has returned. It
-shuts down the monitor and calls `Worker.quit()`, neither of which waits: the
+shuts down the indicator and calls `Worker.quit()`, neither of which waits: the
 session thread may be inside a runmanager round trip of up to the client's
 timeout, and `close()` must not block the GUI thread. The threads are daemons,
 and the worker's exit ends them.
@@ -195,9 +196,8 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
     and a later Start goes;
   - runmanager not answering during a run pauses the session without raising
     or printing, and Start resumes it.
-- **The window,** with no client: it enables Start only when the session can
-  start and runmanager answers. labscript-utils tests the indicator and the
-  monitor.
+- **The window,** with a probe that is never started: it enables Start only when the session can
+  start and runmanager answers. labscript-utils tests the indicator.
 - **The routine, end to end,** through lyse's real worker subprocess, as lyse's
   own `GuiWorkerTests` drive it: a routine folder whose subclass sets
   `interface_factory` to the fake. It constructs, an empty multishot pass

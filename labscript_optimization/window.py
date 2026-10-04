@@ -23,10 +23,14 @@ from qtutils.qt import QtGui, QtWidgets
 
 
 class WindowController:
-    def __init__(self, ui, command_queue, host=None):
+    def __init__(self, ui, command_queue, probe, host=None):
         self.command_queue = command_queue
         self.ui = ui
-        self.link = LinkIndicator(self.ui.runmanager_status, "runmanager", host=host)
+        # Started by the routine, so a window can be built without probing.
+        self.link = LinkIndicator(
+            "runmanager", probe, host=host, on_answer=self._link_answered
+        )
+        self.ui.runmanager_link_layout.addWidget(self.link)
         # Whether the session could start, and whether runmanager answers: Start
         # needs both.
         self.startable = False
@@ -79,9 +83,7 @@ class WindowController:
             [], [], pen=None, symbol="o", symbolBrush=color
         )
 
-    def show_link(self, reachable, answer):
-        """Show whether runmanager answers, from the monitor's last status."""
-        self.link.show_link(reachable, None if reachable else answer)
+    def _link_answered(self, reachable, answer):
         self.link_online = reachable
         self._enable_start()
 
