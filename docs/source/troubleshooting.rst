@@ -10,22 +10,27 @@ How an error is reported depends on what the session was doing:
 
 * During the opening, Start and Reset, and when a Gaussian process batch finishes, the message becomes the reason in the window. The traceback goes to the Output dock. The routine does not raise, and lyse goes on analyzing.
 * During the work after a shot, the window reads ``Ended: stopped by an error``. The routine raises the error in lyse, in that pass or the next, and lyse then pauses analysis. An error raised in the next pass has its traceback in the Output dock as soon as it happens. When you resume, the shots of the failed pass are part of the next pass.
+* When Start finds an error in runmanager's globals, or runmanager stops answering during a run, the session pauses and the window reads ``Paused:`` and the reason. Nothing is printed, and the session does not end.
 
-The messages quoted below are the reason in the first case and the error the routine raises in the second.
+The messages quoted below are the reason in the first and third cases and the error the routine raises in the second.
 
 An ended session cannot be resumed. After fixing the cause, press Reset and then Start.
 
-runmanager is not running when the session opens
-------------------------------------------------
+runmanager is not answering
+---------------------------
 
-The phase reads ``Ended: runmanager did not answer within 5 seconds (<error>); an optimization session cannot start without it``, and only Reset is enabled. Start runmanager, then press Reset. A runmanager that answers the greeting and then stops answering, for instance with its GUI inside a compile or behind an open dialog, is reported as the request it left unanswered, after the client's own timeout.
+The light beside "runmanager" in the window shows an exclamation mark, its tooltip gives the reason, and Start is disabled. Nothing is printed. Start runmanager. Once the light shows a tick, Start enables itself, with no Reset.
+
+If runmanager stops answering during a run, for instance with its GUI inside a compile or behind an open dialog, the request it left unanswered pauses the session after the client's own timeout. The phase reads ``Paused: runmanager is not answering``. The shots in flight are kept, and no traceback is printed. When the light shows a tick again, press Start to resume the same run. A runmanager whose GUI is busy still answers the light, so Start can be enabled while its requests time out. The session then stays paused with the request's timeout as the reason.
+
+If runmanager was restarted, and not just busy, it no longer knows the run's sequence. The next submission after Start is refused and the session ends; see :ref:`troubleshooting:A refused sequence join`.
 
 The globals do not evaluate
 ---------------------------
 
-The phase reads ``Ended: runmanager reports an error in its globals; fix it before starting an optimization``. Fix the globals in runmanager, then press Reset.
+Start leaves the session paused, and the phase reads ``Paused: runmanager reports an error in its globals; fix it before starting an optimization``. Fix the globals in runmanager, then press Start again.
 
-A global that evaluates at the opening can still stop a later submission. runmanager refuses a batch whose globals cannot be evaluated, and its message becomes the reason. A ``global_name`` in the configuration that is in no active group in runmanager is refused with ``Global <name> not found in any active group``.
+A global that evaluates when you press Start can still stop a later submission. runmanager refuses a batch whose globals cannot be evaluated, and its message becomes the reason. A ``global_name`` in the configuration that is in no active group in runmanager is refused with ``Global <name> not found in any active group``.
 
 Scan? or JIT? ticked
 --------------------
@@ -37,7 +42,7 @@ A scan on a global the configuration does not set makes runmanager refuse the su
 The labscript file changed during a session
 -------------------------------------------
 
-The session notes runmanager's labscript file at the opening and compares it before every submission. If it has changed, the session stops with ``the labscript file changed from '<old>' to '<new>' while this session was running; its shots would no longer be the experiment it has been optimizing``. Press Reset. The new session notes whichever file runmanager then has, and starts with an empty history.
+The session notes runmanager's labscript file at its first Start and compares it before every submission. If it has changed, the session stops with ``the labscript file changed from '<old>' to '<new>' while this session was running; its shots would no longer be the experiment it has been optimizing``. Press Reset. The new session notes whichever file runmanager has when you press Start, and starts with an empty history.
 
 A refused sequence join
 -----------------------

@@ -29,7 +29,7 @@ import lyse
 import numpy as np
 
 from . import config as config_module
-from .runmanager_interface import RunmanagerInterface
+from .runmanager_interface import RunmanagerInterface, RunmanagerStatusMonitor
 from .window import WindowController
 from .worker import Worker
 
@@ -232,6 +232,8 @@ class OptimizationRoutine(lyse.Routine):
         window = WindowController(ui, commands)
         window.show_config(self.config, text)
         self.worker = Worker(self.config, window, commands, self.interface_factory)
+        self.monitor = RunmanagerStatusMonitor(on_status=window.show_link)
+        self.monitor.start()
 
     def run(self):
         """Hand the shots of lyse's current multishot pass to the session."""
@@ -244,5 +246,9 @@ class OptimizationRoutine(lyse.Routine):
         self.worker.hand_over(filepaths, observations, save_status)
 
     def close(self):
-        """Ask the session to stop, when lyse removes or restarts the routine."""
+        """Ask the session to stop and stop watching runmanager.
+
+        Called when lyse removes or restarts the routine.
+        """
+        self.monitor.shutdown()
         self.worker.quit()

@@ -120,26 +120,58 @@ def test_a_failure_after_a_reply_stops_the_session_and_is_raised_next(capsys):
     assert 'runmanager went away' in capsys.readouterr().err
 
 
-def test_a_failed_opening_leaves_the_worker_up_and_reset_retries():
-    attempts = []
-    shown_while_checking = []
-
-    class AbsentAtFirst(FakeInterface):
+def test_a_session_opens_paused_without_asking_runmanager_anything():
+    class Absent(FakeInterface):
         def check_ready(self):
-            attempts.append(None)
-            if len(attempts) == 1:
-                raise RuntimeError('runmanager did not answer')
-            shown_while_checking.append(shown[-1])
+            raise TimeoutError('No response from server: timed out')
 
-    worker, commands, shown = start(AbsentAtFirst)
-    assert shown[-1] == {'stopped': 'runmanager did not answer'}
-    assert hand_over(worker, 'shot-0') == []
-    commands.put(('reset', None, None))
+    _, _, shown = start(Absent)
+    assert shown[-1]['paused'] and shown[-1]['pause_reason'] is None
+
+
+def test_a_start_runmanager_refuses_leaves_the_session_paused_and_a_later_one_goes():
+    refusals = ['runmanager reports an error in its globals']
+
+    class Refuses(FakeInterface):
+        def check_ready(self):
+            if refusals:
+                raise RuntimeError(refusals.pop())
+
+    worker, commands, shown = start(Refuses)
     commands.put(('start', None, None))
     hand_over(worker)
-    assert shown[-1]['submitted'] == 2
-    # The window read Opening while the reset waited for runmanager.
-    assert shown_while_checking == [{}]
+    assert shown[-1]['paused'] and shown[-1]['submitted'] == 0
+    assert shown[-1]['pause_reason'] == 'runmanager reports an error in its globals'
+    commands.put(('start', None, None))
+    hand_over(worker)
+    assert not shown[-1]['paused'] and shown[-1]['submitted'] == 2
+    assert shown[-1]['pause_reason'] is None
+
+
+def test_runmanager_not_answering_mid_run_pauses_the_session_and_start_resumes_it(
+    capsys,
+):
+    silent = [True]
+
+    class Silent(FakeInterface):
+        def shot_status(self, shot_ids):
+            if silent:
+                raise TimeoutError('No response from server: timed out')
+            return super().shot_status(shot_ids)
+
+    worker, commands, shown = start(Silent)
+    commands.put(('start', None, None))
+    # Neither hand-over raises: the failure is not one to report.
+    hand_over(worker, 'shot-0')
+    hand_over(worker)
+    shown.wait_for(lambda s: s.get('pause_reason') == 'runmanager is not answering')
+    assert shown[-1]['paused'] and shown[-1]['awaiting'] == 1
+    assert capsys.readouterr() == ('', '')
+    silent.clear()
+    commands.put(('start', None, None))
+    hand_over(worker)
+    # The run goes on: the shot in flight is kept, and the queue topped up.
+    assert not shown[-1]['paused'] and shown[-1]['submitted'] == 3
 
 
 def test_a_session_thread_that_has_died_is_reported(monkeypatch):

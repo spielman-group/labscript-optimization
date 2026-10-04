@@ -217,6 +217,7 @@ def status(**overrides):
         'best_params': None,
         'best_shot_id': None,
         'paused': False,
+        'pause_reason': None,
         'stopped': None,
     } | overrides
 

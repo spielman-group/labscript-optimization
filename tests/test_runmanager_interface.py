@@ -8,7 +8,11 @@ import numpy as np
 import pytest
 
 from labscript_optimization import config as config_module
-from labscript_optimization.runmanager_interface import RunmanagerInterface
+from labscript_optimization.runmanager_interface import (
+    RunmanagerInterface,
+    RunmanagerStatusMonitor,
+    runmanager_link_display,
+)
 
 CONFIG = """
 [ANALYSIS]
@@ -38,22 +42,18 @@ class FakeClient:
         self.states = {}
         self.refuse = None
         self.silent = False
-        self.asked = []
         self.scan_enabled = {}
         self.jit_enabled = {}
 
     def say_hello(self, timeout=None):
-        self.asked.append('say_hello')
         if self.silent:
             raise TimeoutError('no response from server')
         return 'hello'
 
     def error_in_globals(self):
-        self.asked.append('error_in_globals')
         return self.broken_globals
 
     def get_labscript_file(self):
-        self.asked.append('get_labscript_file')
         return self.labscript
 
     def get_scan_enabled(self):
@@ -110,15 +110,23 @@ def test_a_session_starts_when_runmanager_can_sustain_it(interface):
     interface.check_unchanged()
 
 
-def test_a_runmanager_that_does_not_answer_is_reported_as_the_cause(interface, client):
-    """A runmanager that is not running answers nothing, so without being
-    named here the lab waits out the client's own deadline and then reads
-    whichever question went unanswered -- true, and no help at all.
-    """
+def test_the_monitor_reports_whether_runmanager_answers_and_why_not(client):
+    seen = []
+    monitor = RunmanagerStatusMonitor(seen.append, client)
+    monitor.poll()
     client.silent = True
-    with pytest.raises(RuntimeError, match='runmanager did not answer'):
-        interface.check_ready()
-    assert client.asked == ['say_hello']
+    monitor.poll()
+    assert seen == [
+        {'reachable': True},
+        {'reachable': False, 'reason': 'no response from server'},
+    ]
+
+
+def test_the_light_is_checking_until_asked_then_online_or_offline():
+    assert runmanager_link_display(None)[0] == 'checking'
+    assert runmanager_link_display({'reachable': True})[0] == 'online'
+    state, tooltip = runmanager_link_display({'reachable': False, 'reason': 'why'})
+    assert state == 'offline' and 'why' in tooltip
 
 
 def test_a_runmanager_whose_globals_do_not_evaluate_is_refused(interface, client):
@@ -131,6 +139,8 @@ def test_a_runmanager_whose_globals_do_not_evaluate_is_refused(interface, client
 def test_a_labscript_file_changed_mid_session_is_refused(interface, client):
     interface.check_ready()
     client.labscript = '/lab/something_else.py'
+    # A Start that resumes the run does not move the file it is compared with.
+    interface.check_ready()
     with pytest.raises(RuntimeError, match='labscript file changed'):
         interface.check_unchanged()
 

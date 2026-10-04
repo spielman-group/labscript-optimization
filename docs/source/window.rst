@@ -14,7 +14,7 @@ Controls
 --------
 
 Start
-    Starts or resumes submission. It is enabled while the session is paused and has not ended.
+    Starts or resumes submission. It is enabled while the session is paused and has not ended, and runmanager is answering. It first checks that runmanager's globals evaluate. If they do not, the session stays paused and the phase says why.
 
 Pause
     Stops new submissions. It is enabled while the session is running. Shots already queued still run, and the session still takes their costs and applies its limits.
@@ -24,6 +24,13 @@ Reset
 
 A session that has ended can only be reset. All three buttons are disabled while the window reads "Opening", and Reset is enabled as soon as the session has opened or ended.
 
+The runmanager indicator
+------------------------
+
+To the right of the buttons are runmanager's icon, its name and a light that shows whether runmanager is answering. The window asks runmanager every two seconds. A tick means it answers, an exclamation mark means it does not, and an hourglass means it has not yet been asked. The light's tooltip gives the reason when runmanager does not answer. Nothing is printed to the Output dock for a runmanager that is not answering.
+
+Start needs the tick. It enables itself once runmanager answers, with no Reset, and disables itself when runmanager stops.
+
 Status tab
 ----------
 
@@ -31,10 +38,13 @@ Phase
     What the session is doing:
 
     ``Opening``
-        The session is checking runmanager.
+        The session is being built.
 
     ``Paused``
         The session has not been started, or has been paused.
+
+    ``Paused: <reason>``
+        Something other than you paused the session: Start found an error in runmanager's globals, or runmanager stopped answering during the run. The run is kept, and Start resumes it. :doc:`troubleshooting` lists the reasons.
 
     ``Running``
         A learner other than ``gaussian_process`` is proposing.
@@ -97,4 +107,4 @@ Closing the window hides it and leaves the session running. To show it again, ri
 When the opening fails
 ----------------------
 
-When the session opens, it checks that runmanager answers and that its globals evaluate. If it cannot, the phase reads ``Ended:`` followed by the reason, and only Reset is enabled. Fix the cause, then press Reset, which tries the opening again. See :doc:`troubleshooting`.
+The session opens without contacting runmanager, so a runmanager that is not running does not fail the opening: the indicator shows it instead. If the session cannot be built at all, the phase reads ``Ended:`` followed by the reason, the traceback is in the Output dock, and only Reset is enabled. Fix the cause, then press Reset, which tries the opening again. See :doc:`troubleshooting`.

@@ -54,7 +54,7 @@ The folder's name must end in ``.lyse``. It is the routine's name in lyse and th
 Add the folder to lyse
 ----------------------
 
-In lyse's Multishot routines box, open the menu of the plus button, choose "Add a GUI routine folder (.lyse)…" and select the folder. The routine appears in the box and its window opens with a paused session. The window's phase reads "Opening" while the session checks runmanager, and then "Paused". A phase that starts with "Ended" means the opening failed; see :doc:`troubleshooting`.
+In lyse's Multishot routines box, open the menu of the plus button, choose "Add a GUI routine folder (.lyse)…" and select the folder. The routine appears in the box and its window opens with a paused session, and the light beside "runmanager" shows whether runmanager is answering. Start is enabled once it does. A phase that starts with "Ended" means the session could not be built; see :doc:`troubleshooting`.
 
 Start the optimization
 ----------------------

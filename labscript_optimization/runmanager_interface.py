@@ -5,26 +5,96 @@ queue to start, drain or wait on. A shot is complete when runmanager has sent
 it to lyse and lyse has analyzed it, which is the routine being handed its
 row. Every shot carries the identifier runmanager minted for its queue row,
 written into the shot file: that is what a cost is matched to a proposal by.
+
+A monitor of its own keeps asking whether runmanager answers, for the window's
+light.
 """
 
+import threading
 from typing import Iterable, Sequence
 
-#: Seconds runmanager is given to answer the greeting that opens a session.
-#: Short, so that a runmanager which is not running is named as the cause in a
-#: few seconds rather than a minute later by whichever question happened to be
-#: asked first. The session's later requests keep the client's own timeout,
-#: labconfig's ``communication_timeout``, which a submission that compiles
-#: shots needs.
-#:
-#: A constant, and not labconfig's ``timeouts/liveness_timeout``, which BLACS
-#: reads before every exchange. BLACS probes runmanager once per shot, so that
-#: number is a trade it has to make: too long and an unreachable runmanager
-#: adds dead time to every cycle, too short and a slow link is judged absent.
-#: A session greets once, over a round trip that is sub-second on any lab
-#: link, so there is no trade here to make -- while a number raised for the
-#: sake of BLACS's cycle time would buy the lab nothing here but a longer wait
-#: before an absent runmanager is named.
-GREETING_TIMEOUT = 5.0
+#: Seconds between asking runmanager whether it answers. A status light, not a
+#: data feed.
+POLL_INTERVAL = 2
+#: Seconds runmanager is given to answer. runmanager answers a hello off its GUI
+#: thread, so one that takes longer than this is one the optimizer cannot reach.
+POLL_TIMEOUT = 1
+#: The light beside the runmanager label says one thing: whether runmanager
+#: answered.
+LINK_ICONS = {
+    "checking": ":/qtutils/fugue/hourglass",
+    "online": ":/qtutils/fugue/tick",
+    "offline": ":/qtutils/fugue/exclamation",
+}
+
+
+class RunmanagerStatusMonitor:
+    """Keep asking runmanager whether it answers, and report every answer.
+
+    The asking runs on a thread of its own, so a runmanager that has stopped
+    answering cannot hold up the window or the session.
+
+    Parameters
+    ----------
+    on_status : Callable
+        Called with each answer: ``{'reachable': True}``, or ``{'reachable':
+        False, 'reason': str}`` with why runmanager did not answer.
+    client : optional
+        What asks, with ``say_hello()``. The default is a
+        ``runmanager.client.RunmanagerClient`` that waits :data:`POLL_TIMEOUT`.
+    interval : float
+        Seconds between asks.
+    """
+
+    def __init__(self, on_status, client=None, interval=POLL_INTERVAL):
+        if client is None:
+            from runmanager.client import RunmanagerClient
+
+            client = RunmanagerClient(timeout=POLL_TIMEOUT)
+        self.on_status = on_status
+        self.client = client
+        self.interval = interval
+        self.stopped = threading.Event()
+        self.thread = threading.Thread(target=self.mainloop, daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def shutdown(self):
+        """Stop asking, without waiting for a poll under way to finish."""
+        self.stopped.set()
+
+    def poll(self):
+        """Ask runmanager once whether it answers, and report the answer."""
+        try:
+            self.client.say_hello()
+        except Exception as exc:
+            status = {"reachable": False, "reason": str(exc)}
+        else:
+            status = {"reachable": True}
+        self.on_status(status)
+
+    def mainloop(self):
+        while not self.stopped.is_set():
+            self.poll()
+            self.stopped.wait(self.interval)
+
+
+def runmanager_link_display(status):
+    """Return the ``(state, tooltip)`` for the light beside the runmanager label.
+
+    ``status`` is what :class:`RunmanagerStatusMonitor` reported, or ``None``
+    before runmanager has been asked: the state is then ``'checking'``, and
+    otherwise ``'online'`` or ``'offline'``.
+    """
+    if status is None:
+        return "checking", "Checking runmanager..."
+    if status["reachable"]:
+        return "online", "runmanager is responding"
+    tooltip = "runmanager is not responding"
+    if status.get("reason"):
+        tooltip += f"\n{status['reason']}"
+    return "offline", tooltip
 
 
 class RunmanagerInterface:
@@ -52,41 +122,22 @@ class RunmanagerInterface:
         self.sequence_index = None
 
     def check_ready(self) -> None:
-        """Raise if runmanager cannot start a session, and pin its labscript file.
+        """Raise if runmanager cannot take a session's shots; pin its labscript file.
 
-        The greeting comes first, and is the only request held to
-        :data:`GREETING_TIMEOUT`, so that a runmanager which is not there is
-        reported as a runmanager which is not there, within seconds. Asking it
-        a question instead leaves the answer to the client's own timeout -- a
-        minute where labconfig says nothing -- and names the question that
-        failed rather than the runmanager behind it.
-
-        The questions after it wait that full timeout, so a runmanager that
-        greets and then stops answering, its GUI thread inside a compile or
-        behind a dialog somebody left open, is reported as the question it
-        left unanswered.
-
-        A global that does not evaluate is a shot that will not compile, and
-        every shot this session submits would be one. The file pinned here is
-        what :meth:`check_unchanged` compares against for the rest of the
-        session.
+        Called at each Start. A global that does not evaluate is a shot that
+        will not compile, and every shot this session submits would be one. The
+        labscript file is pinned by the first call, and is what
+        :meth:`check_unchanged` compares against for the rest of the session, so
+        a Start that resumes the run does not move it.
         """
-        try:
-            self.client.say_hello(timeout=GREETING_TIMEOUT)
-        except Exception as exc:
-            raise RuntimeError(
-                f"runmanager did not answer within {GREETING_TIMEOUT:g} "
-                f"seconds ({exc!r}); an optimization session cannot start "
-                f"without it"
-            ) from None
-
         if self.client.error_in_globals():
             raise RuntimeError(
                 "runmanager reports an error in its globals; fix it before "
                 "starting an optimization"
             )
 
-        self.labscript_file = self.client.get_labscript_file()
+        if self.labscript_file is None:
+            self.labscript_file = self.client.get_labscript_file()
 
     def check_unchanged(self) -> None:
         """Raise if the labscript file has changed since the session started."""
