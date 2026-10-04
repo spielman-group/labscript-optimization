@@ -27,9 +27,10 @@ from pathlib import Path
 
 import lyse
 import numpy as np
+from labscript_utils.qtwidgets.link_indicator import LinkMonitor
 
 from . import config as config_module
-from .runmanager_interface import RunmanagerInterface, RunmanagerStatusMonitor
+from .runmanager_interface import RunmanagerInterface
 from .window import WindowController
 from .worker import Worker
 
@@ -227,12 +228,17 @@ class OptimizationRoutine(lyse.Routine):
         folder = Path(inspect.getfile(type(self))).parent
         text = (folder / self.config_path).read_text(encoding="utf-8")
         self.config = config_module.loads(text)
+        from runmanager.client import RunmanagerClient
+
+        client = RunmanagerClient()
         ui = self.load_ui(Path(__file__).with_name("window.ui"))
         commands = queue.Queue()
-        window = WindowController(ui, commands)
+        window = WindowController(ui, commands, host=client.host)
         window.show_config(self.config, text)
         self.worker = Worker(self.config, window, commands, self.interface_factory)
-        self.monitor = RunmanagerStatusMonitor(on_status=window.show_link)
+        self.monitor = LinkMonitor(
+            lambda: client.say_hello(timeout=1), window.show_link
+        )
         self.monitor.start()
 
     def run(self):

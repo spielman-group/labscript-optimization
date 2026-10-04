@@ -17,17 +17,16 @@ import importlib.resources
 import itertools
 
 import pyqtgraph as pg
-import qtutils.icons  # registers the :/qtutils/fugue icons
+from labscript_utils.qtwidgets.link_indicator import LinkIndicator
 from qtutils import inmain_decorator
 from qtutils.qt import QtGui, QtWidgets
 
-from .runmanager_interface import LINK_ICONS, runmanager_link_display
-
 
 class WindowController:
-    def __init__(self, ui, command_queue):
+    def __init__(self, ui, command_queue, host=None):
         self.command_queue = command_queue
         self.ui = ui
+        self.link = LinkIndicator(self.ui.runmanager_status, "runmanager", host=host)
         # Whether the session could start, and whether runmanager answers: Start
         # needs both.
         self.startable = False
@@ -74,21 +73,16 @@ class WindowController:
         self.best_line = self.plot.plot([], [], pen=pg.mkPen("#eeeeee", width=2))
         svg = importlib.resources.files("runmanager") / "runmanager.svg"
         self.ui.runmanager_icon.setPixmap(QtGui.QIcon(str(svg)).pixmap(16, 16))
-        self.show_link(None)
 
     def _add_points(self, source, color):
         self.points[source] = self.plot.plot(
             [], [], pen=None, symbol="o", symbolBrush=color
         )
 
-    @inmain_decorator(wait_for_return=False)
-    def show_link(self, status):
+    def show_link(self, reachable, answer):
         """Show whether runmanager answers, from the monitor's last status."""
-        state, tooltip = runmanager_link_display(status)
-        icon = QtGui.QIcon(LINK_ICONS[state])
-        self.ui.runmanager_status.setPixmap(icon.pixmap(16, 16))
-        self.ui.runmanager_status.setToolTip(tooltip)
-        self.link_online = state == "online"
+        self.link.show_link(reachable, None if reachable else answer)
+        self.link_online = reachable
         self._enable_start()
 
     def _enable_start(self):

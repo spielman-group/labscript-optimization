@@ -8,11 +8,7 @@ import numpy as np
 import pytest
 
 from labscript_optimization import config as config_module
-from labscript_optimization.runmanager_interface import (
-    RunmanagerInterface,
-    RunmanagerStatusMonitor,
-    runmanager_link_display,
-)
+from labscript_optimization.runmanager_interface import RunmanagerInterface
 
 CONFIG = """
 [ANALYSIS]
@@ -41,14 +37,8 @@ class FakeClient:
         self.sequences = []
         self.states = {}
         self.refuse = None
-        self.silent = False
         self.scan_enabled = {}
         self.jit_enabled = {}
-
-    def say_hello(self, timeout=None):
-        if self.silent:
-            raise TimeoutError('no response from server')
-        return 'hello'
 
     def error_in_globals(self):
         return self.broken_globals
@@ -108,25 +98,6 @@ def interface(config, client):
 def test_a_session_starts_when_runmanager_can_sustain_it(interface):
     interface.check_ready()
     interface.check_unchanged()
-
-
-def test_the_monitor_reports_whether_runmanager_answers_and_why_not(client):
-    seen = []
-    monitor = RunmanagerStatusMonitor(seen.append, client)
-    monitor.poll()
-    client.silent = True
-    monitor.poll()
-    assert seen == [
-        {'reachable': True},
-        {'reachable': False, 'reason': 'no response from server'},
-    ]
-
-
-def test_the_light_is_checking_until_asked_then_online_or_offline():
-    assert runmanager_link_display(None)[0] == 'checking'
-    assert runmanager_link_display({'reachable': True})[0] == 'online'
-    state, tooltip = runmanager_link_display({'reachable': False, 'reason': 'why'})
-    assert state == 'offline' and 'why' in tooltip
 
 
 def test_a_runmanager_whose_globals_do_not_evaluate_is_refused(interface, client):

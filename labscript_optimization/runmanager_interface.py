@@ -5,96 +5,9 @@ queue to start, drain or wait on. A shot is complete when runmanager has sent
 it to lyse and lyse has analyzed it, which is the routine being handed its
 row. Every shot carries the identifier runmanager minted for its queue row,
 written into the shot file: that is what a cost is matched to a proposal by.
-
-A monitor of its own keeps asking whether runmanager answers, for the window's
-light.
 """
 
-import threading
 from typing import Iterable, Sequence
-
-#: Seconds between asking runmanager whether it answers. A status light, not a
-#: data feed.
-POLL_INTERVAL = 2
-#: Seconds runmanager is given to answer. runmanager answers a hello off its GUI
-#: thread, so one that takes longer than this is one the optimizer cannot reach.
-POLL_TIMEOUT = 1
-#: The light beside the runmanager label says one thing: whether runmanager
-#: answered.
-LINK_ICONS = {
-    "checking": ":/qtutils/fugue/hourglass",
-    "online": ":/qtutils/fugue/tick",
-    "offline": ":/qtutils/fugue/exclamation",
-}
-
-
-class RunmanagerStatusMonitor:
-    """Keep asking runmanager whether it answers, and report every answer.
-
-    The asking runs on a thread of its own, so a runmanager that has stopped
-    answering cannot hold up the window or the session.
-
-    Parameters
-    ----------
-    on_status : Callable
-        Called with each answer: ``{'reachable': True}``, or ``{'reachable':
-        False, 'reason': str}`` with why runmanager did not answer.
-    client : optional
-        What asks, with ``say_hello()``. The default is a
-        ``runmanager.client.RunmanagerClient`` that waits :data:`POLL_TIMEOUT`.
-    interval : float
-        Seconds between asks.
-    """
-
-    def __init__(self, on_status, client=None, interval=POLL_INTERVAL):
-        if client is None:
-            from runmanager.client import RunmanagerClient
-
-            client = RunmanagerClient(timeout=POLL_TIMEOUT)
-        self.on_status = on_status
-        self.client = client
-        self.interval = interval
-        self.stopped = threading.Event()
-        self.thread = threading.Thread(target=self.mainloop, daemon=True)
-
-    def start(self):
-        self.thread.start()
-
-    def shutdown(self):
-        """Stop asking, without waiting for a poll under way to finish."""
-        self.stopped.set()
-
-    def poll(self):
-        """Ask runmanager once whether it answers, and report the answer."""
-        try:
-            self.client.say_hello()
-        except Exception as exc:
-            status = {"reachable": False, "reason": str(exc)}
-        else:
-            status = {"reachable": True}
-        self.on_status(status)
-
-    def mainloop(self):
-        while not self.stopped.is_set():
-            self.poll()
-            self.stopped.wait(self.interval)
-
-
-def runmanager_link_display(status):
-    """Return the ``(state, tooltip)`` for the light beside the runmanager label.
-
-    ``status`` is what :class:`RunmanagerStatusMonitor` reported, or ``None``
-    before runmanager has been asked: the state is then ``'checking'``, and
-    otherwise ``'online'`` or ``'offline'``.
-    """
-    if status is None:
-        return "checking", "Checking runmanager..."
-    if status["reachable"]:
-        return "online", "runmanager is responding"
-    tooltip = "runmanager is not responding"
-    if status.get("reason"):
-        tooltip += f"\n{status['reason']}"
-    return "offline", tooltip
 
 
 class RunmanagerInterface:

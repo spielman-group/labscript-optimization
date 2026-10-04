@@ -8,6 +8,8 @@ runs on a thread started by the routine, and the package starts no process of
 its own.
 
 This needs lyse's GUI routines, which are on lyse's `Development` branch.
+It also needs labscript-utils' `LinkCheck` branch until it is merged into
+labscript-utils' `Development`.
 
 ## The lab's routine folder
 
@@ -59,10 +61,9 @@ class Optimization(OptimizationRoutine):
   - `quit()` asks the thread to stop, and does not wait for it.
 - **`routine.py`'s `OptimizationRoutine`** is the lyse side alone: it builds the
   window, reads shots out of lyse and saves their status columns into it. It
-  also runs a `RunmanagerStatusMonitor`, from `runmanager_interface.py`, which
-  asks runmanager every `POLL_INTERVAL` (2 s) whether it answers, waiting
-  `POLL_TIMEOUT` (1 s), and reports each answer to the window's runmanager
-  indicator.
+  also runs labscript-utils' `LinkMonitor`, which probes runmanager with
+  `say_hello(timeout=1)` every 2 s, and the window shows each answer with
+  labscript-utils' `LinkIndicator`.
 
 ## Threads
 
@@ -92,7 +93,7 @@ puts `refresh` on the queue.
    figures.
 3. Build the `Worker`, with the `interface_factory` class attribute, which is
    `RunmanagerInterface`.
-4. Start the `RunmanagerStatusMonitor`, reporting to the window.
+4. Start the `LinkMonitor`, reporting to the window.
 
 `__init__` makes no runmanager round trip, so the window appears at once. The
 session thread builds the session, and the window shows "Opening" until it
@@ -128,10 +129,10 @@ failed by its end, so lyse shows it as that analysis's error.
 - **The runmanager indicator** is a row in the window's top bar, right of the
   buttons: runmanager's icon, the label `runmanager` and a status light. The
   light is an hourglass before the first answer, a tick while runmanager
-  answers and an exclamation mark while it does not, and its tooltip gives
-  the reason. Nothing is printed for runmanager not answering. **Start** is
-  enabled only while the session can start and the light shows a tick, and
-  enables itself when the tick appears.
+  answers and an exclamation mark while it does not, and its tooltip names
+  the host and gives the reason. Nothing is printed for runmanager not
+  answering. **Start** is enabled only while the session can start and the
+  light shows a tick, and enables itself when the tick appears.
 - **Start** checks that runmanager's globals evaluate, pins its labscript
   file the first time, and begins submitting. If the check raises, the session
   stays paused with the message as its pause reason, shown as `Paused:
@@ -194,9 +195,9 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
     and a later Start goes;
   - runmanager not answering during a run pauses the session without raising
     or printing, and Start resumes it.
-- **The monitor and the window,** with a fake client: the monitor reports
-  whether runmanager answers, with the reason when it does not, and the window
-  enables Start only when the session can start and the light shows a tick.
+- **The window,** with no client: it enables Start only when the session can
+  start and runmanager answers. labscript-utils tests the indicator and the
+  monitor.
 - **The routine, end to end,** through lyse's real worker subprocess, as lyse's
   own `GuiWorkerTests` drive it: a routine folder whose subclass sets
   `interface_factory` to the fake. It constructs, an empty multishot pass
