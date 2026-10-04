@@ -127,11 +127,11 @@ failed by its end, so lyse shows it as that analysis's error.
   contacting runmanager. If that fails, the window shows why, the traceback is
   printed, and the routine stays up.
 - **The runmanager indicator** is a row in the window's top bar, right of the
-  buttons: runmanager's icon, the label `runmanager` and a status light with
-  its status beside it: `Checking...`, `Responding` or `Not responding`. The
-  light is an hourglass before the first answer, a tick while runmanager
-  answers and an exclamation mark while it does not, and its tooltip names
-  the host and gives the reason. Nothing is printed for runmanager not
+  buttons: runmanager's icon, then the name `runmanager` and a status light,
+  with its status under them: `Checking...`, `Responding` or `Not
+  responding`. The light is an hourglass before the first answer, a tick while
+  runmanager answers and an exclamation mark while it does not, and its tooltip
+  names the host and gives the reason. Nothing is printed for runmanager not
   answering. **Start** is enabled only while the session can start and the
   light shows a tick, and enables itself when the tick appears.
 - **Start** checks that runmanager's globals evaluate, pins its labscript

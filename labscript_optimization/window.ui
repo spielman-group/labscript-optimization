@@ -9,7 +9,6 @@
       <item><widget class="QPushButton" name="pause_button"><property name="text"><string>Pause</string></property><property name="enabled"><bool>false</bool></property></widget></item>
       <item><widget class="QPushButton" name="reset_button"><property name="text"><string>Reset</string></property><property name="enabled"><bool>false</bool></property></widget></item>
       <item><widget class="QLabel" name="runmanager_icon"><property name="sizePolicy"><sizepolicy hsizetype="Fixed" vsizetype="Preferred"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property></widget></item>
-      <item><widget class="QLabel" name="runmanager_label"><property name="sizePolicy"><sizepolicy hsizetype="Fixed" vsizetype="Preferred"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property><property name="text"><string>runmanager</string></property></widget></item>
       <item><layout class="QHBoxLayout" name="runmanager_link_layout"/></item>
      </layout>
     </item>
