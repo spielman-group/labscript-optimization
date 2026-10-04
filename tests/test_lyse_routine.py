@@ -49,7 +49,7 @@ def worker(tmp_path):
     to_worker, from_worker, process = ProcessTree.instance().subprocess(
         str(LYSE_DIR / 'analysis_subprocess.py'), startup_timeout=30
     )
-    to_worker.put(str(routine))
+    to_worker.put((str(routine), True))
 
     def analyse(path, paths):
         to_worker.put(['analyse', (path, paths)])

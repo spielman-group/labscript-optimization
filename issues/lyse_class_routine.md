@@ -131,7 +131,8 @@ failed by its end, so lyse shows it as that analysis's error.
 ## Window
 
 The window is lyse's routine window, titled with the routine folder's name. lyse
-shows it once construction finishes, and restores its geometry. Closing it
+shows it once construction finishes if the routine is checked, which an added
+routine is, and restores its geometry. Closing it
 hides it, and lyse's **Show windows** brings it back. The routine never shows
 or raises the window itself, so a closed window stays closed while shots
 arrive; lyse's spec rules this out for every routine.
