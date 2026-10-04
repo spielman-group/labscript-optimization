@@ -8,6 +8,8 @@ runs on a thread started by the routine, and the package starts no process of
 its own.
 
 This needs lyse's GUI routines, which are on lyse's `Development` branch.
+It also needs labscript-utils' `LinkCheck` branch until it is merged into
+labscript-utils' `Development`.
 
 ## The lab's routine folder
 
@@ -58,14 +60,18 @@ class Optimization(OptimizationRoutine):
   - the window's buttons put `start`, `pause` and `reset` on its queue;
   - `quit()` asks the thread to stop, and does not wait for it.
 - **`routine.py`'s `OptimizationRoutine`** is the lyse side alone: it builds the
-  window, reads shots out of lyse and saves their status columns into it.
+  window, reads shots out of lyse and saves their status columns into it. The
+  window builds labscript-utils' `LinkIndicator`, which probes runmanager with
+  `say_hello(timeout=1)` every 2 s and whose answers gate Start; the routine
+  starts it and shuts it down in `close()`.
 
 ## Threads
 
 | Work | Thread |
 | --- | --- |
 | Reading the configuration, building the window, `close()`, button slots | GUI main thread |
-| Greeting runmanager, recording costs, reconciling, proposing, submitting | Session thread |
+| Recording costs, reconciling, proposing, submitting | Session thread |
+| Asking runmanager whether it answers | The indicator's thread |
 | Reading the analyzed shots and saving their status columns | lyse's analysis thread, in `run()` |
 | A Gaussian-process batch | The learner's background thread |
 
@@ -87,11 +93,12 @@ puts `refresh` on the queue.
    figures.
 3. Build the `Worker`, with the `interface_factory` class attribute, which is
    `RunmanagerInterface`.
+4. Start the window's `LinkIndicator`.
 
 `__init__` makes no runmanager round trip, so the window appears at once. The
-session thread greets runmanager and builds the session, and the window shows
-"Opening" until it has. Anything printed during `__init__` goes to lyse's
-output box; after construction, output goes to the window's Output dock.
+session thread builds the session, and the window shows "Opening" until it
+has. Anything printed during `__init__` goes to lyse's output box; after
+construction, output goes to the window's Output dock.
 
 ## `run()`
 
@@ -116,13 +123,31 @@ failed by its end, so lyse shows it as that analysis's error.
 
 ## Session lifecycle
 
-- **Opening:** the session thread greets runmanager and builds the session,
-  paused. If that fails, for example because runmanager is not running, the
-  window shows why, the traceback is printed, and the routine stays up.
-- **Start** begins submitting, and **Pause** stops new submissions while shots
-  in flight still report. **Reset** builds a new paused session from the
-  configuration already loaded, greeting runmanager again, so it is also how a
-  failed opening is retried.
+- **Opening:** the session thread builds the session, paused, without
+  contacting runmanager. If that fails, the window shows why, the traceback is
+  printed, and the routine stays up.
+- **The runmanager indicator** is a row in the window's top bar, right of the
+  buttons: runmanager's icon, then the name `runmanager` and a status light,
+  with its status under them: `Checking...`, `Responding` or `Not
+  responding`. The light is an hourglass before the first answer, a tick while
+  runmanager answers and an exclamation mark while it does not, and its tooltip
+  names the host and gives the reason. Nothing is printed for runmanager not
+  answering. **Start** is enabled only while the session can start and the
+  light shows a tick, and enables itself when the tick appears.
+- **Start** checks that runmanager's globals evaluate, pins its labscript
+  file the first time, and begins submitting. If the check raises, the session
+  stays paused with the message as its pause reason, shown as `Paused:
+  <reason>`, and nothing is printed or raised; Start again after fixing it.
+  **Pause** stops new submissions while shots in flight still report.
+  **Reset** builds a new paused session from the configuration already loaded,
+  so it is also how a failed opening is retried.
+- **runmanager not answering during a run:** a `TimeoutError` from any request
+  to runmanager pauses the session with the reason `runmanager is not
+  answering`. No traceback is printed, nothing is queued as a failure, and the
+  shots in flight are kept. Start resumes the same run once the light shows a
+  tick. A runmanager that was restarted no longer knows the run's sequence,
+  so the next submission after Start is refused and the session ends with
+  runmanager's reason.
 - **Before a session exists,** a hand-over is answered with no shots taken,
   since none can be the session's yet.
 - **A limit** ends the session. The reason is shown in the window and
@@ -140,9 +165,10 @@ arrive; lyse's spec rules this out for every routine.
 ## `close()`
 
 lyse calls `close()` on the GUI thread once the last `run()` has returned. It
-calls `Worker.quit()`, which does not wait: the session thread may be inside a
-runmanager round trip of up to the client's timeout, and `close()` must not
-block the GUI thread. The thread is a daemon, and the worker's exit ends it.
+shuts down the indicator and calls `Worker.quit()`, neither of which waits: the
+session thread may be inside a runmanager round trip of up to the client's
+timeout, and `close()` must not block the GUI thread. The threads are daemons,
+and the worker's exit ends them.
 
 lyse terminates a worker 2 s after asking it to quit, so `close()` may never
 run. Nothing depends on it: shots already queued in runmanager stay queued and
@@ -165,7 +191,13 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
   - a cost handed over is recorded, and its shot comes back with its status;
   - a reply later than the deadline comes back from the next hand-over;
   - an error in handling a request is raised by the hand-over;
-  - a failed opening leaves the worker up, and Reset retries it.
+  - the session opens paused without contacting runmanager;
+  - a Start that runmanager refuses leaves the session paused with the reason,
+    and a later Start goes;
+  - runmanager not answering during a run pauses the session without raising
+    or printing, and Start resumes it.
+- **The window,** with a probe that is never started: it enables Start only when the session can
+  start and runmanager answers. labscript-utils tests the indicator.
 - **The routine, end to end,** through lyse's real worker subprocess, as lyse's
   own `GuiWorkerTests` drive it: a routine folder whose subclass sets
   `interface_factory` to the fake. It constructs, an empty multishot pass
@@ -177,6 +209,8 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
 - **A live trial,** by Ian, of the demo in lyse against runmanager:
   - the window opens when the routine is added;
   - Start submits, and the analyzed shots get their status columns;
-  - an opening with runmanager absent shows why, and Reset recovers once
-    runmanager is up;
+  - with runmanager absent the light shows an exclamation mark and Start is
+    disabled, and Start enables itself once runmanager is up;
+  - a runmanager that stops answering during a run, behind an open dialog,
+    pauses the session, and Start resumes it once the dialog is closed;
   - restarting and removing the routine end it cleanly.

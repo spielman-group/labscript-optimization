@@ -13,17 +13,28 @@
 
 """The optimizer's live controls and status window."""
 
+import importlib.resources
 import itertools
 
 import pyqtgraph as pg
+from labscript_utils.qtwidgets.link_indicator import LinkIndicator
 from qtutils import inmain_decorator
 from qtutils.qt import QtGui, QtWidgets
 
 
 class WindowController:
-    def __init__(self, ui, command_queue):
+    def __init__(self, ui, command_queue, probe, host=None):
         self.command_queue = command_queue
         self.ui = ui
+        # Started by the routine, so a window can be built without probing.
+        self.link = LinkIndicator(
+            "runmanager", probe, host=host, on_answer=self._link_answered
+        )
+        self.ui.runmanager_link_layout.addWidget(self.link)
+        # Whether the session could start, and whether runmanager answers: Start
+        # needs both.
+        self.startable = False
+        self.link_online = False
         for button, name in (
             (self.ui.start_button, "start"),
             (self.ui.pause_button, "pause"),
@@ -64,11 +75,20 @@ class WindowController:
         for source, color in colors.items():
             self._add_points(source, color)
         self.best_line = self.plot.plot([], [], pen=pg.mkPen("#eeeeee", width=2))
+        svg = importlib.resources.files("runmanager") / "runmanager.svg"
+        self.ui.runmanager_icon.setPixmap(QtGui.QIcon(str(svg)).pixmap(16, 16))
 
     def _add_points(self, source, color):
         self.points[source] = self.plot.plot(
             [], [], pen=None, symbol="o", symbolBrush=color
         )
+
+    def _link_answered(self, reachable, answer):
+        self.link_online = reachable
+        self._enable_start()
+
+    def _enable_start(self):
+        self.ui.start_button.setEnabled(self.startable and self.link_online)
 
     @inmain_decorator(wait_for_return=False)
     def show_config(self, config, text):
@@ -98,7 +118,8 @@ class WindowController:
         elif opening:
             phase = "Opening"
         elif paused:
-            phase = "Paused"
+            reason = status.get("pause_reason")
+            phase = f"Paused: {reason}" if reason else "Paused"
         elif computing:
             phase = "Batch computing"
         elif gaussian_process and any(source == "main" for source, _ in observations):
@@ -126,7 +147,8 @@ class WindowController:
             cell = "—" if params is None else f"{params[row]:g}"
             table.setItem(row, 4, QtWidgets.QTableWidgetItem(cell))
 
-        self.ui.start_button.setEnabled(not stopped and paused and not opening)
+        self.startable = not stopped and paused and not opening
+        self._enable_start()
         self.ui.pause_button.setEnabled(not stopped and not paused)
         # Reset also retries an opening that failed.
         self.ui.reset_button.setEnabled("paused" in status or bool(stopped))

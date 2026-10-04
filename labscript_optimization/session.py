@@ -34,7 +34,7 @@ class Session:
         config: The session configuration.
         interface: Something with ``check_unchanged()``, ``submit(proposals)``
             and ``shot_status(shot_ids)``. Readiness is the worker's to check
-            before a session is built.
+            before each start.
         learner: The learner to use, or ``None`` to build the configured one.
             It answers ``propose(history, hint)`` with ``(params, source)``
             pairs and carries ``generation``.
@@ -53,6 +53,8 @@ class Session:
         self._unknown: set[str] = set()
         self.starved = 0
         self.paused = True
+        # Why something other than the user paused the session, if it did.
+        self.pause_reason: str | None = None
         self._resume_pending = False
         self.stopped: str | None = None
 
@@ -132,13 +134,19 @@ class Session:
         if self.paused:
             self._resume_pending = bool(self.proposals)
         self.paused = False
+        self.pause_reason = None
         return True
 
-    def pause(self) -> bool:
-        """Pause proposing, unless the session has stopped."""
+    def pause(self, reason: str | None = None) -> bool:
+        """Pause proposing, unless the session has stopped.
+
+        ``reason`` is what the window shows beside the pause, when something
+        other than the user caused it.
+        """
         if self.stopped is not None:
             return False
         self.paused = True
+        self.pause_reason = reason
         return True
 
     def check_stop(self) -> None:
@@ -375,5 +383,6 @@ class Session:
             "best_params": None if best is None else best.params.tolist(),
             "best_shot_id": None if best is None else best.shot_id,
             "paused": self.paused,
+            "pause_reason": self.pause_reason,
             "stopped": self.stopped,
         }

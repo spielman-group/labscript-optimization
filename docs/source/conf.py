@@ -65,7 +65,7 @@ autodoc_typehints = 'description'
 numfig = True
 # The suite and GUI modules the package imports; a docs build has no lab to
 # provide them. routine.py subclasses lyse.Routine, which a mock allows.
-autodoc_mock_imports = ['lyse', 'runmanager', 'qtutils', 'pyqtgraph']
+autodoc_mock_imports = ['lyse', 'runmanager', 'labscript_utils', 'qtutils', 'pyqtgraph']
 # Nitpicky references that nothing documents: lyse.Routine is mocked, Future
 # reports a private module, concurrent.futures._base, and the page leaves out
 # the runmanager interface that OptimizationRoutine.interface_factory aliases.

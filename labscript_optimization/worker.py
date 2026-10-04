@@ -65,7 +65,8 @@ class Worker:
             If the session thread has stopped, so that nothing will answer.
         Exception
             What handling a request raised, or what failed in the work after an
-            earlier reply.
+            earlier reply. runmanager not answering is not raised: it pauses
+            the session.
         """
         reply = Future()
         command = "observe" if observations else "shot"
@@ -110,12 +111,17 @@ class Worker:
                     # An empty status is the window's Opening, until the new
                     # session's own status replaces it.
                     self.window.update({}, False, (), False, False)
-                    interface = self.interface_factory(self.config)
-                    interface.check_ready()
-                    session = Session(self.config, interface)
+                    session = Session(self.config, self.interface_factory(self.config))
                 elif command == "start":
-                    session.start()
-                    session.refill()
+                    try:
+                        session.interface.check_ready()
+                    except RuntimeError as exc:
+                        # Start did not go: the session stays paused, with
+                        # runmanager's reason in the window.
+                        session.pause(str(exc))
+                    else:
+                        session.start()
+                        session.refill()
                 elif command == "pause":
                     session.pause()
                 elif command == "observe":
@@ -139,6 +145,13 @@ class Worker:
                     session.reconcile()
                     session.refill()
             except Exception as exc:
+                if session is not None and isinstance(exc, TimeoutError):
+                    # runmanager stopped answering. The run is kept, and Start
+                    # resumes it once the window's light shows runmanager again.
+                    session.pause("runmanager is not answering")
+                    if reply is not None and not reply.done():
+                        reply.set_result((recorded, session.status()))
+                    continue
                 error = str(exc) or type(exc).__name__
                 if session is not None:
                     session.stop(error if reply is None else "stopped by an error")

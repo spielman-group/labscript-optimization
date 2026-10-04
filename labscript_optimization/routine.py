@@ -227,11 +227,18 @@ class OptimizationRoutine(lyse.Routine):
         folder = Path(inspect.getfile(type(self))).parent
         text = (folder / self.config_path).read_text(encoding="utf-8")
         self.config = config_module.loads(text)
+        from runmanager.client import RunmanagerClient
+
+        client = RunmanagerClient()
         ui = self.load_ui(Path(__file__).with_name("window.ui"))
         commands = queue.Queue()
-        window = WindowController(ui, commands)
+        window = WindowController(
+            ui, commands, lambda: client.say_hello(timeout=1), host=client.host
+        )
         window.show_config(self.config, text)
         self.worker = Worker(self.config, window, commands, self.interface_factory)
+        self.link = window.link
+        self.link.start()
 
     def run(self):
         """Hand the shots of lyse's current multishot pass to the session."""
@@ -244,5 +251,9 @@ class OptimizationRoutine(lyse.Routine):
         self.worker.hand_over(filepaths, observations, save_status)
 
     def close(self):
-        """Ask the session to stop, when lyse removes or restarts the routine."""
+        """Ask the session to stop and stop watching runmanager.
+
+        Called when lyse removes or restarts the routine.
+        """
+        self.link.shutdown()
         self.worker.quit()

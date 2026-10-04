@@ -9,23 +9,6 @@ written into the shot file: that is what a cost is matched to a proposal by.
 
 from typing import Iterable, Sequence
 
-#: Seconds runmanager is given to answer the greeting that opens a session.
-#: Short, so that a runmanager which is not running is named as the cause in a
-#: few seconds rather than a minute later by whichever question happened to be
-#: asked first. The session's later requests keep the client's own timeout,
-#: labconfig's ``communication_timeout``, which a submission that compiles
-#: shots needs.
-#:
-#: A constant, and not labconfig's ``timeouts/liveness_timeout``, which BLACS
-#: reads before every exchange. BLACS probes runmanager once per shot, so that
-#: number is a trade it has to make: too long and an unreachable runmanager
-#: adds dead time to every cycle, too short and a slow link is judged absent.
-#: A session greets once, over a round trip that is sub-second on any lab
-#: link, so there is no trade here to make -- while a number raised for the
-#: sake of BLACS's cycle time would buy the lab nothing here but a longer wait
-#: before an absent runmanager is named.
-GREETING_TIMEOUT = 5.0
-
 
 class RunmanagerInterface:
     """Submits proposals and reports what became of them.
@@ -52,41 +35,22 @@ class RunmanagerInterface:
         self.sequence_index = None
 
     def check_ready(self) -> None:
-        """Raise if runmanager cannot start a session, and pin its labscript file.
+        """Raise if runmanager cannot take a session's shots; pin its labscript file.
 
-        The greeting comes first, and is the only request held to
-        :data:`GREETING_TIMEOUT`, so that a runmanager which is not there is
-        reported as a runmanager which is not there, within seconds. Asking it
-        a question instead leaves the answer to the client's own timeout -- a
-        minute where labconfig says nothing -- and names the question that
-        failed rather than the runmanager behind it.
-
-        The questions after it wait that full timeout, so a runmanager that
-        greets and then stops answering, its GUI thread inside a compile or
-        behind a dialog somebody left open, is reported as the question it
-        left unanswered.
-
-        A global that does not evaluate is a shot that will not compile, and
-        every shot this session submits would be one. The file pinned here is
-        what :meth:`check_unchanged` compares against for the rest of the
-        session.
+        Called at each Start. A global that does not evaluate is a shot that
+        will not compile, and every shot this session submits would be one. The
+        labscript file is pinned by the first call, and is what
+        :meth:`check_unchanged` compares against for the rest of the session, so
+        a Start that resumes the run does not move it.
         """
-        try:
-            self.client.say_hello(timeout=GREETING_TIMEOUT)
-        except Exception as exc:
-            raise RuntimeError(
-                f"runmanager did not answer within {GREETING_TIMEOUT:g} "
-                f"seconds ({exc!r}); an optimization session cannot start "
-                f"without it"
-            ) from None
-
         if self.client.error_in_globals():
             raise RuntimeError(
                 "runmanager reports an error in its globals; fix it before "
                 "starting an optimization"
             )
 
-        self.labscript_file = self.client.get_labscript_file()
+        if self.labscript_file is None:
+            self.labscript_file = self.client.get_labscript_file()
 
     def check_unchanged(self) -> None:
         """Raise if the labscript file has changed since the session started."""
