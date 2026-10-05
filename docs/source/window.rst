@@ -20,16 +20,24 @@ Pause
     Stops new submissions. It is enabled while the session is running. Shots already queued still run, and the session still takes their costs and applies its limits.
 
 Reset
-    Discards the history and opens a new paused session from the configuration loaded when the routine started. The new session starts a new runmanager sequence. Shots the old session queued stay in runmanager's queue and run, but the new session ignores their costs. Reset does not read the file again: restart the routine after editing it.
+    Discards the history and opens a new paused session from the configuration loaded when the routine started. The new session starts a new runmanager sequence. Shots the old session queued stay in runmanager's queue and run, but the new session ignores their costs. Reset does not read the file again: restart the routine after editing it, and it leaves runmanager's values as they are.
 
-A session that has ended can only be reset. All three buttons are disabled while the window reads "Opening", and Reset is enabled as soon as the session has opened or ended.
+Set best values
+    Sets the Default values of the globals the configuration sets, in runmanager, to those of the shot with the best cost, and submits no shot. It is enabled while the session is paused or has ended, once a usable cost has arrived, and runmanager is answering. A run otherwise leaves runmanager showing the last proposal it submitted.
+
+Restore original values
+    Writes back the Default expressions that runmanager held for those globals when the session first started, exactly as they were written, so ``2*pi*5`` comes back as ``2*pi*5``. It is enabled while the session is paused or has ended, once it has submitted a shot, and runmanager is answering. Starting again after a Pause does not record the values a second time, and Reset opens a session that records them at its own first Start.
+
+When a session ends, for whatever reason, it sets the best values in runmanager as Set best values does, if there is a best. It does not engage a shot, so runmanager runs them at once only if it is running default shots. If runmanager does not take the values from either button or from the end of a session, the Output dock gets one line, "Could not set runmanager's values:" and the reason, and the session is left as it was.
+
+A session that has ended can only be reset, or have runmanager's values set. All five buttons are disabled while the window reads "Opening", and Reset is enabled as soon as the session has opened or ended.
 
 The runmanager indicator
 ------------------------
 
 To the right of the buttons are runmanager's icon, then its name and a light that shows whether runmanager is answering. The window asks runmanager every two seconds. A tick means it answers, an exclamation mark means it does not, and an hourglass means it has not yet been asked. Under the name and the light is a short status, "Checking...", "Responding" or "Not responding", and hovering it shows the whole status. The light's tooltip names the host runmanager is expected on, and gives the reason when runmanager does not answer. Nothing is printed to the Output dock for a runmanager that is not answering.
 
-Start needs the tick. It enables itself once runmanager answers, with no Reset, and disables itself when runmanager stops.
+Start, Set best values and Restore original values need the tick. Each enables itself once runmanager answers, with no Reset, and disables itself when runmanager stops.
 
 Status tab
 ----------

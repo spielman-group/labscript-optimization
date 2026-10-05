@@ -31,14 +31,18 @@ class WindowController:
             "runmanager", probe, host=host, on_answer=self._link_answered
         )
         self.ui.runmanager_link_layout.addWidget(self.link)
-        # Whether the session could start, and whether runmanager answers: Start
-        # needs both.
+        # Whether the session could start, or has values to set in runmanager,
+        # and whether runmanager answers: each of these buttons needs both.
         self.startable = False
+        self.best_settable = False
+        self.restorable = False
         self.link_online = False
         for button, name in (
             (self.ui.start_button, "start"),
             (self.ui.pause_button, "pause"),
             (self.ui.reset_button, "reset"),
+            (self.ui.set_best_button, "set_best"),
+            (self.ui.restore_button, "restore"),
         ):
             button.clicked.connect(
                 lambda checked=False, command=name: self.command_queue.put(
@@ -85,10 +89,13 @@ class WindowController:
 
     def _link_answered(self, reachable, answer):
         self.link_online = reachable
-        self._enable_start()
+        self._enable_buttons()
 
-    def _enable_start(self):
-        self.ui.start_button.setEnabled(self.startable and self.link_online)
+    def _enable_buttons(self):
+        online = self.link_online
+        self.ui.start_button.setEnabled(self.startable and online)
+        self.ui.set_best_button.setEnabled(self.best_settable and online)
+        self.ui.restore_button.setEnabled(self.restorable and online)
 
     @inmain_decorator(wait_for_return=False)
     def show_config(self, config, text):
@@ -148,7 +155,12 @@ class WindowController:
             table.setItem(row, 4, QtWidgets.QTableWidgetItem(cell))
 
         self.startable = not stopped and paused and not opening
-        self._enable_start()
+        # runmanager's values change only by a submission or Set best, and a
+        # best needs a submission, so none submitted means nothing to restore.
+        idle = paused or bool(stopped)
+        self.best_settable = idle and status.get("best_cost") is not None
+        self.restorable = idle and status.get("submitted", 0) > 0
+        self._enable_buttons()
         self.ui.pause_button.setEnabled(not stopped and not paused)
         # Reset also retries an opening that failed.
         self.ui.reset_button.setEnabled("paused" in status or bool(stopped))

@@ -198,3 +198,51 @@ def test_a_session_that_reaches_a_limit_says_why_once(capsys):
     hand_over(worker, 'shot-0', 'shot-1')
     hand_over(worker)
     assert capsys.readouterr().out.count('The optimization has stopped') == 1
+
+
+def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(capsys):
+    writes, failures = [], []
+
+    class Writes(FakeInterface):
+        # What check_ready records at the first Start.
+        original = {'x': '0.5'}
+
+        def set_values(self, params=None):
+            if failures:
+                raise failures[0]
+            writes.append(None if params is None else list(params))
+
+    text = CONFIG.replace(
+        'num_buffered_runs = 2', 'num_buffered_runs = 2\nmax_num_runs = 2'
+    )
+    worker, commands, shown = start(Writes, text)
+    commands.put(('start', None, None))
+    hand_over(worker, 'shot-0')
+    commands.put(('pause', None, None))
+    commands.put(('set_best', None, None))
+    commands.put(('restore', None, None))
+    hand_over(worker)
+    best = shown[-1]['best_params']
+    assert writes == [best, None]
+
+    # A write runmanager does not take is one line, and the run is as it was.
+    capsys.readouterr()
+    for failure in (TimeoutError('timed out'), RuntimeError('refused')):
+        failures[:] = [failure]
+        commands.put(('set_best', None, None))
+        hand_over(worker)
+    out, err = capsys.readouterr()
+    assert out.splitlines() == [
+        "Could not set runmanager's values: runmanager is not answering",
+        "Could not set runmanager's values: refused",
+    ]
+    assert err == ''
+    assert shown[-1]['paused'] and shown[-1]['stopped'] is None
+
+    # The limit ends the run, and runmanager is left showing its best once.
+    failures.clear()
+    commands.put(('start', None, None))
+    hand_over(worker, 'shot-1')
+    hand_over(worker)
+    assert shown[-1]['stopped']
+    assert writes == [best, None, shown[-1]['best_params']]

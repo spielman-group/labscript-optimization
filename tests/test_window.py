@@ -47,6 +47,22 @@ def test_window_shows_progress_and_controls(qt_application):
     window.ui.start_button.click()
     assert commands.get_nowait()[0] == "start"
 
+    # Shots were submitted, so there is something to restore; none has a cost
+    # yet, so there is no best to set.
+    assert not window.ui.set_best_button.isEnabled()
+    window.ui.restore_button.click()
+    assert commands.get_nowait()[0] == "restore"
+    best = {"paused": True, "submitted": 2, "best_cost": 1.0}
+    window.update(best, False, (), True, False)
+    qt_application.processEvents()
+    window.ui.set_best_button.click()
+    assert commands.get_nowait()[0] == "set_best"
+
+    # While the run is going, runmanager's values are the run's.
+    window.update(best | {"paused": False}, True, (), True, False)
+    qt_application.processEvents()
+    assert not window.ui.set_best_button.isEnabled()
+    assert not window.ui.restore_button.isEnabled()
     window.update({"paused": False}, True, (), True, False)
     qt_application.processEvents()
     assert window.ui.phase_value.text() == "Batch computing"
@@ -57,25 +73,37 @@ def test_window_shows_progress_and_controls(qt_application):
 
     # A pause that something other than the user caused says why, and Start
     # waits for runmanager to be heard again.
-    reason = {"paused": True, "pause_reason": "runmanager is not answering"}
+    reason = best | {"pause_reason": "runmanager is not answering"}
     window.update(reason, False, (), True, False)
     window.link.on_answer(False, "gone")
     qt_application.processEvents()
     assert window.ui.phase_value.text() == "Paused: runmanager is not answering"
     assert not window.ui.start_button.isEnabled()
+    assert not window.ui.set_best_button.isEnabled()
+    assert not window.ui.restore_button.isEnabled()
 
-    # Answering again does not start a session that has ended.
+    # Answering again does not start a session that has ended, but does let its
+    # values be set.
     window.link.on_answer(True, None)
-    window.update({"stopped": "reached max_num_runs (2)"}, False, (), True, False)
+    ended = best | {"paused": False, "stopped": "reached max_num_runs (2)"}
+    window.update(ended, False, (), True, False)
     qt_application.processEvents()
     assert window.ui.phase_value.text() == "Ended: reached max_num_runs (2)"
     assert not window.ui.start_button.isEnabled()
+    assert window.ui.set_best_button.isEnabled()
+    assert window.ui.restore_button.isEnabled()
 
     # An empty status is a session opening: no control works until it has.
     window.update({}, False, (), True, False)
     qt_application.processEvents()
     assert window.ui.phase_value.text() == "Opening"
-    buttons = window.ui.start_button, window.ui.pause_button, window.ui.reset_button
+    buttons = (
+        window.ui.start_button,
+        window.ui.pause_button,
+        window.ui.reset_button,
+        window.ui.set_best_button,
+        window.ui.restore_button,
+    )
     assert not any(button.isEnabled() for button in buttons)
 
     # A source no learner in the package names is plotted, not refused.

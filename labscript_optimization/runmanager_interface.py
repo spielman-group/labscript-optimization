@@ -28,6 +28,9 @@ class RunmanagerInterface:
         self.config = config
         self.client = client
         self.labscript_file = None
+        # The raw Default expressions of the globals the configuration sets, as
+        # runmanager held them at the first Start.
+        self.original = None
         # The runmanager sequence this session's shots go into, once the first
         # submission has started it. Its index tells it apart from another
         # sequence started in the same second, which shares its id.
@@ -41,7 +44,8 @@ class RunmanagerInterface:
         will not compile, and every shot this session submits would be one. The
         labscript file is pinned by the first call, and is what
         :meth:`check_unchanged` compares against for the rest of the session, so
-        a Start that resumes the run does not move it.
+        a Start that resumes the run does not move it. The first call also
+        records the original values, which :meth:`set_values` restores.
         """
         if self.client.error_in_globals():
             raise RuntimeError(
@@ -50,6 +54,15 @@ class RunmanagerInterface:
             )
 
         if self.labscript_file is None:
+            # Read first: a failure here leaves both unset for the next Start.
+            raw = self.client.get_values(raw=True)
+            missing = [g.name for g in self.config.globals if g.name not in raw]
+            if missing:
+                raise RuntimeError(
+                    f"Global {', '.join(missing)} not found in any active group "
+                    f"in runmanager"
+                )
+            self.original = {g.name: raw[g.name] for g in self.config.globals}
             self.labscript_file = self.client.get_labscript_file()
 
     def check_unchanged(self) -> None:
@@ -91,6 +104,21 @@ class RunmanagerInterface:
         self.sequence = descriptors[0]["sequence_id"]
         self.sequence_index = descriptors[0]["sequence_index"]
         return [d["shot_id"] for d in descriptors]
+
+    def set_values(self, params: Sequence[float] | None = None) -> None:
+        """Set runmanager's Default values without submitting a shot.
+
+        Parameters
+        ----------
+        params : sequence of float, optional
+            The parameter vector whose globals to set: exactly what submitting
+            it would leave in runmanager's window. Without it, the original
+            values recorded at the first Start are written back as written.
+        """
+        if params is None:
+            self.client.set_values(self.original, raw=True)
+        else:
+            self.client.set_values(self.config.globals_for(params))
 
     def shot_status(self, shot_ids: Iterable[str]) -> dict[str, dict]:
         """What runmanager says about each of these shots, as it says it.

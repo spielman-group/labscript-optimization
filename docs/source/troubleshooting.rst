@@ -30,7 +30,7 @@ The globals do not evaluate
 
 Start leaves the session paused, and the phase reads ``Paused: runmanager reports an error in its globals; fix it before starting an optimization``. Fix the globals in runmanager, then press Start again.
 
-A global that evaluates when you press Start can still stop a later submission. runmanager refuses a batch whose globals cannot be evaluated, and its message becomes the reason. A ``global_name`` in the configuration that is in no active group in runmanager is refused with ``Global <name> not found in any active group``.
+A global that evaluates when you press Start can still stop a later submission. runmanager refuses a batch whose globals cannot be evaluated, and its message becomes the reason. A global the configuration sets that is in no active group in runmanager is refused at Start, which leaves the session paused with ``Global <name> not found in any active group in runmanager``.
 
 Scan? or JIT? ticked
 --------------------

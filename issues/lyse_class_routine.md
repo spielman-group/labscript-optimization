@@ -57,7 +57,8 @@ class Optimization(OptimizationRoutine):
     these and any earlier hand-over whose reply has arrived since. It raises
     an error the session thread reported, as the original exception, and
     raises if the thread itself has stopped, since nothing would answer;
-  - the window's buttons put `start`, `pause` and `reset` on its queue;
+  - the window's buttons put `start`, `pause`, `reset`, `set_best` and
+    `restore` on its queue;
   - `quit()` asks the thread to stop, and does not wait for it.
 - **`routine.py`'s `OptimizationRoutine`** is the lyse side alone: it builds the
   window, reads shots out of lyse and saves their status columns into it. The
@@ -135,12 +136,32 @@ failed by its end, so lyse shows it as that analysis's error.
   answering. **Start** is enabled only while the session can start and the
   light shows a tick, and enables itself when the tick appears.
 - **Start** checks that runmanager's globals evaluate, pins its labscript
-  file the first time, and begins submitting. If the check raises, the session
-  stays paused with the message as its pause reason, shown as `Paused:
-  <reason>`, and nothing is printed or raised; Start again after fixing it.
+  file and records the original values the first time, and begins submitting.
+  If the check raises, the session stays paused with the message as its pause
+  reason, shown as `Paused: <reason>`, and nothing is printed or raised; Start
+  again after fixing it.
   **Pause** stops new submissions while shots in flight still report.
   **Reset** builds a new paused session from the configuration already loaded,
-  so it is also how a failed opening is retried.
+  so it is also how a failed opening is retried. It leaves runmanager's
+  values alone.
+- **The original values** are the raw Default expression strings, in
+  runmanager, of every global the configuration sets. `check_ready` records
+  them with one `get_values(raw=True)` at the session's first successful Start,
+  and a later Start after Pause does not record again. Reset makes a new
+  session, which records at its own first Start.
+- **Set best values** and **Restore original values** put `set_best` and
+  `restore` on the queue. Both are enabled while the session is paused or has
+  ended and the light shows a tick. Set best also needs a best cost, and
+  Restore needs a shot submitted, since runmanager's values change only by a
+  submission or by Set best. `set_best` calls
+  `RunmanagerInterface.set_values(best.params)`, which writes what submitting
+  those parameters would leave in runmanager's window; `restore` calls
+  `set_values()`, which writes the recorded originals back raw, so `2*pi*5`
+  comes back as written.
+- **A write runmanager does not take** is one line in the Output dock, `Could
+  not set runmanager's values: <reason>`, with `runmanager is not answering`
+  for a `TimeoutError`. No traceback is printed, and the session is left as it
+  was: not paused or stopped by the failure.
 - **runmanager not answering during a run:** a `TimeoutError` from any request
   to runmanager pauses the session with the reason `runmanager is not
   answering`. No traceback is printed, nothing is queued as a failure, and the
@@ -150,8 +171,10 @@ failed by its end, so lyse shows it as that analysis's error.
   runmanager's reason.
 - **Before a session exists,** a hand-over is answered with no shots taken,
   since none can be the session's yet.
-- **A limit** ends the session. The reason is shown in the window and
-  printed once to the Output dock.
+- **A session ends,** at a limit or on an error. The reason is shown in the
+  window and printed once to the Output dock. The first time the session thread
+  sees the session stopped, it also sets the best values in runmanager, if
+  there is a best. It engages and submits no shot.
 
 ## Window
 
@@ -195,9 +218,19 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
   - a Start that runmanager refuses leaves the session paused with the reason,
     and a later Start goes;
   - runmanager not answering during a run pauses the session without raising
-    or printing, and Start resumes it.
+    or printing, and Start resumes it;
+  - a session that reaches a limit sets its best values once, `set_best` and
+    `restore` call the interface on a paused session, and a write that fails
+    prints one line and no traceback and leaves the session as it was.
+- **The interface,** against a fake client: the first `check_ready` records the
+  configured globals' raw values and a later one does not record again,
+  `set_values(params)` writes `globals_for(params)` unraw, and `set_values()`
+  writes the recorded originals raw.
 - **The window,** with a probe that is never started: it enables Start only when the session can
-  start and runmanager answers. labscript-utils tests the indicator.
+  start and runmanager answers, and Set best values and Restore original values
+  only while the session is paused or has ended, runmanager answers, and there
+  is a best cost or a submitted shot respectively. labscript-utils tests the
+  indicator.
 - **The routine, end to end,** through lyse's real worker subprocess, as lyse's
   own `GuiWorkerTests` drive it: a routine folder whose subclass sets
   `interface_factory` to the fake. It constructs, an empty multishot pass
@@ -213,4 +246,9 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
     disabled, and Start enables itself once runmanager is up;
   - a runmanager that stops answering during a run, behind an open dialog,
     pauses the session, and Start resumes it once the dialog is closed;
+  - Set best values and Restore original values change runmanager's Default
+    values on a paused and on an ended session, and Restore brings back an
+    expression such as `2*pi*5` as written;
+  - a session that reaches a limit leaves runmanager showing its best values,
+    and runmanager runs them at once if it is running default shots;
   - restarting and removing the routine end it cleanly.
