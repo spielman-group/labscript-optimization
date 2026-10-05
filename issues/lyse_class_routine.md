@@ -167,11 +167,11 @@ failed by its end, so lyse shows it as that analysis's error.
   raises `RuntimeError` for a parameter with no such global, a value that is not
   a real number (a boolean is not one), or a value outside the parameter's
   `min` and `max`, and the worker pauses the session with the message, as it
-  does for `check_ready`. A resuming Start does not read again. The box is
-  enabled only while the status shows nothing submitted. `Session.status()`
-  reports `start_point` as `start`, a list or `None`, and the parameters
-  table's Start column shows it once a status carries it. A session starts with
-  the configuration's start as its `start_point`.
+  does for `check_ready`. A resuming Start does not read again, so the box is
+  always enabled. `Session.status()` reports `start_point` as `start`, a list
+  or `None`, and the parameters table's Start column shows it once a status
+  carries it. A session starts with the configuration's start as its
+  `start_point`.
 - **Set best values** and **Restore original values** put `set_best` and
   `restore` on the queue. Both are enabled while the session is paused or has
   ended and the light shows a tick. Set best also needs a best cost, and
@@ -254,13 +254,13 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
   writes the recorded originals raw. `get_start()` returns the direct
   globals' values in parameter order, and refuses a value outside the bounds,
   a value that is not a real number, and a parameter with no direct global.
-- **The window,** with a probe that is never started: it enables Start only when the session can
-  start and runmanager answers, and Set best values and Restore original values
-  only while the session is paused or has ended, runmanager answers, and there
-  is a best cost or a submitted shot respectively. The Start click carries the
-  Start from runmanager values box's state, the box is disabled once something
-  is submitted, and the parameters table's Start column shows the status's
-  start. labscript-utils tests the indicator.
+- **The window,** with a probe that is never started: it enables Start only
+  when the session can start and runmanager answers, and Set best values and
+  Restore original values only while the session is paused or has ended,
+  runmanager answers, and there is a best cost or a submitted shot
+  respectively. The Start click carries the Start from runmanager values box's
+  state, and the parameters table's Start column shows the status's start.
+  labscript-utils tests the indicator.
 - **The routine, end to end,** through lyse's real worker subprocess, as lyse's
   own `GuiWorkerTests` drive it: a routine folder whose subclass sets
   `interface_factory` to the fake. It constructs, an empty multishot pass

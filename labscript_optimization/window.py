@@ -165,8 +165,6 @@ class WindowController:
                 table.setItem(row, column, QtWidgets.QTableWidgetItem(cell))
 
         self.startable = not stopped and paused and not opening
-        # The box applies to the run's first Start alone.
-        self.ui.start_from_runmanager.setEnabled(status.get("submitted", 0) == 0)
         # runmanager's values change only by a submission or Set best, and a
         # best needs a submission, so none submitted means nothing to restore.
         idle = paused or bool(stopped)

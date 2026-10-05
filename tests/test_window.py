@@ -49,9 +49,8 @@ def test_window_shows_progress_and_controls(qt_application):
     window.ui.start_button.click()
     assert commands.get_nowait() == ("start", None, False)
 
-    # Until something is submitted, a Start can open the run at runmanager's
-    # values, and the table shows the start the session will use.
-    assert not window.ui.start_from_runmanager.isEnabled()
+    # A Start can open the run at runmanager's values, and the table shows the
+    # start the session will use.
     window.show_config(config_module.loads(SESSION_CONFIG), SESSION_CONFIG)
     window.update({"paused": True, "start": [0.25]}, False, (), True, False)
     qt_application.processEvents()
@@ -61,7 +60,6 @@ def test_window_shows_progress_and_controls(qt_application):
     assert commands.get_nowait() == ("start", None, True)
     window.update({"paused": True, "submitted": 1}, False, (), True, False)
     qt_application.processEvents()
-    assert not window.ui.start_from_runmanager.isEnabled()
 
     # Shots were submitted, so there is something to restore; none has a cost
     # yet, so there is no best to set.
