@@ -31,14 +31,23 @@ class WindowController:
             "runmanager", probe, host=host, on_answer=self._link_answered
         )
         self.ui.runmanager_link_layout.addWidget(self.link)
-        # Whether the session could start, and whether runmanager answers: Start
-        # needs both.
+        # Whether the session could start, or has values to set in runmanager,
+        # and whether runmanager answers: each of these buttons needs both.
         self.startable = False
+        self.best_settable = False
+        self.restorable = False
         self.link_online = False
+        # Whether the box is ticked is read at the click, for the first Start.
+        self.ui.start_button.clicked.connect(
+            lambda checked=False: self.command_queue.put(
+                ("start", None, self.ui.start_from_runmanager.isChecked())
+            )
+        )
         for button, name in (
-            (self.ui.start_button, "start"),
             (self.ui.pause_button, "pause"),
             (self.ui.reset_button, "reset"),
+            (self.ui.set_best_button, "set_best"),
+            (self.ui.restore_button, "restore"),
         ):
             button.clicked.connect(
                 lambda checked=False, command=name: self.command_queue.put(
@@ -85,10 +94,13 @@ class WindowController:
 
     def _link_answered(self, reachable, answer):
         self.link_online = reachable
-        self._enable_start()
+        self._enable_buttons()
 
-    def _enable_start(self):
-        self.ui.start_button.setEnabled(self.startable and self.link_online)
+    def _enable_buttons(self):
+        online = self.link_online
+        self.ui.start_button.setEnabled(self.startable and online)
+        self.ui.set_best_button.setEnabled(self.best_settable and online)
+        self.ui.restore_button.setEnabled(self.restorable and online)
 
     @inmain_decorator(wait_for_return=False)
     def show_config(self, config, text):
@@ -141,14 +153,22 @@ class WindowController:
             label.setText(str(status.get(name, 0)))
         cost = status.get("best_cost")
         self.ui.best_cost_value.setText("—" if cost is None else f"{cost:g}")
-        params = status.get("best_params")
         table = self.ui.parameters_table
-        for row in range(table.rowCount()):
-            cell = "—" if params is None else f"{params[row]:g}"
-            table.setItem(row, 4, QtWidgets.QTableWidgetItem(cell))
+        columns = [(4, status.get("best_params"))]
+        # An empty status is a session still opening, which leaves the Start
+        # column as the configuration filled it.
+        if "start" in status:
+            columns.append((3, status["start"]))
+        for column, values in columns:
+            for row in range(table.rowCount()):
+                cell = "—" if values is None else f"{values[row]:g}"
+                table.setItem(row, column, QtWidgets.QTableWidgetItem(cell))
 
         self.startable = not stopped and paused and not opening
-        self._enable_start()
+        idle = paused or bool(stopped)
+        self.best_settable = idle and status.get("best_cost") is not None
+        self.restorable = idle and status.get("restorable", False)
+        self._enable_buttons()
         self.ui.pause_button.setEnabled(not stopped and not paused)
         # Reset also retries an opening that failed.
         self.ui.reset_button.setEnabled("paused" in status or bool(stopped))

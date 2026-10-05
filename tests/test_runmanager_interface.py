@@ -39,12 +39,22 @@ class FakeClient:
         self.refuse = None
         self.scan_enabled = {}
         self.jit_enabled = {}
+        self.values = {'gx': '2*pi*5', 'gy_doubled': '3', 'other': '7'}
+        self.written = []
 
     def error_in_globals(self):
         return self.broken_globals
 
     def get_labscript_file(self):
         return self.labscript
+
+    def get_values(self, raw=False):
+        if raw:
+            return dict(self.values)
+        return {name: eval(value, {'pi': np.pi}) for name, value in self.values.items()}
+
+    def set_values(self, globals, raw=False):
+        self.written.append((globals, raw))
 
     def get_scan_enabled(self):
         return self.scan_enabled
@@ -114,6 +124,53 @@ def test_a_labscript_file_changed_mid_session_is_refused(interface, client):
     interface.check_ready()
     with pytest.raises(RuntimeError, match='labscript file changed'):
         interface.check_unchanged()
+
+
+def test_a_global_runmanager_does_not_have_is_refused_at_start(interface, client):
+    del client.values['gx']
+    with pytest.raises(RuntimeError, match='gx not found in any active group'):
+        interface.check_ready()
+
+
+def test_the_original_values_are_recorded_once_and_restored_as_written(
+    interface, client
+):
+    interface.check_ready()
+    client.values = {'gx': '1', 'gy_doubled': '2', 'other': '3'}
+    # A Start that resumes the run does not record what the run has since set.
+    interface.check_ready()
+    interface.set_values()
+    interface.set_values([1.0, 2.0])
+    assert client.written == [
+        ({'gx': '2*pi*5', 'gy_doubled': '3'}, True),
+        ({'gx': 1.0, 'gy_doubled': 4.0}, False),
+    ]
+
+    # A later session is handed them, and its own first Start keeps them.
+    later = RunmanagerInterface(interface.config, client)
+    later.original = interface.original
+    later.check_ready()
+    later.set_values()
+    assert client.written[-1] == ({'gx': '2*pi*5', 'gy_doubled': '3'}, True)
+
+
+def test_runmanagers_values_are_read_back_as_the_start(interface, client):
+    client.values.update(gx='2.5', gy='1.5')
+    # y reaches runmanager only through an expr.
+    with pytest.raises(RuntimeError, match='y reaches runmanager only through'):
+        interface.get_start()
+    interface.config = config_module.loads(
+        CONFIG.replace('[PARAMETERS.G.y]', '[PARAMETERS.G.y]\nglobal_name = "gy"')
+    )
+    assert interface.get_start().tolist() == [2.5, 1.5]
+    for value, reason in [
+        ('2*pi*5', 'gx is 31.4159, outside'),
+        ('True', 'is True, not a number'),
+        ('"fast"', "is 'fast', not a number"),
+    ]:
+        client.values['gx'] = value
+        with pytest.raises(RuntimeError, match=reason):
+            interface.get_start()
 
 
 @pytest.mark.parametrize('box', ['scan_enabled', 'jit_enabled'])

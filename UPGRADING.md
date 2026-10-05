@@ -53,6 +53,12 @@ analysislib-mloop began as soon as the lyse routine first ran. Reset discards
 the history but keeps the configuration loaded for that session. Restart the
 lyse routine after editing the TOML.
 
+When a run ends, analysislib-mloop set the best values in runmanager and engaged
+a shot. labscript-optimization only sets the best values; runmanager runs them at
+once if it is running default shots. While the session is paused or has ended,
+Set best values sets them again, and Restore original values puts back what
+runmanager held before the routine first started a run, also after a Reset.
+
 The Results, Window and Troubleshooting pages of the documentation describe what
 the routine saves into lyse's dataframe, its window, and how it fails.
 

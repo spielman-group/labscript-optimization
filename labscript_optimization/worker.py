@@ -19,6 +19,25 @@ from .session import Session
 REPLY_TIMEOUT = 2.0
 
 
+def _set_runmanager_values(session, best):
+    """Set runmanager's values to the session's best, or to the originals.
+
+    A failure is one line of output and leaves the session as it was.
+    """
+    # A click queued behind a Reset can find nothing yet to set.
+    if session.best is None if best else session.interface.original is None:
+        return
+    try:
+        session.interface.set_values(session.best.params if best else None)
+    except Exception as exc:
+        reason = (
+            "runmanager is not answering"
+            if isinstance(exc, TimeoutError)
+            else str(exc) or type(exc).__name__
+        )
+        print(f"Could not set runmanager's values: {reason}")
+
+
 class Worker:
     """The optimization session, on a thread of its own.
 
@@ -107,14 +126,21 @@ class Worker:
             try:
                 if command == "reset":
                     # Opening is a reset too, so a failed one is retried by Reset.
-                    session = None
+                    previous, session = session, None
                     # An empty status is the window's Opening, until the new
                     # session's own status replaces it.
                     self.window.update({}, False, (), False, False)
                     session = Session(self.config, self.interface_factory(self.config))
+                    if previous is not None:
+                        # The values runmanager held before the first run.
+                        session.interface.original = previous.interface.original
                 elif command == "start":
                     try:
                         session.interface.check_ready()
+                        # The payload says whether the box was ticked; it
+                        # applies to the run's first Start only.
+                        if payload and not session.proposals:
+                            session.start_point = session.interface.get_start()
                     except RuntimeError as exc:
                         # Start did not go: the session stays paused, with
                         # runmanager's reason in the window.
@@ -124,6 +150,8 @@ class Worker:
                         session.refill()
                 elif command == "pause":
                     session.pause()
+                elif command in ("set_best", "restore"):
+                    _set_runmanager_values(session, best=command == "set_best")
                 elif command == "observe":
                     if session is None:
                         recorded = (None,) * len(payload)
@@ -166,7 +194,8 @@ class Worker:
                     self.failures.put(exc)
             finally:
                 if session is not None:
-                    if session.stopped and printed is not session:
+                    ended = session.stopped and printed is not session
+                    if ended:
                         print(f"The optimization has stopped: {session.stopped}")
                         printed = session
                     computation = getattr(session.learner, "computation", None)
@@ -179,7 +208,9 @@ class Worker:
                         watched_future = computation
                     sign = -1 if self.config.maximize else 1
                     self.window.update(
-                        session.status(),
+                        # The originals outlast the session, which does not own them.
+                        session.status()
+                        | {"restorable": session.interface.original is not None},
                         computation is not None and not computation.done(),
                         tuple(
                             (
@@ -191,5 +222,10 @@ class Worker:
                         self.config.learner == "gaussian_process",
                         self.config.maximize,
                     )
+                    if ended:
+                        # After the window shows the end, so a runmanager that
+                        # does not answer cannot hold it up. runmanager
+                        # otherwise shows the last proposal made.
+                        _set_runmanager_values(session, best=True)
                 elif error is not None:
                     self.window.update({"stopped": error}, False, (), False, False)

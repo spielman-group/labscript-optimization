@@ -1,9 +1,11 @@
 """The session thread, driven in process with runmanager faked."""
 
+import itertools
 import queue
 import threading
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from labscript_optimization import config as config_module
@@ -14,6 +16,8 @@ from conftest import SESSION_CONFIG as CONFIG
 
 
 class FakeInterface:
+    original = None
+
     def __init__(self, config):
         self.submitted = []
 
@@ -198,3 +202,97 @@ def test_a_session_that_reaches_a_limit_says_why_once(capsys):
     hand_over(worker, 'shot-0', 'shot-1')
     hand_over(worker)
     assert capsys.readouterr().out.count('The optimization has stopped') == 1
+
+
+def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(capsys):
+    writes, failures, reads = [], [], itertools.count()
+
+    class Writes(FakeInterface):
+        def check_ready(self):
+            # The first Start records what runmanager holds, and a later one
+            # does not.
+            if self.original is None:
+                self.original = {'x': str(next(reads))}
+
+        def set_values(self, params=None):
+            if failures:
+                raise failures[0]
+            writes.append(self.original if params is None else list(params))
+
+    text = CONFIG.replace(
+        'num_buffered_runs = 2', 'num_buffered_runs = 2\nmax_num_runs = 2'
+    )
+    worker, commands, shown = start(Writes, text)
+    assert not shown[-1]['restorable']
+    commands.put(('start', None, None))
+    hand_over(worker, 'shot-0')
+    commands.put(('pause', None, None))
+    commands.put(('set_best', None, None))
+    commands.put(('restore', None, None))
+    hand_over(worker)
+    best = shown[-1]['best_params']
+    assert shown[-1]['restorable'] and writes == [best, {'x': '0'}]
+
+    # A write runmanager does not take is one line, and the run is as it was.
+    capsys.readouterr()
+    for failure in (TimeoutError('timed out'), RuntimeError('refused')):
+        failures[:] = [failure]
+        commands.put(('set_best', None, None))
+        hand_over(worker)
+    out, err = capsys.readouterr()
+    assert out.splitlines() == [
+        "Could not set runmanager's values: runmanager is not answering",
+        "Could not set runmanager's values: refused",
+    ]
+    assert err == ''
+    assert shown[-1]['paused'] and shown[-1]['stopped'] is None
+
+    # The limit ends the run, and runmanager is left showing its best once.
+    failures.clear()
+    commands.put(('start', None, None))
+    hand_over(worker, 'shot-1')
+    hand_over(worker)
+    assert shown[-1]['stopped']
+    assert writes == [best, {'x': '0'}, shown[-1]['best_params']]
+
+    # Reset keeps the originals from before the first run, and the new
+    # session's own first Start does not record them again.
+    writes.clear()
+    commands.put(('reset', None, None))
+    commands.put(('restore', None, None))
+    commands.put(('start', None, None))
+    commands.put(('pause', None, None))
+    commands.put(('restore', None, None))
+    hand_over(worker)
+    assert shown[-1]['restorable'] and writes == [{'x': '0'}, {'x': '0'}]
+
+
+def test_a_start_from_runmanagers_values_opens_the_run_there_or_is_refused():
+    reason = 'gx is 2, outside the range 0 to 1 of parameter x'
+    refusals, sent = [reason], []
+
+    class Reads(FakeInterface):
+        def get_start(self):
+            if refusals:
+                raise RuntimeError(refusals.pop())
+            return np.array([0.25])
+
+        def submit(self, proposals):
+            sent.append(proposals[0].tolist())
+            return super().submit(proposals)
+
+    worker, commands, shown = start(Reads)
+    commands.put(('start', None, True))
+    hand_over(worker)
+    assert shown[-1]['paused'] and shown[-1]['pause_reason'] == reason
+    assert shown[-1]['submitted'] == 0
+    commands.put(('start', None, True))
+    assert hand_over(worker, 'shot-0') == [('shot-0.h5', 'start')]
+    assert sent[0] == [0.25] and shown[-1]['start'] == [0.25]
+
+    # A Start that resumes the run does not read runmanager again.
+    refusals.append(reason)
+    commands.put(('pause', None, None))
+    commands.put(('start', None, True))
+    hand_over(worker)
+    assert not shown[-1]['paused']

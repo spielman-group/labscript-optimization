@@ -7,7 +7,10 @@ row. Every shot carries the identifier runmanager minted for its queue row,
 written into the shot file: that is what a cost is matched to a proposal by.
 """
 
+from numbers import Real
 from typing import Iterable, Sequence
+
+import numpy as np
 
 
 class RunmanagerInterface:
@@ -28,6 +31,10 @@ class RunmanagerInterface:
         self.config = config
         self.client = client
         self.labscript_file = None
+        # The raw Default expressions of the globals the configuration sets, as
+        # runmanager held them at the routine's first Start. The worker hands
+        # them to the interface of each later session.
+        self.original = None
         # The runmanager sequence this session's shots go into, once the first
         # submission has started it. Its index tells it apart from another
         # sequence started in the same second, which shares its id.
@@ -41,7 +48,9 @@ class RunmanagerInterface:
         will not compile, and every shot this session submits would be one. The
         labscript file is pinned by the first call, and is what
         :meth:`check_unchanged` compares against for the rest of the session, so
-        a Start that resumes the run does not move it.
+        a Start that resumes the run does not move it. The first call also
+        records the original values, which :meth:`set_values` restores, unless
+        it was handed them.
         """
         if self.client.error_in_globals():
             raise RuntimeError(
@@ -50,7 +59,17 @@ class RunmanagerInterface:
             )
 
         if self.labscript_file is None:
+            # Read first: a failure here leaves both unset for the next Start.
+            raw = self.client.get_values(raw=True)
+            missing = [g.name for g in self.config.globals if g.name not in raw]
+            if missing:
+                raise RuntimeError(
+                    f"Global {', '.join(missing)} not found in any active group "
+                    f"in runmanager"
+                )
             self.labscript_file = self.client.get_labscript_file()
+            if self.original is None:
+                self.original = {g.name: raw[g.name] for g in self.config.globals}
 
     def check_unchanged(self) -> None:
         """Raise if the labscript file has changed since the session started."""
@@ -91,6 +110,63 @@ class RunmanagerInterface:
         self.sequence = descriptors[0]["sequence_id"]
         self.sequence_index = descriptors[0]["sequence_index"]
         return [d["shot_id"] for d in descriptors]
+
+    def get_start(self) -> np.ndarray:
+        """Read runmanager's current values of the parameters, as a parameter vector.
+
+        A parameter is read from the global that takes it directly, which is
+        what ``global_name`` makes. A global an ``expr`` computes cannot be
+        turned back into its parameters.
+
+        Raises
+        ------
+        RuntimeError
+            If a parameter has no such global, or its global does not hold a
+            real number, or the number lies outside the parameter's bounds.
+        """
+        values = self.client.get_values()
+        start = []
+        for parameter in self.config.space.parameters:
+            direct = [
+                g.name
+                for g in self.config.globals
+                if g.expr is None and g.args == (parameter.name,)
+            ]
+            if not direct:
+                raise RuntimeError(
+                    f"Cannot start from runmanager's values: parameter "
+                    f"{parameter.name} reaches runmanager only through an "
+                    f"expr, so its value cannot be read back"
+                )
+            value = values[direct[0]]
+            if not isinstance(value, Real) or isinstance(value, bool):
+                raise RuntimeError(
+                    f"Cannot start from runmanager's values: {direct[0]} is "
+                    f"{value!r}, not a number"
+                )
+            if not parameter.minimum <= value <= parameter.maximum:
+                raise RuntimeError(
+                    f"Cannot start from runmanager's values: {direct[0]} is "
+                    f"{value:g}, outside the range {parameter.minimum:g} to "
+                    f"{parameter.maximum:g} of parameter {parameter.name}"
+                )
+            start.append(float(value))
+        return np.array(start)
+
+    def set_values(self, params: Sequence[float] | None = None) -> None:
+        """Set runmanager's Default values without submitting a shot.
+
+        Parameters
+        ----------
+        params : sequence of float, optional
+            The parameter vector whose globals to set: exactly what submitting
+            it would leave in runmanager's window. Without it, the original
+            values recorded at the first Start are written back as written.
+        """
+        if params is None:
+            self.client.set_values(self.original, raw=True)
+        else:
+            self.client.set_values(self.config.globals_for(params))
 
     def shot_status(self, shot_ids: Iterable[str]) -> dict[str, dict]:
         """What runmanager says about each of these shots, as it says it.

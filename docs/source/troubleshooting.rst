@@ -10,7 +10,7 @@ How an error is reported depends on what the session was doing:
 
 * During the opening, Start and Reset, and when a Gaussian process batch finishes, the message becomes the reason in the window. The traceback goes to the Output dock. The routine does not raise, and lyse goes on analyzing.
 * During the work after a shot, the window reads ``Ended: stopped by an error``. The routine raises the error in lyse, in that pass or the next, and lyse then pauses analysis. An error raised in the next pass has its traceback in the Output dock as soon as it happens. When you resume, the shots of the failed pass are part of the next pass.
-* When Start finds an error in runmanager's globals, or runmanager stops answering during a run, the session pauses and the window reads ``Paused:`` and the reason. Nothing is printed, and the session does not end.
+* When Start finds an error in runmanager's globals or cannot use its values for the start, or runmanager stops answering during a run, the session pauses and the window reads ``Paused:`` and the reason. Nothing is printed, and the session does not end.
 
 The messages quoted below are the reason in the first and third cases and the error the routine raises in the second.
 
@@ -30,7 +30,16 @@ The globals do not evaluate
 
 Start leaves the session paused, and the phase reads ``Paused: runmanager reports an error in its globals; fix it before starting an optimization``. Fix the globals in runmanager, then press Start again.
 
-A global that evaluates when you press Start can still stop a later submission. runmanager refuses a batch whose globals cannot be evaluated, and its message becomes the reason. A ``global_name`` in the configuration that is in no active group in runmanager is refused with ``Global <name> not found in any active group``.
+A global that evaluates when you press Start can still stop a later submission. runmanager refuses a batch whose globals cannot be evaluated, and its message becomes the reason. A global the configuration sets that is in no active group in runmanager is refused at Start, which leaves the session paused with ``Global <name> not found in any active group in runmanager``.
+
+Start from runmanager values is refused
+---------------------------------------
+
+With the box ticked, the run's first Start reads runmanager's current values of the parameters. If it cannot use them, the session stays paused and the phase reads ``Paused:`` and one of these reasons. Nothing is printed. Fix the value in runmanager, or untick the box, then press Start again.
+
+* ``Cannot start from runmanager's values: <global> is <value>, outside the range <min> to <max> of parameter <name>``. The global's value is not between the parameter's ``min`` and ``max``.
+* ``Cannot start from runmanager's values: <global> is <value>, not a number``. The global evaluates to something other than a real number, such as a string, a list, an array or a boolean.
+* ``Cannot start from runmanager's values: parameter <name> reaches runmanager only through an expr, so its value cannot be read back``. Only a parameter with a global of its own, from ``global_name`` or from a global with no ``expr``, can be read from runmanager. Untick the box for this configuration.
 
 Scan? or JIT? ticked
 --------------------

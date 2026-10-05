@@ -23,6 +23,8 @@ os.chdir(os.path.dirname(os.path.dirname(__file__)))
 
 
 class Runmanager:
+    original = None
+
     def __init__(self, config):
         pass
 

@@ -231,6 +231,7 @@ class OptimizationRoutine(lyse.Routine):
 
         client = RunmanagerClient()
         ui = self.load_ui(Path(__file__).with_name("window.ui"))
+        self.saved_widgets(ui.start_from_runmanager)
         commands = queue.Queue()
         window = WindowController(
             ui, commands, lambda: client.say_hello(timeout=1), host=client.host

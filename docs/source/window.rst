@@ -20,16 +20,31 @@ Pause
     Stops new submissions. It is enabled while the session is running. Shots already queued still run, and the session still takes their costs and applies its limits.
 
 Reset
-    Discards the history and opens a new paused session from the configuration loaded when the routine started. The new session starts a new runmanager sequence. Shots the old session queued stay in runmanager's queue and run, but the new session ignores their costs. Reset does not read the file again: restart the routine after editing it.
+    Discards the history and opens a new paused session from the configuration loaded when the routine started. The new session starts a new runmanager sequence. Shots the old session queued stay in runmanager's queue and run, but the new session ignores their costs. Reset does not read the file again: restart the routine after editing it, and it leaves runmanager's values as they are and keeps the original values that Restore original values writes back.
 
-A session that has ended can only be reset. All three buttons are disabled while the window reads "Opening", and Reset is enabled as soon as the session has opened or ended.
+Set best values
+    Sets the Default values of the globals the configuration sets, in runmanager, to those of the shot with the best cost, and submits no shot. It is enabled while the session is paused or has ended, once a usable cost has arrived, and runmanager is answering. A run otherwise leaves runmanager showing the last proposal it submitted.
+
+Restore original values
+    Writes back the Default expressions that runmanager held for those globals before the optimizer first ran, exactly as they were written, so ``2*pi*5`` comes back as ``2*pi*5``. They are recorded once, at the first Start that succeeds after the routine starts, and kept through Pause and Reset, so Restore original values works after a Reset and puts back the same values. They are recorded again only when the routine is restarted. It is enabled while the session is paused or has ended, once they are recorded, and runmanager is answering.
+
+Start from runmanager values
+    A box in the second row, to the right of the two buttons. Ticked at the run's first Start, it opens the run at runmanager's current values of the parameters instead of the configuration's ``start``: the first shot is that point, and reads ``start`` in the ``phase`` column as a configured one does. It applies to every parameter the configuration searches, whether or not the file gives them a ``start``, and nothing else about how the run begins changes. The box is always enabled, and is read only at a run's first Start: a Start that resumes the run does not read runmanager again, whether or not it is ticked. Reset opens a new run, which has its own first Start. lyse remembers whether the box is ticked when the routine restarts.
+
+    The values are the Default values runmanager shows for the globals, evaluated, so "current" is whatever runmanager shows when Start is pressed. A session that ended has set its best values there, if it had a best, and one that was paused or reset leaves the last proposal it submitted. To open a new run at the values runmanager held before the optimizer first ran, press Restore original values, before or after Reset, and then Start.
+
+    Start refuses, and the session stays paused with the reason in the phase, when a value is outside its parameter's ``min`` and ``max``, when a global does not hold a real number, or when a parameter reaches runmanager only through an ``expr``, so its value cannot be read back. :ref:`troubleshooting:Start from runmanager values is refused` gives the messages.
+
+When a session ends, for whatever reason, it sets the best values in runmanager as Set best values does, if there is a best. It does not engage a shot, so runmanager runs them at once only if it is running default shots. If runmanager does not take the values from either button or from the end of a session, the Output dock gets one line, "Could not set runmanager's values:" and the reason, and the session is left as it was.
+
+A session that has ended can only be reset, or have runmanager's values set. All five buttons are disabled while the window reads "Opening", and Reset is enabled as soon as the session has opened or ended.
 
 The runmanager indicator
 ------------------------
 
 To the right of the buttons are runmanager's icon, then its name and a light that shows whether runmanager is answering. The window asks runmanager every two seconds. A tick means it answers, an exclamation mark means it does not, and an hourglass means it has not yet been asked. Under the name and the light is a short status, "Checking...", "Responding" or "Not responding", and hovering it shows the whole status. The light's tooltip names the host runmanager is expected on, and gives the reason when runmanager does not answer. Nothing is printed to the Output dock for a runmanager that is not answering.
 
-Start needs the tick. It enables itself once runmanager answers, with no Reset, and disables itself when runmanager stops.
+Start, Set best values and Restore original values need the tick. Each enables itself once runmanager answers, with no Reset, and disables itself when runmanager stops.
 
 Status tab
 ----------
@@ -44,7 +59,7 @@ Phase
         The session has not been started, or has been paused.
 
     ``Paused: <reason>``
-        Something other than you paused the session: Start found an error in runmanager's globals, or runmanager stopped answering during the run. The run is kept, and Start resumes it. :doc:`troubleshooting` lists the reasons.
+        Something other than you paused the session: Start found an error in runmanager's globals or could not use its values for the start, or runmanager stopped answering during the run. The run is kept, and Start resumes it. :doc:`troubleshooting` lists the reasons.
 
     ``Running``
         A learner other than ``gaussian_process`` is proposing.
@@ -87,7 +102,7 @@ Best cost
     The best usable cost so far, in the units and sign of your cost column, so a maximized cost is shown as measured. It reads "—" until a usable cost has arrived.
 
 Parameter table
-    One row for each enabled parameter, with its name, ``min``, ``max`` and ``start``, which reads "—" when the parameter has none. The Best column holds the parameter values of the shot with the best cost, in real units, and reads "—" until there is one.
+    One row for each enabled parameter, with its name, ``min``, ``max`` and the point the run opens at. The Start column holds the configuration's ``start``, which reads "—" when the parameters have none, or runmanager's values once a Start with Start from runmanager values ticked has read them. The Best column holds the parameter values of the shot with the best cost, in real units, and reads "—" until there is one.
 
 Configuration tab
 -----------------

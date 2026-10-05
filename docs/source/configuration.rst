@@ -110,7 +110,7 @@ Parameters are ordered by group, in the order each group first appears under ``[
     * - ``start``
       - number, from ``min`` to ``max``
       - none
-      - Where the run begins. The session proposes this point first and once, whichever learner runs, and its shot reads ``start`` in the ``phase`` column. It is one point over every searched parameter, so write ``start`` on all of them or on none.
+      - Where the run begins. The session proposes this point first and once, whichever learner runs, and its shot reads ``start`` in the ``phase`` column. It is one point over every searched parameter, so write ``start`` on all of them or on none. The window's Start from runmanager values box replaces the file's starts with runmanager's current values, at the run's first Start.
     * - ``enable``
       - boolean
       - ``true``
