@@ -25,8 +25,8 @@ from labscript_optimization.window import WindowController
 def test_window_shows_progress_and_controls(qt_application):
     commands = Queue()
     ui = UiLoader().load(str(Path(window_module.__file__).with_suffix('.ui')))
-    # The indicator is never started, so nothing is probed.
-    window = WindowController(ui, commands, lambda: None)
+    # The indicator is never started, so nothing is asked.
+    window = WindowController(ui, commands, "localhost", 42523)
     window.ui.show()
     qt_application.processEvents()
 

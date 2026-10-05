@@ -63,9 +63,10 @@ class Optimization(OptimizationRoutine):
   - `quit()` asks the thread to stop, and does not wait for it.
 - **`routine.py`'s `OptimizationRoutine`** is the lyse side alone: it builds the
   window, reads shots out of lyse and saves their status columns into it. The
-  window builds labscript-utils' `LinkIndicator`, which probes runmanager with
-  `say_hello(timeout=1)` every 2 s and whose answers gate Start; the routine
-  starts it and shuts it down in `close()`.
+  window builds labscript-utils' `LinkIndicator` from runmanager's address,
+  which it takes from a `RunmanagerClient`. The indicator says hello to
+  runmanager every 2 s through a client of its own, and its answers gate
+  Start; the routine starts it and shuts it down in `close()`.
 
 ## Threads
 
@@ -263,9 +264,9 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
   writes the recorded originals raw. `get_start()` returns the direct
   globals' values in parameter order, and refuses a value outside the bounds,
   a value that is not a real number, and a parameter with no direct global.
-- **The window,** with a probe that is never started: it enables Start only
-  when the session can start and runmanager answers, and Set best values and
-  Restore original values only while the session is paused or has ended,
+- **The window,** with an indicator that is never started: it enables Start
+  only when the session can start and runmanager answers, and Set best values
+  and Restore original values only while the session is paused or has ended,
   runmanager answers, and there is a best cost or `restorable` respectively.
   Shots submitted do not enable Restore, and a Reset session that has submitted
   none does. The Start click carries the Start from runmanager values box's

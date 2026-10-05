@@ -23,12 +23,12 @@ from qtutils.qt import QtGui, QtWidgets
 
 
 class WindowController:
-    def __init__(self, ui, command_queue, probe, host=None):
+    def __init__(self, ui, command_queue, host, port):
         self.command_queue = command_queue
         self.ui = ui
-        # Started by the routine, so a window can be built without probing.
+        # Started by the routine, so a window can be built without asking.
         self.link = LinkIndicator(
-            "runmanager", probe, host=host, on_answer=self._link_answered
+            "runmanager", host, port, on_answer=self._link_answered
         )
         self.ui.runmanager_link_layout.addWidget(self.link)
         # Whether the session could start, or has values to set in runmanager,

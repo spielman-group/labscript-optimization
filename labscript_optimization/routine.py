@@ -229,13 +229,13 @@ class OptimizationRoutine(lyse.Routine):
         self.config = config_module.loads(text)
         from runmanager.client import RunmanagerClient
 
+        # Only for runmanager's address: the light asks through a client of
+        # its own.
         client = RunmanagerClient()
         ui = self.load_ui(Path(__file__).with_name("window.ui"))
         self.saved_widgets(ui.start_from_runmanager)
         commands = queue.Queue()
-        window = WindowController(
-            ui, commands, lambda: client.say_hello(timeout=1), host=client.host
-        )
+        window = WindowController(ui, commands, client.host, client.port)
         window.show_config(self.config, text)
         self.worker = Worker(self.config, window, commands, self.interface_factory)
         self.link = window.link
