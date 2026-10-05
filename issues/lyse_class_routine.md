@@ -140,7 +140,8 @@ failed by its end, so lyse shows it as that analysis's error.
   answering. **Start** is enabled only while the session can start and the
   light shows a tick, and enables itself when the tick appears.
 - **Start** checks that runmanager's globals evaluate, pins its labscript
-  file and records the original values the first time, and begins submitting.
+  file, records the original values if none are recorded yet, and begins
+  submitting.
   If the check raises, the session stays paused with the message as its pause
   reason, shown as `Paused: <reason>`, and nothing is printed or raised; Start
   again after fixing it. When the Start from runmanager values box was ticked
@@ -149,12 +150,17 @@ failed by its end, so lyse shows it as that analysis's error.
   **Pause** stops new submissions while shots in flight still report.
   **Reset** builds a new paused session from the configuration already loaded,
   so it is also how a failed opening is retried. It leaves runmanager's
-  values alone.
+  values alone, and carries the original values over to the new session.
 - **The original values** are the raw Default expression strings, in
   runmanager, of every global the configuration sets. `check_ready` records
-  them with one `get_values(raw=True)` at the session's first successful Start,
-  and a later Start after Pause does not record again. Reset makes a new
-  session, which records at its own first Start.
+  them with one `get_values(raw=True)` at the first successful Start after the
+  routine starts, and only when `original` is empty, so a later Start does not
+  record again. The worker's `reset` copies the previous session's `original`
+  to the new session's interface, so Pause and Reset keep them and they are
+  recorded again only when the routine restarts. They are runmanager's values
+  from before the optimizer first ran. The worker gives the window `restorable`,
+  whether they are recorded, beside the session's status; the session does not
+  own them, so `Session.status()` and the saved results do not carry it.
 - **Start from runmanager values** is a box in the window's second row. The
   `start` command carries its state at the click. At a Start that has no
   proposals yet, a ticked box makes the worker set `Session.start_point` to
@@ -175,8 +181,8 @@ failed by its end, so lyse shows it as that analysis's error.
 - **Set best values** and **Restore original values** put `set_best` and
   `restore` on the queue. Both are enabled while the session is paused or has
   ended and the light shows a tick. Set best also needs a best cost, and
-  Restore needs a shot submitted, since runmanager's values change only by a
-  submission or by Set best. `set_best` calls
+  Restore needs the original values recorded, which `restorable` says, so it
+  works after a Reset. `set_best` calls
   `RunmanagerInterface.set_values(best.params)`, which writes what submitting
   those parameters would leave in runmanager's window; `restore` calls
   `set_values()`, which writes the recorded originals back raw, so `2*pi*5`
@@ -247,9 +253,12 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
     reason, and a Start that resumes the run does not read again;
   - a session that reaches a limit sets its best values once, `set_best` and
     `restore` call the interface on a paused session, and a write that fails
-    prints one line and no traceback and leaves the session as it was.
+    prints one line and no traceback and leaves the session as it was;
+  - after a Reset, `restore` writes the originals from before the first run,
+    and the new session's first Start does not record them again.
 - **The interface,** against a fake client: the first `check_ready` records the
-  configured globals' raw values and a later one does not record again,
+  configured globals' raw values, and neither a later one nor the first of an
+  interface handed originals records again,
   `set_values(params)` writes `globals_for(params)` unraw, and `set_values()`
   writes the recorded originals raw. `get_start()` returns the direct
   globals' values in parameter order, and refuses a value outside the bounds,
@@ -257,8 +266,9 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
 - **The window,** with a probe that is never started: it enables Start only
   when the session can start and runmanager answers, and Set best values and
   Restore original values only while the session is paused or has ended,
-  runmanager answers, and there is a best cost or a submitted shot
-  respectively. The Start click carries the Start from runmanager values box's
+  runmanager answers, and there is a best cost or `restorable` respectively.
+  Shots submitted do not enable Restore, and a Reset session that has submitted
+  none does. The Start click carries the Start from runmanager values box's
   state, and the parameters table's Start column shows the status's start.
   labscript-utils tests the indicator.
 - **The routine, end to end,** through lyse's real worker subprocess, as lyse's
@@ -281,7 +291,8 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
     remembers the box when the routine restarts;
   - Set best values and Restore original values change runmanager's Default
     values on a paused and on an ended session, and Restore brings back an
-    expression such as `2*pi*5` as written;
+    expression such as `2*pi*5` as written, and after a Reset still brings
+    back the values from before the first run;
   - a session that reaches a limit leaves runmanager showing its best values,
     and runmanager runs them at once if it is running default shots;
   - restarting and removing the routine end it cleanly.

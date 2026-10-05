@@ -165,11 +165,9 @@ class WindowController:
                 table.setItem(row, column, QtWidgets.QTableWidgetItem(cell))
 
         self.startable = not stopped and paused and not opening
-        # runmanager's values change only by a submission or Set best, and a
-        # best needs a submission, so none submitted means nothing to restore.
         idle = paused or bool(stopped)
         self.best_settable = idle and status.get("best_cost") is not None
-        self.restorable = idle and status.get("submitted", 0) > 0
+        self.restorable = idle and status.get("restorable", False)
         self._enable_buttons()
         self.ui.pause_button.setEnabled(not stopped and not paused)
         # Reset also retries an opening that failed.

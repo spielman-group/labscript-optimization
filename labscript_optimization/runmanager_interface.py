@@ -32,7 +32,8 @@ class RunmanagerInterface:
         self.client = client
         self.labscript_file = None
         # The raw Default expressions of the globals the configuration sets, as
-        # runmanager held them at the first Start.
+        # runmanager held them at the routine's first Start. The worker hands
+        # them to the interface of each later session.
         self.original = None
         # The runmanager sequence this session's shots go into, once the first
         # submission has started it. Its index tells it apart from another
@@ -48,7 +49,8 @@ class RunmanagerInterface:
         labscript file is pinned by the first call, and is what
         :meth:`check_unchanged` compares against for the rest of the session, so
         a Start that resumes the run does not move it. The first call also
-        records the original values, which :meth:`set_values` restores.
+        records the original values, which :meth:`set_values` restores, unless
+        it was handed them.
         """
         if self.client.error_in_globals():
             raise RuntimeError(
@@ -65,8 +67,9 @@ class RunmanagerInterface:
                     f"Global {', '.join(missing)} not found in any active group "
                     f"in runmanager"
                 )
-            self.original = {g.name: raw[g.name] for g in self.config.globals}
             self.labscript_file = self.client.get_labscript_file()
+            if self.original is None:
+                self.original = {g.name: raw[g.name] for g in self.config.globals}
 
     def check_unchanged(self) -> None:
         """Raise if the labscript file has changed since the session started."""

@@ -58,15 +58,19 @@ def test_window_shows_progress_and_controls(qt_application):
     window.ui.start_from_runmanager.setChecked(True)
     window.ui.start_button.click()
     assert commands.get_nowait() == ("start", None, True)
+    # Shots submitted do not make the original values restorable.
     window.update({"paused": True, "submitted": 1}, False, (), True, False)
     qt_application.processEvents()
+    assert not window.ui.restore_button.isEnabled()
 
-    # Shots were submitted, so there is something to restore; none has a cost
-    # yet, so there is no best to set.
+    # A Reset session has submitted nothing and can still restore them. It has
+    # no cost yet, so there is no best to set.
+    window.update({"paused": True, "restorable": True}, False, (), True, False)
+    qt_application.processEvents()
     assert not window.ui.set_best_button.isEnabled()
     window.ui.restore_button.click()
     assert commands.get_nowait()[0] == "restore"
-    best = {"paused": True, "submitted": 2, "best_cost": 1.0}
+    best = {"paused": True, "submitted": 2, "best_cost": 1.0, "restorable": True}
     window.update(best, False, (), True, False)
     qt_application.processEvents()
     window.ui.set_best_button.click()

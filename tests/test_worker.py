@@ -1,5 +1,6 @@
 """The session thread, driven in process with runmanager faked."""
 
+import itertools
 import queue
 import threading
 from types import SimpleNamespace
@@ -15,6 +16,8 @@ from conftest import SESSION_CONFIG as CONFIG
 
 
 class FakeInterface:
+    original = None
+
     def __init__(self, config):
         self.submitted = []
 
@@ -202,21 +205,25 @@ def test_a_session_that_reaches_a_limit_says_why_once(capsys):
 
 
 def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(capsys):
-    writes, failures = [], []
+    writes, failures, reads = [], [], itertools.count()
 
     class Writes(FakeInterface):
-        # What check_ready records at the first Start.
-        original = {'x': '0.5'}
+        def check_ready(self):
+            # The first Start records what runmanager holds, and a later one
+            # does not.
+            if self.original is None:
+                self.original = {'x': str(next(reads))}
 
         def set_values(self, params=None):
             if failures:
                 raise failures[0]
-            writes.append(None if params is None else list(params))
+            writes.append(self.original if params is None else list(params))
 
     text = CONFIG.replace(
         'num_buffered_runs = 2', 'num_buffered_runs = 2\nmax_num_runs = 2'
     )
     worker, commands, shown = start(Writes, text)
+    assert not shown[-1]['restorable']
     commands.put(('start', None, None))
     hand_over(worker, 'shot-0')
     commands.put(('pause', None, None))
@@ -224,7 +231,7 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
     commands.put(('restore', None, None))
     hand_over(worker)
     best = shown[-1]['best_params']
-    assert writes == [best, None]
+    assert shown[-1]['restorable'] and writes == [best, {'x': '0'}]
 
     # A write runmanager does not take is one line, and the run is as it was.
     capsys.readouterr()
@@ -246,7 +253,18 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
     hand_over(worker, 'shot-1')
     hand_over(worker)
     assert shown[-1]['stopped']
-    assert writes == [best, None, shown[-1]['best_params']]
+    assert writes == [best, {'x': '0'}, shown[-1]['best_params']]
+
+    # Reset keeps the originals from before the first run, and the new
+    # session's own first Start does not record them again.
+    writes.clear()
+    commands.put(('reset', None, None))
+    commands.put(('restore', None, None))
+    commands.put(('start', None, None))
+    commands.put(('pause', None, None))
+    commands.put(('restore', None, None))
+    hand_over(worker)
+    assert shown[-1]['restorable'] and writes == [{'x': '0'}, {'x': '0'}]
 
 
 def test_a_start_from_runmanagers_values_opens_the_run_there_or_is_refused():

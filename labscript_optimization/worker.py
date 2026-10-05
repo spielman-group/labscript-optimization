@@ -126,11 +126,14 @@ class Worker:
             try:
                 if command == "reset":
                     # Opening is a reset too, so a failed one is retried by Reset.
-                    session = None
+                    previous, session = session, None
                     # An empty status is the window's Opening, until the new
                     # session's own status replaces it.
                     self.window.update({}, False, (), False, False)
                     session = Session(self.config, self.interface_factory(self.config))
+                    if previous is not None:
+                        # The values runmanager held before the first run.
+                        session.interface.original = previous.interface.original
                 elif command == "start":
                     try:
                         session.interface.check_ready()
@@ -205,7 +208,9 @@ class Worker:
                         watched_future = computation
                     sign = -1 if self.config.maximize else 1
                     self.window.update(
-                        session.status(),
+                        # The originals outlast the session, which does not own them.
+                        session.status()
+                        | {"restorable": session.interface.original is not None},
                         computation is not None and not computation.done(),
                         tuple(
                             (

@@ -146,6 +146,13 @@ def test_the_original_values_are_recorded_once_and_restored_as_written(
         ({'gx': 1.0, 'gy_doubled': 4.0}, False),
     ]
 
+    # A later session is handed them, and its own first Start keeps them.
+    later = RunmanagerInterface(interface.config, client)
+    later.original = interface.original
+    later.check_ready()
+    later.set_values()
+    assert client.written[-1] == ({'gx': '2*pi*5', 'gy_doubled': '3'}, True)
+
 
 def test_runmanagers_values_are_read_back_as_the_start(interface, client):
     client.values.update(gx='2.5', gy='1.5')
