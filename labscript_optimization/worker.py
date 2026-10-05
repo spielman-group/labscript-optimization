@@ -134,6 +134,10 @@ class Worker:
                 elif command == "start":
                     try:
                         session.interface.check_ready()
+                        # The payload says whether the box was ticked; it
+                        # applies to the run's first Start only.
+                        if payload and not session.proposals:
+                            session.start_point = session.interface.get_start()
                     except RuntimeError as exc:
                         # Start did not go: the session stays paused, with
                         # runmanager's reason in the window.

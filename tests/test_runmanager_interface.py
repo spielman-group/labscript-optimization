@@ -147,6 +147,25 @@ def test_the_original_values_are_recorded_once_and_restored_as_written(
     ]
 
 
+def test_runmanagers_values_are_read_back_as_the_start(interface, client):
+    client.values.update(gx='2.5', gy='1.5')
+    # y reaches runmanager only through an expr.
+    with pytest.raises(RuntimeError, match='y reaches runmanager only through'):
+        interface.get_start()
+    interface.config = config_module.loads(
+        CONFIG.replace('[PARAMETERS.G.y]', '[PARAMETERS.G.y]\nglobal_name = "gy"')
+    )
+    assert interface.get_start().tolist() == [2.5, 1.5]
+    for value, reason in [
+        ('2*pi*5', 'gx is 31.4159, outside'),
+        ('True', 'is True, not a number'),
+        ('"fast"', "is 'fast', not a number"),
+    ]:
+        client.values['gx'] = value
+        with pytest.raises(RuntimeError, match=reason):
+            interface.get_start()
+
+
 @pytest.mark.parametrize('box', ['scan_enabled', 'jit_enabled'])
 def test_a_global_with_scan_or_jit_ticked_is_refused_before_submitting(
     interface, client, box

@@ -4,6 +4,7 @@ import queue
 import threading
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from labscript_optimization import config as config_module
@@ -246,3 +247,34 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
     hand_over(worker)
     assert shown[-1]['stopped']
     assert writes == [best, None, shown[-1]['best_params']]
+
+
+def test_a_start_from_runmanagers_values_opens_the_run_there_or_is_refused():
+    reason = 'gx is 2, outside the range 0 to 1 of parameter x'
+    refusals, sent = [reason], []
+
+    class Reads(FakeInterface):
+        def get_start(self):
+            if refusals:
+                raise RuntimeError(refusals.pop())
+            return np.array([0.25])
+
+        def submit(self, proposals):
+            sent.append(proposals[0].tolist())
+            return super().submit(proposals)
+
+    worker, commands, shown = start(Reads)
+    commands.put(('start', None, True))
+    hand_over(worker)
+    assert shown[-1]['paused'] and shown[-1]['pause_reason'] == reason
+    assert shown[-1]['submitted'] == 0
+    commands.put(('start', None, True))
+    assert hand_over(worker, 'shot-0') == [('shot-0.h5', 'start')]
+    assert sent[0] == [0.25] and shown[-1]['start'] == [0.25]
+
+    # A Start that resumes the run does not read runmanager again.
+    refusals.append(reason)
+    commands.put(('pause', None, None))
+    commands.put(('start', None, True))
+    hand_over(worker)
+    assert not shown[-1]['paused']

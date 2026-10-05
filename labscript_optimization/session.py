@@ -44,6 +44,10 @@ class Session:
         self.config = config
         self.interface = interface
         self.learner = learners.build(config) if learner is None else learner
+        # The configuration's start, or None for a run that opens on a draw.
+        # The worker replaces it when the first Start asks for runmanager's
+        # values.
+        self.start_point = config.space.start
         self.proposals: dict[str, np.ndarray] = {}
         self.sources: dict[str, str] = {}
         self.results: dict[str, tuple[float, float | None, bool]] = {}
@@ -241,9 +245,9 @@ class Session:
         changes after; a proposal without one is refused rather than recorded
         as anyone's.
 
-        The very first proposal of a run is the space's configured start,
-        where the parameters carry one, under :data:`START_SOURCE`, and the
-        learner answers around it; see the comment below.
+        The very first proposal of a run is its ``start_point``, where it has
+        one, under :data:`START_SOURCE`, and the learner answers around it; see
+        the comment below.
 
         ``max_num_runs`` is a ceiling on the whole run rather than on a batch,
         so what a learner offers past the room the budget has left is cut, and
@@ -286,11 +290,11 @@ class Session:
 
         # Where a run begins is the session's answer, not a learner's. The
         # start is written on the parameters, beside each one's min and max,
-        # and is proposed here: once, at the first position of the run,
-        # whichever learner is running and whether or not that learner has any
-        # idea of an opening. So "proposed exactly once" holds because there
-        # is one place that proposes it rather than because a guard somewhere
-        # declines to do it again.
+        # or is runmanager's values, and is proposed here: once, at the first
+        # position of the run, whichever learner is running and whether or not
+        # that learner has any idea of an opening. So "proposed exactly once"
+        # holds because there is one place that proposes it rather than because
+        # a guard somewhere declines to do it again.
         #
         # The learner is asked in the same call, from a history in which the
         # start already holds position 0 as a pending record, so the start
@@ -305,8 +309,8 @@ class Session:
         # record lives only in this call: what the session keeps is keyed on
         # the ids ``submit`` returns, and ``history`` is rebuilt from those.
         history, opening = self.history, []
-        if not self.proposals and self.config.space.start is not None:
-            start = np.asarray(self.config.space.start, dtype=float)
+        if not self.proposals and self.start_point is not None:
+            start = np.asarray(self.start_point, dtype=float)
             opening.append((start, START_SOURCE))
             history = [
                 Observation(None, start, None, state=PENDING, source=START_SOURCE)
@@ -382,6 +386,7 @@ class Session:
             "best_cost": best_cost,
             "best_params": None if best is None else best.params.tolist(),
             "best_shot_id": None if best is None else best.shot_id,
+            "start": None if self.start_point is None else self.start_point.tolist(),
             "paused": self.paused,
             "pause_reason": self.pause_reason,
             "stopped": self.stopped,

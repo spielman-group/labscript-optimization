@@ -7,7 +7,10 @@ row. Every shot carries the identifier runmanager minted for its queue row,
 written into the shot file: that is what a cost is matched to a proposal by.
 """
 
+from numbers import Real
 from typing import Iterable, Sequence
+
+import numpy as np
 
 
 class RunmanagerInterface:
@@ -104,6 +107,48 @@ class RunmanagerInterface:
         self.sequence = descriptors[0]["sequence_id"]
         self.sequence_index = descriptors[0]["sequence_index"]
         return [d["shot_id"] for d in descriptors]
+
+    def get_start(self) -> np.ndarray:
+        """Read runmanager's current values of the parameters, as a parameter vector.
+
+        A parameter is read from the global that takes it directly, which is
+        what ``global_name`` makes. A global an ``expr`` computes cannot be
+        turned back into its parameters.
+
+        Raises
+        ------
+        RuntimeError
+            If a parameter has no such global, or its global does not hold a
+            real number, or the number lies outside the parameter's bounds.
+        """
+        values = self.client.get_values()
+        start = []
+        for parameter in self.config.space.parameters:
+            direct = [
+                g.name
+                for g in self.config.globals
+                if g.expr is None and g.args == (parameter.name,)
+            ]
+            if not direct:
+                raise RuntimeError(
+                    f"Cannot start from runmanager's values: parameter "
+                    f"{parameter.name} reaches runmanager only through an "
+                    f"expr, so its value cannot be read back"
+                )
+            value = values[direct[0]]
+            if not isinstance(value, Real) or isinstance(value, bool):
+                raise RuntimeError(
+                    f"Cannot start from runmanager's values: {direct[0]} is "
+                    f"{value!r}, not a number"
+                )
+            if not parameter.minimum <= value <= parameter.maximum:
+                raise RuntimeError(
+                    f"Cannot start from runmanager's values: {direct[0]} is "
+                    f"{value:g}, outside the range {parameter.minimum:g} to "
+                    f"{parameter.maximum:g} of parameter {parameter.name}"
+                )
+            start.append(float(value))
+        return np.array(start)
 
     def set_values(self, params: Sequence[float] | None = None) -> None:
         """Set runmanager's Default values without submitting a shot.

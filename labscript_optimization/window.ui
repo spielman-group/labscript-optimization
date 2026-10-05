@@ -16,6 +16,7 @@
      <layout class="QHBoxLayout" name="valuesLayout">
       <item><widget class="QPushButton" name="set_best_button"><property name="text"><string>Set best values</string></property><property name="enabled"><bool>false</bool></property></widget></item>
       <item><widget class="QPushButton" name="restore_button"><property name="text"><string>Restore original values</string></property><property name="enabled"><bool>false</bool></property></widget></item>
+      <item><widget class="QCheckBox" name="start_from_runmanager"><property name="text"><string>Start from runmanager values</string></property><property name="toolTip"><string>At the first Start, open the run at runmanager's current values of the parameters instead of the configuration's start.</string></property></widget></item>
       <item><spacer name="valuesSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
      </layout>
     </item>

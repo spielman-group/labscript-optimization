@@ -37,8 +37,13 @@ class WindowController:
         self.best_settable = False
         self.restorable = False
         self.link_online = False
+        # Whether the box is ticked is read at the click, for the first Start.
+        self.ui.start_button.clicked.connect(
+            lambda checked=False: self.command_queue.put(
+                ("start", None, self.ui.start_from_runmanager.isChecked())
+            )
+        )
         for button, name in (
-            (self.ui.start_button, "start"),
             (self.ui.pause_button, "pause"),
             (self.ui.reset_button, "reset"),
             (self.ui.set_best_button, "set_best"),
@@ -148,13 +153,20 @@ class WindowController:
             label.setText(str(status.get(name, 0)))
         cost = status.get("best_cost")
         self.ui.best_cost_value.setText("—" if cost is None else f"{cost:g}")
-        params = status.get("best_params")
         table = self.ui.parameters_table
-        for row in range(table.rowCount()):
-            cell = "—" if params is None else f"{params[row]:g}"
-            table.setItem(row, 4, QtWidgets.QTableWidgetItem(cell))
+        columns = [(4, status.get("best_params"))]
+        # An empty status is a session still opening, which leaves the Start
+        # column as the configuration filled it.
+        if "start" in status:
+            columns.append((3, status["start"]))
+        for column, values in columns:
+            for row in range(table.rowCount()):
+                cell = "—" if values is None else f"{values[row]:g}"
+                table.setItem(row, column, QtWidgets.QTableWidgetItem(cell))
 
         self.startable = not stopped and paused and not opening
+        # The box applies to the run's first Start alone.
+        self.ui.start_from_runmanager.setEnabled(status.get("submitted", 0) == 0)
         # runmanager's values change only by a submission or Set best, and a
         # best needs a submission, so none submitted means nothing to restore.
         idle = paused or bool(stopped)

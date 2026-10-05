@@ -16,6 +16,8 @@ from queue import Queue
 
 from qtutils import UiLoader
 
+from conftest import SESSION_CONFIG
+from labscript_optimization import config as config_module
 from labscript_optimization import window as window_module
 from labscript_optimization.window import WindowController
 
@@ -45,7 +47,21 @@ def test_window_shows_progress_and_controls(qt_application):
     window.link.on_answer(True, None)
     qt_application.processEvents()
     window.ui.start_button.click()
-    assert commands.get_nowait()[0] == "start"
+    assert commands.get_nowait() == ("start", None, False)
+
+    # Until something is submitted, a Start can open the run at runmanager's
+    # values, and the table shows the start the session will use.
+    assert not window.ui.start_from_runmanager.isEnabled()
+    window.show_config(config_module.loads(SESSION_CONFIG), SESSION_CONFIG)
+    window.update({"paused": True, "start": [0.25]}, False, (), True, False)
+    qt_application.processEvents()
+    assert window.ui.parameters_table.item(0, 3).text() == "0.25"
+    window.ui.start_from_runmanager.setChecked(True)
+    window.ui.start_button.click()
+    assert commands.get_nowait() == ("start", None, True)
+    window.update({"paused": True, "submitted": 1}, False, (), True, False)
+    qt_application.processEvents()
+    assert not window.ui.start_from_runmanager.isEnabled()
 
     # Shots were submitted, so there is something to restore; none has a cost
     # yet, so there is no best to set.
