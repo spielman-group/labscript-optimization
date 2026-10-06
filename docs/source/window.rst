@@ -109,6 +109,8 @@ Configuration tab
 
 The Configuration tab shows the text of the TOML file as it was last loaded, when the routine started or at the last Reset that read it. It is read only.
 
+The Edit in text editor button above the text opens the configuration file itself, not the text shown, in a text editor, and does not wait for it. The text box's right-click menu has the same item, after Copy and Select All. The editor is the program set as ``text_editor`` under ``[programs]`` in the labconfig, run with ``text_editor_arguments`` from the same section, in which each ``{file}`` stands for the file's path; with no ``{file}`` the path comes before the arguments. It is the editor that runmanager's edit button uses. If no editor is set, or it cannot be launched, a dialog says so. The tab goes on showing the text it has until Reset reads the edited file.
+
 The plot
 --------
 

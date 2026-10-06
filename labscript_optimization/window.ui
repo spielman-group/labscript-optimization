@@ -60,7 +60,22 @@
       <widget class="QWidget" name="config_tab">
        <attribute name="title"><string>Configuration</string></attribute>
        <layout class="QVBoxLayout" name="configTabLayout">
-        <item><widget class="QPlainTextEdit" name="config_text"><property name="readOnly"><bool>true</bool></property><property name="lineWrapMode"><enum>QPlainTextEdit::NoWrap</enum></property></widget></item>
+        <item>
+         <layout class="QHBoxLayout" name="configButtonLayout">
+          <item>
+           <widget class="QPushButton" name="edit_config_button">
+            <property name="text"><string>Edit in text editor</string></property>
+            <property name="toolTip"><string>Open the configuration file in the text editor set in the labconfig. Reset reads the file again.</string></property>
+            <property name="icon">
+             <iconset>
+              <normaloff>:/qtutils/fugue/document--pencil.png</normaloff>:/qtutils/fugue/document--pencil.png</iconset>
+            </property>
+           </widget>
+          </item>
+          <item><spacer name="configButtonSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+         </layout>
+        </item>
+        <item><widget class="QPlainTextEdit" name="config_text"><property name="contextMenuPolicy"><enum>Qt::CustomContextMenu</enum></property><property name="readOnly"><bool>true</bool></property><property name="lineWrapMode"><enum>QPlainTextEdit::NoWrap</enum></property></widget></item>
        </layout>
       </widget>
      </widget>
@@ -69,6 +84,13 @@
      <layout class="QVBoxLayout" name="plot_layout"/>
     </item>
    </layout>
+   <action name="edit_config_action">
+    <property name="text"><string>Edit in text editor</string></property>
+    <property name="icon">
+     <iconset>
+      <normaloff>:/qtutils/fugue/document--pencil.png</normaloff>:/qtutils/fugue/document--pencil.png</iconset>
+    </property>
+   </action>
  </widget>
  <resources/>
  <connections/>

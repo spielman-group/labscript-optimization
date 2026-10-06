@@ -22,11 +22,12 @@ from labscript_optimization import window as window_module
 from labscript_optimization.window import WindowController
 
 
-def test_window_shows_progress_and_controls(qt_application):
+def test_window_shows_progress_and_controls(qt_application, monkeypatch, tmp_path):
     commands = Queue()
     ui = UiLoader().load(str(Path(window_module.__file__).with_suffix('.ui')))
+    config_file = tmp_path / "config.toml"
     # The indicator is never started, so nothing is asked.
-    window = WindowController(ui, commands, "localhost", 42523)
+    window = WindowController(ui, commands, "localhost", 42523, config_file)
     window.ui.show()
     qt_application.processEvents()
 
@@ -130,3 +131,15 @@ def test_window_shows_progress_and_controls(qt_application):
     qt_application.processEvents()
     plotted = [item.getData()[0] for item in window.plot.listDataItems()]
     assert [2] in [list(x) for x in plotted if x is not None]
+
+    # The button and the right-click item open the configuration file, over
+    # this window.
+    opened = []
+    monkeypatch.setattr(
+        window_module,
+        "open_in_editor",
+        lambda path, parent=None: opened.append((path, parent)),
+    )
+    window.ui.edit_config_button.click()
+    window.ui.edit_config_action.trigger()
+    assert opened == [(config_file, window.ui)] * 2

@@ -8,8 +8,8 @@ runs on a thread started by the routine, and the package starts no process of
 its own.
 
 This needs lyse's GUI routines, which are on lyse's `Development` branch.
-It also needs labscript-utils' `LinkCheck` branch until it is merged into
-labscript-utils' `Development`.
+It also needs labscript-utils' `EditFile` branch, for `open_in_editor`, until
+it is merged into labscript-utils' `Development`.
 
 ## The lab's routine folder
 
@@ -70,6 +70,13 @@ class Optimization(OptimizationRoutine):
   which it takes from a `RunmanagerClient`. The indicator says hello to
   runmanager every 2 s through a client of its own, and its answers gate
   Start; the routine starts it and shuts it down in `close()`.
+  The window's Configuration tab has an Edit in text editor button above the
+  configuration text, and `edit_config_action`, an action with the same text and
+  icon, in the text box's right-click menu after Copy and Select All. Both call
+  labscript-utils' `open_in_editor` on the absolute path of the configuration
+  file, which opens it in the labconfig's `[programs] text_editor` and does not
+  wait. The window is given that path by the routine, which works it out once
+  in `__init__`.
 
 ## Threads
 
@@ -88,7 +95,9 @@ puts `refresh` on the queue.
 
 ## `__init__`
 
-1. Check that `config_path` is set. An unset `config_path` raises.
+1. Check that `config_path` is set. An unset `config_path` raises. Work out
+   the configuration file's absolute path from it and the folder of the lab's
+   subclass, which the window and the reading of the file both use.
 2. Load the window's controls with `self.load_ui(...)`, given the absolute path
    of the package's `window.ui`, a `QWidget` form holding the buttons, the
    Status and Configuration tabs and the plot area. The pyqtgraph plot is

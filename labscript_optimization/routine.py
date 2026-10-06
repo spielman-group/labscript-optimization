@@ -218,9 +218,7 @@ class OptimizationRoutine(lyse.Routine):
     interface_factory = RunmanagerInterface
 
     def _load_config(self):
-        # The folder of the lab's subclass, whatever the working directory is.
-        folder = Path(inspect.getfile(type(self))).parent
-        text = (folder / self.config_path).read_text(encoding="utf-8")
+        text = self._config_file.read_text(encoding="utf-8")
         return config_module.loads(text), text
 
     def __init__(self):
@@ -229,6 +227,10 @@ class OptimizationRoutine(lyse.Routine):
                 f"{type(self).__name__} must set config_path to its TOML "
                 f"configuration file."
             )
+        # The folder of the lab's subclass, whatever the working directory is.
+        folder = Path(inspect.getfile(type(self))).parent
+        self._config_file = folder / self.config_path
+
         from runmanager.client import RunmanagerClient
 
         # Only for runmanager's address: the light asks through a client of
@@ -237,7 +239,9 @@ class OptimizationRoutine(lyse.Routine):
         ui = self.load_ui(Path(__file__).with_name("window.ui"))
         self.saved_widgets(ui.start_from_runmanager)
         commands = queue.Queue()
-        window = WindowController(ui, commands, client.host, client.port)
+        window = WindowController(
+            ui, commands, client.host, client.port, self._config_file
+        )
         # The worker reads the file at once, so one that does not load raises
         # here, and lyse shows no window.
         self.worker = Worker(

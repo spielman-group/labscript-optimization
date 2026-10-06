@@ -17,15 +17,18 @@ import importlib.resources
 import itertools
 
 import pyqtgraph as pg
+import qtutils.icons  # registers the :/qtutils icons window.ui uses
 from labscript_utils.qtwidgets.link_indicator import LinkIndicator
+from labscript_utils.text_editor import open_in_editor
 from qtutils import inmain_decorator
 from qtutils.qt import QtGui, QtWidgets
 
 
 class WindowController:
-    def __init__(self, ui, command_queue, host, port):
+    def __init__(self, ui, command_queue, host, port, config_path):
         self.command_queue = command_queue
         self.ui = ui
+        self.config_path = config_path
         # Started by the routine, so a window can be built without asking.
         self.link = LinkIndicator(
             "runmanager", host, port, on_answer=self._link_answered
@@ -54,6 +57,9 @@ class WindowController:
                     (command, None, None)
                 )
             )
+        self.ui.edit_config_button.clicked.connect(self._edit_config)
+        self.ui.edit_config_action.triggered.connect(self._edit_config)
+        self.ui.config_text.customContextMenuRequested.connect(self._show_config_menu)
         self.plot = pg.PlotWidget()
         self.plot.setMinimumHeight(220)
         self.plot.setLabel("bottom", "Shot order")
@@ -86,6 +92,18 @@ class WindowController:
         self.best_line = self.plot.plot([], [], pen=pg.mkPen("#eeeeee", width=2))
         svg = importlib.resources.files("runmanager") / "runmanager.svg"
         self.ui.runmanager_icon.setPixmap(QtGui.QIcon(str(svg)).pixmap(16, 16))
+
+    def _edit_config(self, checked=False):
+        open_in_editor(self.config_path, parent=self.ui)
+
+    def _show_config_menu(self, position):
+        # The position is in the viewport, which the text box's frame offsets.
+        menu = self.ui.config_text.createStandardContextMenu()
+        menu.addSeparator()
+        menu.addAction(self.ui.edit_config_action)
+        menu.exec(self.ui.config_text.viewport().mapToGlobal(position))
+        # The text box owns the menu it made, so each right-click would leave one.
+        menu.deleteLater()
 
     def _add_points(self, source, color):
         self.points[source] = self.plot.plot(
