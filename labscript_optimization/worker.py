@@ -43,8 +43,10 @@ class Worker:
 
     Parameters
     ----------
-    config : Config
-        The session configuration, loaded once.
+    load : Callable
+        Returns the session configuration and the text of the file it was read
+        from. Called at every Reset, the opening included; a file that does not
+        load raises an ``OSError`` or ``ValueError``.
     window : WindowController
         The view the thread updates after each request.
     command_queue : queue.Queue
@@ -54,9 +56,11 @@ class Worker:
     """
 
     def __init__(
-        self, config, window, command_queue, interface_factory=RunmanagerInterface
+        self, load, window, command_queue, interface_factory=RunmanagerInterface
     ):
-        self.config = config
+        self.load = load
+        # What a hand-over reads before the opening Reset has loaded the file.
+        self.config = load()[0]
         self.window = window
         self.command_queue = command_queue
         self.interface_factory = interface_factory
@@ -115,6 +119,9 @@ class Worker:
 
     def _run_session(self):
         session = None
+        # The values runmanager held before the first run, which outlast the
+        # session and a Reset whose file does not load.
+        original = None
         printed = None
         watched_future = None
         while True:
@@ -126,14 +133,21 @@ class Worker:
             try:
                 if command == "reset":
                     # Opening is a reset too, so a failed one is retried by Reset.
-                    previous, session = session, None
+                    if session is not None:
+                        original = session.interface.original
+                    session = None
+                    try:
+                        self.config, text = self.load()
+                    except (OSError, ValueError) as exc:
+                        # The file is the user's to fix, and Reset reads it again.
+                        error = str(exc) or type(exc).__name__
+                        continue
+                    self.window.show_config(self.config, text)
                     # An empty status is the window's Opening, until the new
                     # session's own status replaces it.
                     self.window.update({}, False, (), False, False)
                     session = Session(self.config, self.interface_factory(self.config))
-                    if previous is not None:
-                        # The values runmanager held before the first run.
-                        session.interface.original = previous.interface.original
+                    session.interface.original = original
                 elif command == "start":
                     try:
                         session.interface.check_ready()

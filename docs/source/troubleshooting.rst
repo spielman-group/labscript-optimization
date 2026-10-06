@@ -4,11 +4,11 @@ Troubleshooting
 Where errors appear
 -------------------
 
-A session that has stopped shows ``Ended:`` and the reason in the window's phase. The routine's Output dock holds tracebacks, and one line, ``The optimization has stopped: <reason>``, printed once for each session. A configuration that does not load is reported in lyse's own output box.
+A session that has stopped shows ``Ended:`` and the reason in the window's phase. The routine's Output dock holds tracebacks, and one line, ``The optimization has stopped: <reason>``, printed once for each session. A configuration that does not load when the routine starts is reported in lyse's own output box, and one that does not load at a Reset ends the session in the window.
 
 How an error is reported depends on what the session was doing:
 
-* During the opening, Start and Reset, and when a Gaussian process batch finishes, the message becomes the reason in the window. The traceback goes to the Output dock. The routine does not raise, and lyse goes on analyzing.
+* During the opening, Start and Reset, and when a Gaussian process batch finishes, the message becomes the reason in the window. The traceback goes to the Output dock, except for a configuration file that does not load at a Reset, which is yours to fix and prints none. The routine does not raise, and lyse goes on analyzing.
 * During the work after a shot, the window reads ``Ended: stopped by an error``. The routine raises the error in lyse, in that pass or the next, and lyse then pauses analysis. An error raised in the next pass has its traceback in the Output dock as soon as it happens. When you resume, the shots of the failed pass are part of the next pass.
 * When Start finds an error in runmanager's globals or cannot use its values for the start, or runmanager stops answering during a run, the session pauses and the window reads ``Paused:`` and the reason. Nothing is printed, and the session does not end.
 
@@ -74,7 +74,7 @@ A run with no usable cost still ends at the limits the configuration sets, ``no 
 Starved counts
 --------------
 
-Starved counts each time the session ran and found none of its shots queued. runmanager then gave BLACS a default shot, so the apparatus kept running, but the optimizer did not get that shot. BLACS asks for its next shot as soon as it finishes one, which is before the optimizer has seen the cost and proposed a replacement. Raise ``num_buffered_runs`` in ``[GENERAL]``, which is 2 by default, and restart the routine. The learners that top up a queue keep exactly that many of the session's shots in flight.
+Starved counts each time the session ran and found none of its shots queued. runmanager then gave BLACS a default shot, so the apparatus kept running, but the optimizer did not get that shot. BLACS asks for its next shot as soon as it finishes one, which is before the optimizer has seen the cost and proposed a replacement. Raise ``num_buffered_runs`` in ``[GENERAL]``, which is 2 by default, and press Reset. The learners that top up a queue keep exactly that many of the session's shots in flight.
 
 ``differential_evolution`` proposes a whole generation and empties the queue once per generation, so it does not count starved shots. It refuses ``num_buffered_runs``, because its queue depth is its ``population_size``.
 
@@ -91,4 +91,4 @@ A singleshot routine gets one shot file at a time, so the optimization routine r
 The configuration does not load
 -------------------------------
 
-The routine reads its configuration when lyse starts it. If the file is unreadable or a setting is refused, lyse's output box shows the message, which names the setting, and no window opens. lyse reports the error again at each analysis until you fix the file and restart the routine. :doc:`configuration` describes the settings.
+The routine reads its configuration when lyse starts it. If the file is unreadable or a setting is refused, lyse's output box shows the message, which names the setting, and no window opens. lyse reports the error again at each analysis until you fix the file and restart the routine. Reset reads the file again: if it does not load then, the window's phase reads ``Ended:`` followed by that message, nothing is printed, and there is no session until you fix the file and press Reset. :doc:`configuration` describes the settings.

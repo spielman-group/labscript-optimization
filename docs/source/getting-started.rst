@@ -49,7 +49,7 @@ The folder's name must end in ``.lyse``. It is the routine's name in lyse and th
     :language: python
     :lines: 14-
 
-``config_path`` is relative to the folder. Edit ``optimization_config.toml`` for your experiment: ``cost_key`` and ``maximize`` in ``[ANALYSIS]``, the ``groups`` that take part, and one ``[PARAMETERS.<group>.<name>]`` table for each parameter, giving the runmanager global it sets (``global_name``), its ``min`` and ``max``, and optionally a ``start``. Every global must be in an active group in runmanager. :doc:`configuration` describes every key. The routine reads the file once, when lyse starts it, so restart the routine after editing the file.
+``config_path`` is relative to the folder. Edit ``optimization_config.toml`` for your experiment: ``cost_key`` and ``maximize`` in ``[ANALYSIS]``, the ``groups`` that take part, and one ``[PARAMETERS.<group>.<name>]`` table for each parameter, giving the runmanager global it sets (``global_name``), its ``min`` and ``max``, and optionally a ``start``. Every global must be in an active group in runmanager. :doc:`configuration` describes every key. The routine reads the file when lyse starts it and again at each Reset, so press Reset after editing the file.
 
 Add the folder to lyse
 ----------------------

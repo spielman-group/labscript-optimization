@@ -31,9 +31,9 @@ class RunmanagerInterface:
         self.config = config
         self.client = client
         self.labscript_file = None
-        # The raw Default expressions of the globals the configuration sets, as
-        # runmanager held them at the routine's first Start. The worker hands
-        # them to the interface of each later session.
+        # The raw Default expressions of every global a session has set, as
+        # runmanager held them before the first Start that set it. The worker
+        # hands them to the interface of each later session.
         self.original = None
         # The runmanager sequence this session's shots go into, once the first
         # submission has started it. Its index tells it apart from another
@@ -49,8 +49,8 @@ class RunmanagerInterface:
         labscript file is pinned by the first call, and is what
         :meth:`check_unchanged` compares against for the rest of the session, so
         a Start that resumes the run does not move it. The first call also
-        records the original values, which :meth:`set_values` restores, unless
-        it was handed them.
+        records the original values, which :meth:`set_values` restores, of the
+        globals it was not handed them for.
         """
         if self.client.error_in_globals():
             raise RuntimeError(
@@ -68,8 +68,10 @@ class RunmanagerInterface:
                     f"in runmanager"
                 )
             self.labscript_file = self.client.get_labscript_file()
-            if self.original is None:
-                self.original = {g.name: raw[g.name] for g in self.config.globals}
+            # What an earlier session recorded is what runmanager held before any
+            # run, so it wins over what runmanager holds now.
+            held = {g.name: raw[g.name] for g in self.config.globals}
+            self.original = held | (self.original or {})
 
     def check_unchanged(self) -> None:
         """Raise if the labscript file has changed since the session started."""
