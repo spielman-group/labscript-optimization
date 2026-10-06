@@ -50,8 +50,8 @@ analysislib-mloop is imported any more, and `mloop` itself is not a dependency.
 
 The session opens paused and submits no shots until it receives Start;
 analysislib-mloop began as soon as the lyse routine first ran. Reset discards
-the history but keeps the configuration loaded for that session. Restart the
-lyse routine after editing the TOML.
+the history and reads the configuration file again, so press Reset after
+editing the TOML.
 
 When a run ends, analysislib-mloop set the best values in runmanager and engaged
 a shot. labscript-optimization only sets the best values; runmanager runs them at

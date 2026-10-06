@@ -36,8 +36,8 @@ class Optimization(OptimizationRoutine):
 - The folder's name is the routine's name in lyse and its window's title.
 - `config_path` is read relative to the routine folder, which is the worker's
   working directory.
-- The configuration is read once, when the routine starts. Restart the routine
-  after editing it.
+- The configuration is read when the routine starts, and again at each Reset,
+  so an edit to the file takes effect at the next Reset.
 - `OptimizationRoutine` sets `lyse.Routine`'s `icon` class attribute to the
   absolute path of the package's `optimizer.svg`, and lyse shows that icon on
   the window.
@@ -48,9 +48,12 @@ class Optimization(OptimizationRoutine):
 
 - **`worker.py`'s `Worker`** owns the session thread and holds everything
   that does not need lyse:
-  - constructed with the configuration, the window, the command queue and an
+  - constructed with a `load` callable, the window, the command queue and an
     interface factory, it starts the session thread and queues the opening,
-    which is a `reset`;
+    which is a `reset`. `load()` returns the configuration and the text of the
+    file it was read from. Every `reset`, the opening included, calls it, sets
+    the worker's `config` and shows both in the window, and `run()` reads costs
+    by that `config`;
   - `hand_over(filepaths, observations, save)` queues one request carrying a
     `concurrent.futures.Future` and waits up to `REPLY_TIMEOUT` (2 s) for it.
     It calls `save(filepath, status)` for every shot the session took, among
@@ -72,8 +75,8 @@ class Optimization(OptimizationRoutine):
 
 | Work | Thread |
 | --- | --- |
-| Reading the configuration, building the window, `close()`, button slots | GUI main thread |
-| Recording costs, reconciling, proposing, submitting | Session thread |
+| Reading the configuration at the routine's start, building the window, `close()`, button slots | GUI main thread |
+| Reading the configuration at a Reset, recording costs, reconciling, proposing, submitting | Session thread |
 | Asking runmanager whether it answers | The indicator's thread |
 | Reading the analyzed shots and saving their status columns | lyse's analysis thread, in `run()` |
 | A Gaussian-process batch | The learner's background thread |
@@ -85,10 +88,7 @@ puts `refresh` on the queue.
 
 ## `__init__`
 
-1. Load `config_path`, and show its text in the Configuration tab. An unset
-   `config_path`, or a file that does not load, raises. lyse then shows no
-   window, prints the error in its own output box, and reports it again at
-   every analysis until the routine is restarted.
+1. Check that `config_path` is set. An unset `config_path` raises.
 2. Load the window's controls with `self.load_ui(...)`, given the absolute path
    of the package's `window.ui`, a `QWidget` form holding the buttons, the
    Status and Configuration tabs and the plot area. The pyqtgraph plot is
@@ -97,8 +97,14 @@ puts `refresh` on the queue.
 3. Register the Start from runmanager values box with `self.saved_widgets(...)`,
    so lyse restores its state when the routine starts and saves it with the
    routine's other settings.
-4. Build the `Worker`, with the `interface_factory` class attribute, which is
-   `RunmanagerInterface`.
+4. Build the `Worker`, with the routine's method that reads `config_path`
+   relative to the routine folder and returns the configuration and its text,
+   and the `interface_factory` class attribute, which is `RunmanagerInterface`.
+   The worker loads the file at once, so a file that does not load raises.
+   lyse then shows no window, prints the error in its own output box, and
+   reports it again at every analysis until the routine is restarted. The
+   session thread loads the file again at the opening, and shows its text in
+   the Configuration tab.
 5. Start the window's `LinkIndicator`.
 
 `__init__` makes no runmanager round trip, so the window appears at once. The
@@ -112,7 +118,7 @@ lyse sets `self.path` and `self.paths` before each `run()`.
 
 1. Raise if `self.paths` is `None`: the routine is a singleshot one.
 2. Read the rows for `self.paths` with `lyse.data(where={"filepath": ...})`,
-   and extract the shot ids and costs. An empty pass, from Run multishot with
+   and extract the shot ids and costs, by the worker's current configuration. An empty pass, from Run multishot with
    nothing analyzed, has `self.paths == []` and reads nothing.
 3. Hand them to the worker, which saves each shot's status with
    `save_status`.
@@ -129,9 +135,10 @@ failed by its end, so lyse shows it as that analysis's error.
 
 ## Session lifecycle
 
-- **Opening:** the session thread builds the session, paused, without
-  contacting runmanager. If that fails, the window shows why, the traceback is
-  printed, and the routine stays up.
+- **Opening:** the session thread loads the configuration, shows it in the
+  window, and builds the session, paused, without contacting runmanager. If
+  that fails, the window shows why, the traceback is printed, and the routine
+  stays up.
 - **The runmanager indicator** is a row in the window's top bar, right of the
   buttons: runmanager's icon, then the name `runmanager` and a status light,
   with its status under them: `Checking...`, `Responding` or `Not
@@ -141,7 +148,7 @@ failed by its end, so lyse shows it as that analysis's error.
   answering. **Start** is enabled only while the session can start and the
   light shows a tick, and enables itself when the tick appears.
 - **Start** checks that runmanager's globals evaluate, pins its labscript
-  file, records the original values if none are recorded yet, and begins
+  file, records the original values of the globals not recorded yet, and begins
   submitting.
   If the check raises, the session stays paused with the message as its pause
   reason, shown as `Paused: <reason>`, and nothing is printed or raised; Start
@@ -149,15 +156,27 @@ failed by its end, so lyse shows it as that analysis's error.
   and the session has proposed nothing, it then reads the start from
   runmanager, and a refusal there is handled in the same way.
   **Pause** stops new submissions while shots in flight still report.
-  **Reset** builds a new paused session from the configuration already loaded,
-  so it is also how a failed opening is retried. It leaves runmanager's
-  values alone, and carries the original values over to the new session.
+  **Reset** reads the configuration file again and builds a new paused session
+  from it, so it is also how a failed opening is retried. It leaves
+  runmanager's values alone, and carries the original values over to the new
+  session.
+- **A file that does not load at a Reset** is the user's mistake, not a bug.
+  The load is reading the file and `config_module.loads`, and an `OSError` or
+  `ValueError` from it ends the Reset: the phase reads `Ended: <message>`, no
+  traceback is printed, there is no session, and only Reset is enabled. The
+  window goes on showing the configuration it last loaded, and the worker
+  keeps that `config` and the original values, so the next Reset after the fix
+  builds a session as usual. Any other failure of a Reset is handled as an
+  opening that fails.
 - **The original values** are the raw Default expression strings, in
-  runmanager, of every global the configuration sets. `check_ready` records
-  them with one `get_values(raw=True)` at the first successful Start after the
-  routine starts, and only when `original` is empty, so a later Start does not
-  record again. The worker's `reset` copies the previous session's `original`
-  to the new session's interface, so Pause and Reset keep them and they are
+  runmanager, of every global a session's configuration has set. `check_ready`
+  records them with one `get_values(raw=True)` at a session's first successful
+  Start, for the globals of its configuration that are not recorded yet, and
+  never overwrites one that is, so a later Start does not record again. The
+  worker's `reset` copies the previous session's `original` to the new
+  session's interface, so Pause and Reset keep them, a global the new
+  configuration no longer sets stays recorded and is restored, and one the new
+  configuration adds is recorded at its first Start. A recorded global is
   recorded again only when the routine restarts. They are runmanager's values
   from before the optimizer first ran. The worker gives the window `restorable`,
   whether they are recorded, beside the session's status; the session does not
@@ -199,8 +218,8 @@ failed by its end, so lyse shows it as that analysis's error.
   tick. A runmanager that was restarted no longer knows the run's sequence,
   so the next submission after Start is refused and the session ends with
   runmanager's reason.
-- **Before a session exists,** a hand-over is answered with no shots taken,
-  since none can be the session's yet.
+- **Before a session exists,** or after a Reset whose file did not load, a
+  hand-over is answered with no shots taken, since none can be the session's.
 - **A session ends,** at a limit or on an error. The reason is shown in the
   window and printed once to the Output dock. The first time the session thread
   sees the session stopped, it also sets the best values in runmanager, if
@@ -256,10 +275,15 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
     `restore` call the interface on a paused session, and a write that fails
     prints one line and no traceback and leaves the session as it was;
   - after a Reset, `restore` writes the originals from before the first run,
-    and the new session's first Start does not record them again.
+    and the new session's first Start does not record them again;
+  - a Reset after the file changed builds the session from the new
+    configuration and shows it, and a Reset whose file does not load shows
+    `Ended: <message>`, prints nothing, takes no shots and keeps the originals,
+    and a further Reset after the fix opens a session.
 - **The interface,** against a fake client: the first `check_ready` records the
-  configured globals' raw values, and neither a later one nor the first of an
-  interface handed originals records again,
+  configured globals' raw values, a later one does not record again, and the
+  first of an interface handed originals records only the globals it was not
+  handed,
   `set_values(params)` writes `globals_for(params)` unraw, and `set_values()`
   writes the recorded originals raw. `get_start()` returns the direct
   globals' values in parameter order, and refuses a value outside the bounds,
@@ -296,4 +320,8 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
     back the values from before the first run;
   - a session that reaches a limit leaves runmanager showing its best values,
     and runmanager runs them at once if it is running default shots;
+  - editing the configuration and pressing Reset shows the new Method,
+    parameters and text and runs the new session, a broken file reads
+    `Ended: <message>` with nothing printed, and fixing it and pressing Reset
+    opens a session;
   - restarting and removing the routine end it cleanly.

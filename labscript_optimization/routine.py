@@ -200,8 +200,8 @@ class OptimizationRoutine(lyse.Routine):
     """One optimization session, as a lyse GUI routine.
 
     A lab's ``lyse_routine.py`` subclasses this and sets :attr:`config_path`. The
-    configuration is read once, when lyse starts the routine; restart the
-    routine after editing it.
+    configuration is read when lyse starts the routine, which fails if the file
+    does not load, and again at each Reset.
     """
 
     #: The TOML configuration, relative to the routine folder. A subclass must
@@ -217,16 +217,18 @@ class OptimizationRoutine(lyse.Routine):
     #: to build the runmanager interface the session submits shots through.
     interface_factory = RunmanagerInterface
 
+    def _load_config(self):
+        # The folder of the lab's subclass, whatever the working directory is.
+        folder = Path(inspect.getfile(type(self))).parent
+        text = (folder / self.config_path).read_text(encoding="utf-8")
+        return config_module.loads(text), text
+
     def __init__(self):
         if self.config_path is None:
             raise ValueError(
                 f"{type(self).__name__} must set config_path to its TOML "
                 f"configuration file."
             )
-        # The folder of the lab's subclass, whatever the working directory is.
-        folder = Path(inspect.getfile(type(self))).parent
-        text = (folder / self.config_path).read_text(encoding="utf-8")
-        self.config = config_module.loads(text)
         from runmanager.client import RunmanagerClient
 
         # Only for runmanager's address: the light asks through a client of
@@ -236,8 +238,11 @@ class OptimizationRoutine(lyse.Routine):
         self.saved_widgets(ui.start_from_runmanager)
         commands = queue.Queue()
         window = WindowController(ui, commands, client.host, client.port)
-        window.show_config(self.config, text)
-        self.worker = Worker(self.config, window, commands, self.interface_factory)
+        # The worker reads the file at once, so one that does not load raises
+        # here, and lyse shows no window.
+        self.worker = Worker(
+            self._load_config, window, commands, self.interface_factory
+        )
         self.link = window.link
         self.link.start()
 
@@ -248,7 +253,7 @@ class OptimizationRoutine(lyse.Routine):
                 "labscript_optimization's routine runs on the shots of a "
                 "multishot pass; add it to lyse's multishot routines."
             )
-        filepaths, observations = extract(analyzed(self.paths), self.config)
+        filepaths, observations = extract(analyzed(self.paths), self.worker.config)
         self.worker.hand_over(filepaths, observations, save_status)
 
     def close(self):

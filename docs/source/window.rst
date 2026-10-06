@@ -20,13 +20,13 @@ Pause
     Stops new submissions. It is enabled while the session is running. Shots already queued still run, and the session still takes their costs and applies its limits.
 
 Reset
-    Discards the history and opens a new paused session from the configuration loaded when the routine started. The new session starts a new runmanager sequence. Shots the old session queued stay in runmanager's queue and run, but the new session ignores their costs. Reset does not read the file again: restart the routine after editing it, and it leaves runmanager's values as they are and keeps the original values that Restore original values writes back.
+    Discards the history, reads the configuration file again and opens a new paused session from it, so an edit to the file takes effect at Reset. The Method, the parameter table and the Configuration tab show the file as it was just read. The new session starts a new runmanager sequence. Shots the old session queued stay in runmanager's queue and run, but the new session ignores their costs. Reset leaves runmanager's values as they are and keeps the original values that Restore original values writes back. If the file does not load, the phase reads ``Ended:`` and the reason, and no traceback is printed: fix the file and press Reset again.
 
 Set best values
     Sets the Default values of the globals the configuration sets, in runmanager, to those of the shot with the best cost, and submits no shot. It is enabled while the session is paused or has ended, once a usable cost has arrived, and runmanager is answering. A run otherwise leaves runmanager showing the last proposal it submitted.
 
 Restore original values
-    Writes back the Default expressions that runmanager held for those globals before the optimizer first ran, exactly as they were written, so ``2*pi*5`` comes back as ``2*pi*5``. They are recorded once, at the first Start that succeeds after the routine starts, and kept through Pause and Reset, so Restore original values works after a Reset and puts back the same values. They are recorded again only when the routine is restarted. It is enabled while the session is paused or has ended, once they are recorded, and runmanager is answering.
+    Writes back the Default expressions that runmanager held for those globals before the optimizer first ran, exactly as they were written, so ``2*pi*5`` comes back as ``2*pi*5``. Each global is recorded once, at the first Start of a session whose configuration sets it, and kept through Pause and Reset, so Restore original values works after a Reset and puts back the same values. A Reset to a file that sets another global records that one at its first Start, and Restore original values still writes back a global the file no longer sets. A recorded global is recorded again only when the routine is restarted. It is enabled while the session is paused or has ended, once they are recorded, and runmanager is answering.
 
 Start from runmanager values
     A box in the second row, to the right of the two buttons. Ticked at the run's first Start, it opens the run at runmanager's current values of the parameters instead of the configuration's ``start``: the first shot is that point, and reads ``start`` in the ``phase`` column as a configured one does. It applies to every parameter the configuration searches, whether or not the file gives them a ``start``, and nothing else about how the run begins changes. The box is always enabled, and is read only at a run's first Start: a Start that resumes the run does not read runmanager again, whether or not it is ticked. Reset opens a new run, which has its own first Start. lyse remembers whether the box is ticked when the routine restarts.
@@ -107,7 +107,7 @@ Parameter table
 Configuration tab
 -----------------
 
-The Configuration tab shows the text of the TOML file as the routine loaded it. It is read only.
+The Configuration tab shows the text of the TOML file as it was last loaded, when the routine started or at the last Reset that read it. It is read only.
 
 The plot
 --------
@@ -122,4 +122,4 @@ Closing the window hides it and leaves the session running. To show it again, ri
 When the opening fails
 ----------------------
 
-The session opens without contacting runmanager, so a runmanager that is not running does not fail the opening: the indicator shows it instead. If the session cannot be built at all, the phase reads ``Ended:`` followed by the reason, the traceback is in the Output dock, and only Reset is enabled. Fix the cause, then press Reset, which tries the opening again. See :doc:`troubleshooting`.
+The session opens without contacting runmanager, so a runmanager that is not running does not fail the opening: the indicator shows it instead. If the session cannot be built at all, the phase reads ``Ended:`` followed by the reason, the traceback is in the Output dock, and only Reset is enabled. Fix the cause, then press Reset, which tries the opening again. A configuration file that does not load at a Reset ends the session in the same way, with no traceback and no session, because the file is yours to fix; the window goes on showing the file as it was last loaded, and lyse's shots are analyzed as usual but none of them is the optimizer's. Edit the file and press Reset again. See :doc:`troubleshooting`.

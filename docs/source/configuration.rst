@@ -13,7 +13,7 @@ The routine's ``lyse_routine.py`` sets ``config_path`` on its :class:`~labscript
     class Optimization(OptimizationRoutine):
         config_path = "optimization_config.toml"
 
-``config_path`` is relative to the routine folder. The file is read once, when lyse starts the routine, so restart the routine after editing it. A file that is refused fails the routine's load, and the reason appears in lyse's output.
+``config_path`` is relative to the routine folder. The file is read when lyse starts the routine, and again at each Reset, so press Reset after editing it. A file that is refused when the routine starts fails the routine's load, and the reason appears in lyse's output. One that is refused at a Reset ends the session with the reason in the window, and Reset tries it again.
 
 The example file
 ----------------

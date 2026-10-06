@@ -37,10 +37,12 @@ class FakeInterface:
 
 
 class Shown(list):
-    """The statuses the window was shown, which a test can wait on."""
+    """The statuses the window was shown, which a test can wait on, and the
+    texts of the configurations it was shown."""
 
     def __init__(self):
         super().__init__()
+        self.texts = []
         self.changed = threading.Condition()
 
     def append(self, status):
@@ -53,12 +55,20 @@ class Shown(list):
             assert self.changed.wait_for(lambda: any(map(condition, self)), timeout=5)
 
 
+def reads(text):
+    """What a worker loads: the configuration the text holds, and the text."""
+    return lambda: (config_module.loads(text), text)
+
+
 def start(interface=FakeInterface, text=CONFIG):
     """A worker whose opening has been handled, and what its window was shown."""
     shown = Shown()
-    window = SimpleNamespace(update=lambda status, *args: shown.append(status))
+    window = SimpleNamespace(
+        update=lambda status, *args: shown.append(status),
+        show_config=lambda config, loaded: shown.texts.append(loaded),
+    )
     commands = queue.Queue()
-    worker = Worker(config_module.loads(text), window, commands, interface)
+    worker = Worker(reads(text), window, commands, interface)
     # Answered after the opening, which is ahead of it in the queue.
     worker.hand_over([], [], None)
     return worker, commands, shown
@@ -184,8 +194,8 @@ def test_a_session_thread_that_has_died_is_reported(monkeypatch):
     def update(status, *args):
         raise RuntimeError('the window is broken')
 
-    window = SimpleNamespace(update=update)
-    worker = Worker(config_module.loads(CONFIG), window, queue.Queue(), FakeInterface)
+    window = SimpleNamespace(update=update, show_config=lambda config, text: None)
+    worker = Worker(reads(CONFIG), window, queue.Queue(), FakeInterface)
     worker.thread.join(timeout=10)
     with pytest.raises(RuntimeError, match='thread has stopped'):
         hand_over(worker)
@@ -265,6 +275,38 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
     commands.put(('restore', None, None))
     hand_over(worker)
     assert shown[-1]['restorable'] and writes == [{'x': '0'}, {'x': '0'}]
+
+
+def test_reset_reads_the_file_again_and_a_file_that_does_not_load_ends_the_session(
+    capsys,
+):
+    class Records(FakeInterface):
+        def check_ready(self):
+            self.original = self.original or {'x': '0'}
+
+    worker, commands, shown = start(Records)
+    commands.put(('start', None, None))
+    edited = CONFIG.replace('num_buffered_runs = 2', 'num_buffered_runs = 3')
+    worker.load = reads(edited)
+    commands.put(('reset', None, None))
+    commands.put(('start', None, None))
+    hand_over(worker)
+    assert shown.texts[-1] == edited and shown[-1]['submitted'] == 3
+
+    # The user's mistake: no traceback and no session, and Reset tries again,
+    # with the originals still recorded.
+    worker.load = reads(edited.replace('"random"', '"nonesuch"'))
+    commands.put(('reset', None, None))
+    assert hand_over(worker, 'shot-0') == []
+    assert 'nonesuch' in shown[-1]['stopped']
+    worker.load = reads(CONFIG)
+    commands.put(('reset', None, None))
+    hand_over(worker)
+    assert shown[-1]['restorable'] and shown.texts[-1] == CONFIG
+    commands.put(('start', None, None))
+    hand_over(worker)
+    assert shown[-1]['submitted'] == 2
+    assert capsys.readouterr() == ('', '')
 
 
 def test_a_start_from_runmanagers_values_opens_the_run_there_or_is_refused():
