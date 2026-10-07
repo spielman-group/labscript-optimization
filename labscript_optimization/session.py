@@ -16,12 +16,7 @@ it.
 """
 
 import numpy as np
-from runmanager.client import (
-    BLOCKED_SHOT_STATE,
-    COMPLETED_SHOT_STATE,
-    UNKNOWN_SHOT_STATE,
-    SequenceRefused,
-)
+from runmanager.client import SequenceRefused
 
 from . import learners, observations
 from .observations import COMPLETE, DROPPED, PENDING, Observation
@@ -58,8 +53,6 @@ class Session:
         self.results: dict[str, tuple[float, float | None, bool]] = {}
         self.dropped: set[str] = set()
         self.blocked: set[str] = set()
-        # Awaited shots given their round of grace at the last reconcile.
-        self._grace: set[str] = set()
         self.starved = 0
         self.paused = True
         # Why something other than the user paused the session, if it did.
@@ -200,39 +193,35 @@ class Session:
         the queue being held for it; a cost that turns up afterwards is still
         taken, and the shot stops counting as dropped.
 
-        A ``completed`` or ``unknown`` shot is given up on only once it has been
-        answered so across two reconciles running. Every other not-pending
-        answer names a reason nothing further will happen -- will not compile,
-        refused by BLACS, removed from the queue, or behind a row only an
-        operator can clear -- and goes at once.
+        runmanager answers each shot with its record, or ``None`` for an id it
+        has not held since it started. A shot is kept while it may still
+        complete in BLACS and, once it has, while lyse has the file or will be
+        given it, because its cost is then on its way. Any other shot goes at
+        once, whatever the reason nothing further will happen: it will not
+        compile, BLACS refused it, lyse will not get it, runmanager no longer
+        holds it, or it is behind a queue row only an operator can clear.
         """
         awaiting = self.awaiting
         if not awaiting:
             return []
         answers = self.interface.shot_status(awaiting)
-        grace_before, self._grace = self._grace, set()
         gone = []
         for shot_id in awaiting:
-            answer = answers[shot_id]
-            if answer.get("pending", False):
-                continue
-            state = answer.get("state", UNKNOWN_SHOT_STATE)
-            # runmanager answers ``completed`` of a shot BLACS finished that has
-            # left the queue, whose cost may still be crossing lyse, and
-            # ``unknown`` of an id it has not had since it started. Dropping
-            # either on the first answer would count the ordinary end of a
-            # healthy shot as a loss, in the very number a user reads to see
-            # whether shots are being lost.
-            graced = state in (COMPLETED_SHOT_STATE, UNKNOWN_SHOT_STATE)
-            if graced and shot_id not in grace_before:
-                self._grace.add(shot_id)
-                continue
-            if answer.get("state") == BLOCKED_SHOT_STATE:
-                # Behind a row the queue will not hand over. Counted apart
-                # from the rest because every other way a shot stops coming
-                # is the apparatus getting on with things, and this one is
-                # somebody needing to go and look at the queue.
+            record = answers[shot_id]
+            if record is not None and record["queue"] == "blocked":
+                # Behind a row the queue will not hand over. Counted apart from
+                # the rest because every other way a shot stops coming is the
+                # apparatus getting on with things, and this one is somebody
+                # needing to go and look at the queue.
                 self.blocked.add(shot_id)
+            elif record is not None and (
+                record["pending"]
+                or (
+                    record["blacs"] == "completed"
+                    and record["lyse"] in ("waiting", "sent")
+                )
+            ):
+                continue
             gone.append(shot_id)
         self.dropped.update(gone)
         return gone

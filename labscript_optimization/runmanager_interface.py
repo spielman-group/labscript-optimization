@@ -170,16 +170,25 @@ class RunmanagerInterface:
         else:
             self.client.set_values(self.config.globals_for(params))
 
-    def shot_status(self, shot_ids: Iterable[str]) -> dict[str, dict]:
+    def shot_status(self, shot_ids: Iterable[str]) -> dict[str, dict | None]:
         """What runmanager says about each of these shots, as it says it.
 
-        ``{shot_id: {'pending': bool, 'state': str}}``, one entry per id asked
-        about: runmanager loops over the ids it was handed and answers for each
-        of them, so an id it has no row for comes back ``'unknown'`` rather
-        than absent. ``pending`` is whether that shot could still produce a
-        cost. ``state`` is the queue row's own state, ``'blocked'`` for a row
-        sitting behind one an operator has to clear, and ``'unknown'`` for an
-        id runmanager does not know.
+        Parameters
+        ----------
+        shot_ids : iterable of str
+            The shots to ask about.
+
+        Returns
+        -------
+        dict
+            One entry per id asked about: runmanager's record of the shot, or
+            ``None`` for an id it has not held since it started. The record
+            holds ``shot_id``, ``sequence_id``, ``sequence_index``,
+            ``run_number``, ``path``, the states ``compile``, ``queue``,
+            ``blacs`` and ``lyse``, ``pending``, ``since`` and ``message``.
+            ``compile``, ``blacs`` and ``lyse`` are ``None`` for a stage the
+            shot left before reaching. ``pending`` is whether the shot may
+            still complete in BLACS, and says nothing of lyse.
         """
         shot_ids = list(shot_ids)
         if not shot_ids:

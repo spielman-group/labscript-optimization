@@ -13,6 +13,7 @@ from labscript_optimization import worker as worker_module
 from labscript_optimization.worker import Worker
 
 from conftest import SESSION_CONFIG as CONFIG
+from conftest import STILL_COMING
 
 
 class FakeInterface:
@@ -33,7 +34,7 @@ class FakeInterface:
         return ids
 
     def shot_status(self, shot_ids):
-        return {i: {'pending': True, 'state': 'running'} for i in shot_ids}
+        return {i: dict(STILL_COMING) for i in shot_ids}
 
 
 class Shown(list):

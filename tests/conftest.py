@@ -30,6 +30,16 @@ max = 1.0
 """
 
 
+#: What runmanager says of a shot that is queued and in BLACS's hands.
+STILL_COMING = {
+    'pending': True,
+    'queue': 'queued',
+    'blacs': 'running',
+    'lyse': 'waiting',
+    'message': '',
+}
+
+
 @pytest.fixture(scope='session')
 def qt_application():
     from qtutils.qt import QtWidgets
@@ -40,17 +50,16 @@ def qt_application():
 class FakeRunmanager:
     """Stands in for runmanager, and decides what is still coming.
 
-    It answers as runmanager does: one ``{'pending', 'state'}`` per id asked
-    about. A rejected shot keeps its row and says so, a shot that has run
-    leaves the queue and is ``completed``, and an id runmanager has not had
-    since it started is ``unknown``.
+    It answers as runmanager does: one record per id asked about, and ``None``
+    for an id it never had. A rejected shot keeps its row and says so, and a
+    shot that has run leaves the queue ``completed`` and is on its way to lyse.
     """
 
     def __init__(self):
         self.submitted: list[str] = []
         self.rejected: set[str] = set()
         self.blocked: set[str] = set()
-        self.finished: set[str] = set()
+        self.finished: dict[str, str] = {}
         self.labscript_changed = False
 
     def check_ready(self):
@@ -68,25 +77,36 @@ class FakeRunmanager:
     def shot_status(self, shot_ids):
         answers = {}
         for shot_id in shot_ids:
+            if shot_id not in self.submitted:
+                answers[shot_id] = None
+                continue
+            answers[shot_id] = record = dict(STILL_COMING)
             if shot_id in self.blocked:
-                answers[shot_id] = {'pending': False, 'state': 'blocked'}
+                # Still pending: a blocked row is dropped whatever runmanager
+                # says of it.
+                record.update(queue='blocked', blacs='waiting')
             elif shot_id in self.rejected:
-                answers[shot_id] = {'pending': False, 'state': 'rejected'}
+                record.update(pending=False, blacs='rejected')
             elif shot_id in self.finished:
-                answers[shot_id] = {'pending': False, 'state': 'completed'}
-            elif shot_id not in self.submitted:
-                answers[shot_id] = {'pending': False, 'state': 'unknown'}
-            else:
-                answers[shot_id] = {'pending': True, 'state': 'running'}
+                record.update(
+                    pending=False,
+                    queue='left',
+                    blacs='completed',
+                    lyse=self.finished[shot_id],
+                )
         return answers
 
     def lose(self, *shot_ids):
         """An operator disposes of these shots, so they will never run."""
         self.rejected.update(shot_ids)
 
-    def finish(self, *shot_ids):
-        """These shots run and leave the queue, as every healthy shot does."""
-        self.finished.update(shot_ids)
+    def finish(self, *shot_ids, lyse='sent'):
+        """These shots run and leave the queue, as every healthy shot does.
+
+        ``lyse`` is what became of the file: ``'sent'`` for a shot lyse has,
+        or ``'not sent'`` or ``'rejected'`` for one whose cost will not come.
+        """
+        self.finished.update(dict.fromkeys(shot_ids, lyse))
 
 
 @pytest.fixture

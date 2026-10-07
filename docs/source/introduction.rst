@@ -21,7 +21,7 @@ Shot ids
 
 runmanager mints an id for every queue row it compiles and writes it into the shot file, and lyse reads it as the ``shot_id`` column. The session records the id of each shot it submits and matches costs to proposals by it. Shots can therefore come back in any order, and shots that are not the session's pass through unharmed: your own shots in the same queue, and the default shots runmanager makes to keep the apparatus busy, which carry no id. The session takes a cost for an id once, so a shot that BLACS reruns is not counted twice.
 
-The session keeps no count of shots in flight. Each time the routine runs it asks runmanager which of the awaited shots can still produce a cost, and gives up on a shot that was canceled or deleted instead of waiting for it forever. The window counts such shots as dropped.
+The session keeps no count of shots in flight. Each time the routine runs it asks runmanager which of the awaited shots can still produce a cost, and gives up on one that cannot instead of waiting for it forever: a shot that was deleted, failed to compile or was refused by BLACS, or one lyse will not get because Analyse is off in runmanager or lyse rejected it. The window counts such shots as dropped.
 
 The session thread
 ~~~~~~~~~~~~~~~~~~

@@ -10,6 +10,8 @@ import pytest
 from labscript_optimization import config as config_module
 from labscript_optimization.runmanager_interface import RunmanagerInterface
 
+from conftest import STILL_COMING
+
 CONFIG = """
 [ANALYSIS]
 cost_key = ["r", "c"]
@@ -84,10 +86,7 @@ class FakeClient:
 
     def shot_status(self, shot_ids):
         """One entry per id asked about, as runmanager documents it."""
-        return {
-            i: self.states.get(i, {'pending': True, 'state': 'running'})
-            for i in shot_ids
-        }
+        return {i: self.states.get(i, STILL_COMING) for i in shot_ids}
 
 
 @pytest.fixture
@@ -275,14 +274,12 @@ def test_runmanagers_verdict_and_its_reason_both_reach_the_caller(interface, cli
     way through lyse; one an operator has to unblock will not move until they
     do. Reducing the answer to the ids still coming throws that away.
     """
-    client.states = {
-        'b': {'pending': False, 'state': 'unknown'},
-        'c': {'pending': False, 'state': 'blocked'},
-    }
+    blocked = dict(STILL_COMING, queue='blocked')
+    client.states = {'b': None, 'c': blocked}
     assert interface.shot_status(['a', 'b', 'c']) == {
-        'a': {'pending': True, 'state': 'running'},
-        'b': {'pending': False, 'state': 'unknown'},
-        'c': {'pending': False, 'state': 'blocked'},
+        'a': STILL_COMING,
+        'b': None,
+        'c': blocked,
     }
 
 

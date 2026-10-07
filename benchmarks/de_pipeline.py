@@ -142,9 +142,19 @@ class FakeRunmanager:
     def shot_status(self, shot_ids):
         return {
             shot_id: (
-                {"pending": False, "state": "unknown"}
+                {
+                    "pending": False,
+                    "queue": "left",
+                    "blacs": "completed",
+                    "lyse": "sent",
+                }
                 if shot_id in self.finished
-                else {"pending": True, "state": "running"}
+                else {
+                    "pending": True,
+                    "queue": "queued",
+                    "blacs": "running",
+                    "lyse": "waiting",
+                }
             )
             for shot_id in shot_ids
         }

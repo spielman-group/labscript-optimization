@@ -92,9 +92,9 @@ Counters
         * - Awaiting
           - Submitted shots that have neither reported a cost nor been given up on.
         * - Dropped
-          - Shots that will not produce a cost: deleted from runmanager's queue, failed to compile, refused by BLACS, or stuck behind a queue row an operator has to clear. A cost that arrives later is still taken, and its shot stops counting as dropped.
+          - Shots that will not produce a cost: deleted from runmanager's queue or no longer held by it, failed to compile, refused by BLACS, not handed to lyse because Analyse is off in runmanager or lyse rejected the file, or stuck behind a queue row an operator has to clear. A cost that arrives later is still taken, and its shot stops counting as dropped.
         * - Blocked
-          - The dropped shots stuck behind a queue row only an operator can clear, such as a shot that failed to compile. They are counted in Dropped too.
+          - The dropped shots waiting in runmanager's queue behind a row only an operator can clear, such as a shot that failed to compile. They are counted in Dropped too.
         * - Starved
           - How often the session ran and found none of its shots queued, so runmanager gave BLACS a default shot. ``differential_evolution`` empties the queue by design and does not count it. See :ref:`troubleshooting:Starved counts`.
 
