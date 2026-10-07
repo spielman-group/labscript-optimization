@@ -102,22 +102,12 @@ class RunmanagerInterface:
         every later one names it and joins it.
 
         A refusal means nothing was queued: submit_shots checks every entry --
-        that the globals evaluate, and that each produces exactly one shot --
-        and the sequence named before submitting any of them, so a raise here
-        leaves nothing behind to account for.
+        that the globals evaluate, that none has Scan? or JIT? ticked, and that
+        each produces exactly one shot -- and the sequence named before
+        submitting any of them, so a raise here leaves nothing behind to
+        account for.
         """
         entries = [self.config.globals_for(p) for p in proposals]
-        # A ticked global runs its scan value, or under JIT? the window's value
-        # at compile time, rather than the value submitted.
-        scan, jit = self.client.get_scan_enabled(), self.client.get_jit_enabled()
-        ticked = [
-            g.name for g in self.config.globals if scan.get(g.name) or jit.get(g.name)
-        ]
-        if ticked:
-            raise RuntimeError(
-                f"Untick Scan? and JIT? in runmanager for {', '.join(ticked)}: "
-                f"their shots would not run the values this session submits."
-            )
         descriptors = self.client.submit_shots(
             entries, sequence=self.sequence, sequence_index=self.sequence_index
         )
@@ -168,8 +158,11 @@ class RunmanagerInterface:
         return np.array(start)
 
     def set_values(
-        self, values: Sequence[float] | dict[str, str], raw: bool = False
-    ) -> None:
+        self,
+        values: Sequence[float] | dict[str, str],
+        raw: bool = False,
+        skip_missing: bool = False,
+    ) -> list[str]:
         """Set runmanager's Default values without submitting a shot.
 
         Parameters
@@ -181,9 +174,20 @@ class RunmanagerInterface:
             as written.
         raw : bool, optional
             Whether ``values`` are expressions to write as they are.
+        skip_missing : bool, optional
+            Whether to write the globals that are in an active group and skip
+            the rest, rather than refuse them all.
+
+        Returns
+        -------
+        list of str
+            The names skipped for being in no active group, empty unless
+            ``skip_missing``.
         """
-        self.client.set_values(
-            values if raw else self.config.globals_for(values), raw=raw
+        return self.client.set_values(
+            values if raw else self.config.globals_for(values),
+            raw=raw,
+            skip_missing=skip_missing,
         )
 
     def shot_status(self, shot_ids: Iterable[str]) -> dict[str, dict | None]:

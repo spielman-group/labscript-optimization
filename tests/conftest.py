@@ -10,6 +10,17 @@ from concurrent.futures import wait
 
 import numpy as np
 import pytest
+from runmanager.client import (
+    BLACS_COMPLETED,
+    BLACS_REJECTED,
+    BLACS_RUNNING,
+    BLACS_WAITING,
+    LYSE_SENT,
+    LYSE_WAITING,
+    QUEUE_BLOCKED,
+    QUEUE_LEFT,
+    QUEUE_QUEUED,
+)
 
 from labscript_optimization.observations import COMPLETE, Observation
 from labscript_optimization.space import Parameter, ParameterSpace
@@ -33,9 +44,9 @@ max = 1.0
 #: What runmanager says of a shot that is queued and in BLACS's hands.
 STILL_COMING = {
     'pending': True,
-    'queue': 'queued',
-    'blacs': 'running',
-    'lyse': 'waiting',
+    'queue': QUEUE_QUEUED,
+    'blacs': BLACS_RUNNING,
+    'lyse': LYSE_WAITING,
     'message': '',
 }
 
@@ -84,14 +95,14 @@ class FakeRunmanager:
             if shot_id in self.blocked:
                 # Still pending: a blocked row is dropped whatever runmanager
                 # says of it.
-                record.update(queue='blocked', blacs='waiting')
+                record.update(queue=QUEUE_BLOCKED, blacs=BLACS_WAITING)
             elif shot_id in self.rejected:
-                record.update(pending=False, blacs='rejected')
+                record.update(pending=False, blacs=BLACS_REJECTED)
             elif shot_id in self.finished:
                 record.update(
                     pending=False,
-                    queue='left',
-                    blacs='completed',
+                    queue=QUEUE_LEFT,
+                    blacs=BLACS_COMPLETED,
                     lyse=self.finished[shot_id],
                 )
         return answers
@@ -100,7 +111,7 @@ class FakeRunmanager:
         """An operator disposes of these shots, so they will never run."""
         self.rejected.update(shot_ids)
 
-    def finish(self, *shot_ids, lyse='sent'):
+    def finish(self, *shot_ids, lyse=LYSE_SENT):
         """These shots run and leave the queue, as every healthy shot does.
 
         ``lyse`` is what became of the file: ``'sent'`` for a shot lyse has,

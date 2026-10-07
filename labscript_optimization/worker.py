@@ -22,7 +22,9 @@ REPLY_TIMEOUT = 2.0
 def _set_runmanager_values(session, original, best):
     """Set runmanager's values to the session's best, or to the originals.
 
-    A failure is one line of output and leaves the session as it was.
+    A failure is one line of output and leaves the session as it was. A global
+    the originals name that is in no active group any more is skipped, and
+    named in one line, while the rest are restored.
     """
     # A click queued behind a Reset can find nothing yet to set.
     if session.best is None if best else not original:
@@ -31,7 +33,14 @@ def _set_runmanager_values(session, original, best):
         if best:
             session.interface.set_values(session.best.params)
         else:
-            session.interface.set_values(original, raw=True)
+            skipped = session.interface.set_values(
+                original, raw=True, skip_missing=True
+            )
+            if skipped:
+                print(
+                    f"Restored runmanager's values, except those in no active "
+                    f"group: {', '.join(skipped)}"
+                )
     except Exception as exc:
         reason = (
             "runmanager is not answering"

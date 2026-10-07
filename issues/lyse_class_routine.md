@@ -222,8 +222,12 @@ failed by its end, so lyse shows it as that analysis's error.
   works after a Reset. `set_best` calls
   `RunmanagerInterface.set_values(best.params)`, which writes what submitting
   those parameters would leave in runmanager's window; `restore` calls
-  `set_values(original, raw=True)` with the worker's originals, which writes
-  them back as written, so `2*pi*5` comes back as written.
+  `set_values(original, raw=True, skip_missing=True)` with the worker's
+  originals, which writes them back as written, so `2*pi*5` comes back as
+  written. A global in no active group is skipped and the rest written;
+  `set_values` returns the names skipped, and Restore prints one line,
+  `Restored runmanager's values, except those in no active group: <names>`,
+  and nothing when none is skipped.
 - **A write runmanager does not take** is one line in the Output dock, `Could
   not set runmanager's values: <reason>`, with `runmanager is not answering`
   for a `TimeoutError`. No traceback is printed, and the session is left as it
@@ -294,7 +298,8 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
     reason, and a Start that resumes the run does not read again;
   - a session that reaches a limit sets its best values once, `set_best` and
     `restore` call the interface on a paused session, and a write that fails
-    prints one line and no traceback and leaves the session as it was;
+    prints one line and no traceback and leaves the session as it was, and a
+    `restore` that skips a global in no active group names it in one line;
   - a Start that is refused records and pins nothing, and a later Start that
     goes records what runmanager holds then, which `restore` writes;
   - after a Reset, `restore` writes the originals from before the first run,
@@ -308,11 +313,12 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
   configured globals' raw values until `pin_labscript_file` has run and `None`
   after, a labscript file changed after a `check_ready` that was not followed by
   a pin is not refused, a later pin does not move the file,
-  `set_values(params)` writes `globals_for(params)` unraw, and
-  `set_values(originals, raw=True)` writes the dict raw. `get_start()` returns
-  the direct globals' values in parameter order, and refuses a value outside the
-  bounds, a value that is not a real number, and a parameter with no direct
-  global.
+  `set_values(params)` writes `globals_for(params)` unraw,
+  `set_values(originals, raw=True)` writes the dict raw, and with
+  `skip_missing=True` it returns the names runmanager skipped. `get_start()`
+  returns the direct globals' values in parameter order, and refuses a value
+  outside the bounds, a value that is not a real number, and a parameter with
+  no direct global.
 - **The window,** with an indicator that is never started: it enables Start
   only when the session can start and runmanager answers, and Set best values
   and Restore original values only while the session is paused or has ended,

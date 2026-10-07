@@ -6,6 +6,7 @@ change to those shapes shows up here rather than in the lab.
 
 import numpy as np
 import pytest
+from runmanager.client import QUEUE_BLOCKED
 
 from labscript_optimization import config as config_module
 from labscript_optimization.runmanager_interface import RunmanagerInterface
@@ -39,10 +40,9 @@ class FakeClient:
         self.sequences = []
         self.states = {}
         self.refuse = None
-        self.scan_enabled = {}
-        self.jit_enabled = {}
         self.values = {'gx': '2*pi*5', 'gy_doubled': '3', 'other': '7'}
         self.written = []
+        self.missing = []
 
     def error_in_globals(self):
         return self.broken_globals
@@ -55,14 +55,9 @@ class FakeClient:
             return dict(self.values)
         return {name: eval(value, {'pi': np.pi}) for name, value in self.values.items()}
 
-    def set_values(self, globals, raw=False):
-        self.written.append((globals, raw))
-
-    def get_scan_enabled(self):
-        return self.scan_enabled
-
-    def get_jit_enabled(self):
-        return self.jit_enabled
+    def set_values(self, globals, raw=False, skip_missing=False):
+        self.written.append((globals, raw, skip_missing))
+        return self.missing if skip_missing else []
 
     def submit_shots(self, entries, sequence=None, sequence_index=None):
         """Starts a sequence for each submission that names none."""
@@ -150,9 +145,12 @@ def test_the_original_values_are_read_until_a_start_goes_and_restored_as_written
     interface.set_values(originals, raw=True)
     interface.set_values([1.0, 2.0])
     assert client.written == [
-        (originals, True),
-        ({'gx': 1.0, 'gy_doubled': 4.0}, False),
+        (originals, True, False),
+        ({'gx': 1.0, 'gy_doubled': 4.0}, False, False),
     ]
+    # The names runmanager skips are handed back.
+    client.missing = ['gx']
+    assert interface.set_values(originals, raw=True, skip_missing=True) == ['gx']
 
 
 def test_runmanagers_values_are_read_back_as_the_start(interface, client):
@@ -172,16 +170,6 @@ def test_runmanagers_values_are_read_back_as_the_start(interface, client):
         client.values['gx'] = value
         with pytest.raises(RuntimeError, match=reason):
             interface.get_start()
-
-
-@pytest.mark.parametrize('box', ['scan_enabled', 'jit_enabled'])
-def test_a_global_with_scan_or_jit_ticked_is_refused_before_submitting(
-    interface, client, box
-):
-    setattr(client, box, {'gx': False, 'gy_doubled': True})
-    with pytest.raises(RuntimeError):
-        interface.submit(np.array([[1.0, 2.0]]))
-    assert client.entries == []
 
 
 def test_submitting_sends_one_entry_of_globals_per_proposal(interface, client):
@@ -271,7 +259,7 @@ def test_runmanagers_verdict_and_its_reason_both_reach_the_caller(interface, cli
     way through lyse; one an operator has to unblock will not move until they
     do. Reducing the answer to the ids still coming throws that away.
     """
-    blocked = dict(STILL_COMING, queue='blocked')
+    blocked = dict(STILL_COMING, queue=QUEUE_BLOCKED)
     client.states = {'b': None, 'c': blocked}
     assert interface.shot_status(['a', 'b', 'c']) == {
         'a': STILL_COMING,

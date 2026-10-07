@@ -2,7 +2,12 @@
 
 import numpy as np
 import pytest
-from runmanager.client import SequenceRefused
+from runmanager.client import (
+    LYSE_NOT_SENT,
+    LYSE_REJECTED,
+    LYSE_WAITING,
+    SequenceRefused,
+)
 
 from labscript_optimization import config as config_module
 from labscript_optimization.observations import COMPLETE, DROPPED, PENDING, usable
@@ -345,7 +350,7 @@ def test_a_shot_that_has_only_just_run_is_not_treated_as_lost(session, runmanage
     """
     session.refill()
     runmanager.finish('shot-0')
-    runmanager.finish('shot-1', lyse='waiting')
+    runmanager.finish('shot-1', lyse=LYSE_WAITING)
 
     assert session.reconcile() == []
     assert session.reconcile() == []
@@ -365,8 +370,8 @@ def test_a_shot_whose_cost_cannot_come_is_dropped_at_the_first_reconcile(
     the session.
     """
     session.refill()
-    runmanager.finish('shot-0', lyse='not sent')
-    runmanager.finish('shot-1', lyse='rejected')
+    runmanager.finish('shot-0', lyse=LYSE_NOT_SENT)
+    runmanager.finish('shot-1', lyse=LYSE_REJECTED)
     runmanager.submitted.remove('shot-2')
 
     assert session.reconcile() == ['shot-0', 'shot-1', 'shot-2']

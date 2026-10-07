@@ -16,7 +16,13 @@ it.
 """
 
 import numpy as np
-from runmanager.client import SequenceRefused
+from runmanager.client import (
+    BLACS_COMPLETED,
+    LYSE_SENT,
+    LYSE_WAITING,
+    QUEUE_BLOCKED,
+    SequenceRefused,
+)
 
 from . import learners, observations
 from .observations import COMPLETE, DROPPED, PENDING, Observation
@@ -208,7 +214,7 @@ class Session:
         gone = []
         for shot_id in awaiting:
             record = answers[shot_id]
-            if record is not None and record["queue"] == "blocked":
+            if record is not None and record["queue"] == QUEUE_BLOCKED:
                 # Behind a row the queue will not hand over. Counted apart from
                 # the rest because every other way a shot stops coming is the
                 # apparatus getting on with things, and this one is somebody
@@ -217,8 +223,8 @@ class Session:
             elif record is not None and (
                 record["pending"]
                 or (
-                    record["blacs"] == "completed"
-                    and record["lyse"] in ("waiting", "sent")
+                    record["blacs"] == BLACS_COMPLETED
+                    and record["lyse"] in (LYSE_WAITING, LYSE_SENT)
                 )
             ):
                 continue

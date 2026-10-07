@@ -230,7 +230,7 @@ def test_a_session_that_reaches_a_limit_says_why_once(capsys):
 
 def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(capsys):
     writes, failures, pins, refusals = [], [], [], ['out of bounds']
-    held = itertools.count()
+    held, absent = itertools.count(), set()
 
     class Writes(FakeInterface):
         def __init__(self, config):
@@ -250,10 +250,14 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
         def pin_labscript_file(self):
             pins.append(self)
 
-        def set_values(self, values, raw=False):
+        def set_values(self, values, raw=False, skip_missing=False):
             if failures:
                 raise failures[0]
+            missing = [name for name in values if name in absent] if raw else []
+            if missing and not skip_missing:
+                raise ValueError(f'Global {missing[0]} not found in any active group')
             writes.append(values if raw else list(values))
+            return missing if skip_missing else []
 
     text = CONFIG.replace(
         'num_buffered_runs = 2', 'num_buffered_runs = 2\nmax_num_runs = 2'
@@ -273,8 +277,9 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
     best = shown[-1]['best_params']
     assert shown[-1]['restorable'] and writes == [best, {'gx': '1'}]
 
+    # Nothing has been skipped so far, so nothing has been said.
+    assert capsys.readouterr().out == ''
     # A write runmanager does not take is one line, and the run is as it was.
-    capsys.readouterr()
     for failure in (TimeoutError('timed out'), RuntimeError('refused')):
         failures[:] = [failure]
         commands.put(('set_best', None, None))
@@ -296,8 +301,11 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
     assert writes == [best, {'gx': '1'}, shown[-1]['best_params']]
 
     # Reset keeps the originals from before the first run, and the new
-    # session's own first Start records only a global the file adds.
+    # session's own first Start records only a global the file adds. A global
+    # runmanager no longer has is left out and named, in one line.
     writes.clear()
+    capsys.readouterr()
+    absent.add('other')
     worker.load = reads(
         text + '[RUNMANAGER_GLOBALS.G.other]\nexpr = "lambda v: v"\nargs = ["x"]'
     )
@@ -309,6 +317,9 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
     hand_over(worker)
     assert shown[-1]['restorable']
     assert writes == [{'gx': '1'}, {'gx': '1', 'other': '3'}]
+    assert capsys.readouterr().out.splitlines() == [
+        "Restored runmanager's values, except those in no active group: other"
+    ]
 
 
 def test_reset_reads_the_file_again_and_a_file_that_does_not_load_ends_the_session(

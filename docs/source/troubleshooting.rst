@@ -44,7 +44,7 @@ With the box ticked, the run's first Start reads runmanager's current values of 
 Scan? or JIT? ticked
 --------------------
 
-Before each submission the session checks the globals the configuration sets. If any has Scan? or JIT? ticked, the session stops with ``Untick Scan? and JIT? in runmanager for <globals>: their shots would not run the values this session submits.`` A ticked global runs its scan values, or under JIT? the value in runmanager's window, instead of the value submitted. Untick the boxes in runmanager, press Reset and then Start.
+runmanager refuses a submission that sets a global whose Scan? or JIT? box is ticked, and queues nothing, because a ticked global runs its scan values, or under JIT? the value in runmanager's window, instead of the value submitted. The session ends with runmanager's message, ``Cannot submit a value for a global with its Scan? or JIT? box ticked, since the shot would not run it: <globals>.``, which names every global that has a box ticked. It is the reason in the window when Start or a finished Gaussian process batch made the submission, and the error the routine raises when a shot's pass did; see :ref:`troubleshooting:Where errors appear`. Untick the boxes in runmanager, press Reset and then Start.
 
 A scan on a global the configuration does not set makes runmanager refuse the submission, because the entry would not produce exactly one shot. Its message names the globals that expand it.
 
