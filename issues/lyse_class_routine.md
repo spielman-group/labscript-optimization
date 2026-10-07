@@ -8,8 +8,6 @@ runs on a thread started by the routine, and the package starts no process of
 its own.
 
 This needs lyse's GUI routines, which are on lyse's `Development` branch.
-It also needs labscript-utils' `EditFile` branch, for `open_in_editor`, until
-it is merged into labscript-utils' `Development`.
 
 ## The lab's routine folder
 
@@ -62,14 +60,18 @@ class Optimization(OptimizationRoutine):
     raises if the thread itself has stopped, since nothing would answer;
   - the window's buttons put `start`, `pause`, `reset`, `set_best` and
     `restore` on its queue, and `start` carries whether the Start from
-    runmanager values box was ticked at the click;
+    runmanager values box was ticked at the click. The runmanager light puts
+    `link` on it, carrying whether runmanager answers, for its first answer and
+    for each change. The thread handles `link` before anything else, repaints
+    nothing for it, and assumes runmanager answers until told;
   - `quit()` asks the thread to stop, and does not wait for it.
 - **`routine.py`'s `OptimizationRoutine`** is the lyse side alone: it builds the
   window, reads shots out of lyse and saves their status columns into it. The
   window builds labscript-utils' `LinkIndicator` from runmanager's address,
   which it takes from a `RunmanagerClient`. The indicator says hello to
   runmanager every 2 s through a client of its own, and its answers gate
-  Start; the routine starts it and shuts it down in `close()`.
+  Start and are passed to the worker; the routine starts it and shuts it down
+  in `close()`.
   The window's Configuration tab has an Edit in text editor button above the
   configuration text, and `edit_config_action`, an action with the same text and
   icon, in the text box's right-click menu after Copy and Select All. Both call
@@ -155,40 +157,46 @@ failed by its end, so lyse shows it as that analysis's error.
   runmanager answers and an exclamation mark while it does not, and its tooltip
   names the host and gives the reason. Nothing is printed for runmanager not
   answering. **Start** is enabled only while the session can start and the
-  light shows a tick, and enables itself when the tick appears.
-- **Start** checks that runmanager's globals evaluate, pins its labscript
-  file, records the original values of the globals not recorded yet, and begins
-  submitting.
-  If the check raises, the session stays paused with the message as its pause
-  reason, shown as `Paused: <reason>`, and nothing is printed or raised; Start
-  again after fixing it. When the Start from runmanager values box was ticked
-  and the session has proposed nothing, it then reads the start from
-  runmanager, and a refusal there is handled in the same way.
+  light shows a tick, and enables itself when the tick appears. While the light
+  shows runmanager not answering, the worker does not reconcile at a hand-over,
+  which would wait out the client's timeout with Reset and Pause queued behind
+  it; the hand-over still refills, so a submission that times out pauses the
+  session as below.
+- **Start** checks that runmanager's globals evaluate and, when the Start from
+  runmanager values box was ticked and the session has proposed nothing, reads
+  the start from runmanager. Only once every check has passed does it pin the
+  labscript file, record the original values of the globals not recorded yet,
+  and begin submitting.
+  If a check raises, the session stays paused with the message as its pause
+  reason, shown as `Paused: <reason>`, and nothing is printed or raised, pinned
+  or recorded; Start again after fixing it.
   **Pause** stops new submissions while shots in flight still report.
   **Reset** reads the configuration file again and builds a new paused session
   from it, so it is also how a failed opening is retried. It leaves
-  runmanager's values alone, and carries the original values over to the new
-  session.
+  runmanager's values alone, and the worker keeps the original values across
+  it.
 - **A file that does not load at a Reset** is the user's mistake, not a bug.
   The load is reading the file and `config_module.loads`, and an `OSError` or
   `ValueError` from it ends the Reset: the phase reads `Ended: <message>`, no
   traceback is printed, there is no session, and only Reset is enabled. The
   window goes on showing the configuration it last loaded, and the worker
   keeps that `config` and the original values, so the next Reset after the fix
-  builds a session as usual. Any other failure of a Reset is handled as an
-  opening that fails.
+  builds a session as usual. A Start, Pause, Set best or Restore click queued
+  behind that Reset is ignored, so the file's error stays in the window. Any
+  other failure of a Reset is handled as an opening that fails.
 - **The original values** are the raw Default expression strings, in
-  runmanager, of every global a session's configuration has set. `check_ready`
-  records them with one `get_values(raw=True)` at a session's first successful
-  Start, for the globals of its configuration that are not recorded yet, and
-  never overwrites one that is, so a later Start does not record again. The
-  worker's `reset` copies the previous session's `original` to the new
-  session's interface, so Pause and Reset keep them, a global the new
+  runmanager, of every global a session's configuration has set. The worker
+  alone holds them. `check_ready` reads them with one `get_values(raw=True)`
+  and returns them until a Start has gone, for the globals of the session's
+  configuration; the worker records those it has not recorded yet once every
+  check of that Start has passed, and never overwrites one it has. So a refused
+  Start records nothing, and a later Start does not record again. The worker's
+  dict outlasts the session, so Pause and Reset keep them, a global the new
   configuration no longer sets stays recorded and is restored, and one the new
   configuration adds is recorded at its first Start. A recorded global is
   recorded again only when the routine restarts. They are runmanager's values
   from before the optimizer first ran. The worker gives the window `restorable`,
-  whether they are recorded, beside the session's status; the session does not
+  whether any are recorded, beside the session's status; the session does not
   own them, so `Session.status()` and the saved results do not carry it.
 - **Start from runmanager values** is a box in the window's second row. The
   `start` command carries its state at the click. At a Start that has no
@@ -214,8 +222,12 @@ failed by its end, so lyse shows it as that analysis's error.
   works after a Reset. `set_best` calls
   `RunmanagerInterface.set_values(best.params)`, which writes what submitting
   those parameters would leave in runmanager's window; `restore` calls
-  `set_values()`, which writes the recorded originals back raw, so `2*pi*5`
-  comes back as written.
+  `set_values(original, raw=True, skip_missing=True)` with the worker's
+  originals, which writes them back as written, so `2*pi*5` comes back as
+  written. A global in no active group is skipped and the rest written;
+  `set_values` returns the names skipped, and Restore prints one line,
+  `Restored runmanager's values, except those in no active group: <names>`,
+  and nothing when none is skipped.
 - **A write runmanager does not take** is one line in the Output dock, `Could
   not set runmanager's values: <reason>`, with `runmanager is not answering`
   for a `TimeoutError`. No traceback is printed, and the session is left as it
@@ -228,7 +240,8 @@ failed by its end, so lyse shows it as that analysis's error.
   so the next submission after Start is refused and the session ends with
   runmanager's reason.
 - **Before a session exists,** or after a Reset whose file did not load, a
-  hand-over is answered with no shots taken, since none can be the session's.
+  hand-over is answered with no shots taken, since none can be the session's,
+  and a window command other than Reset is ignored.
 - **A session ends,** at a limit or on an error. The reason is shown in the
   window and printed once to the Output dock. The first time the session thread
   sees the session stopped, it also sets the best values in runmanager, if
@@ -277,33 +290,44 @@ lyse. The session and learner tests stand, and `extract`'s tests stay.
     and a later Start goes;
   - runmanager not answering during a run pauses the session without raising
     or printing, and Start resumes it;
+  - while the light says runmanager does not answer, a hand-over does not ask
+    runmanager what became of the shots and the session runs on, and once it
+    answers again the hand-over does;
   - a Start with the box ticked makes runmanager's values the first proposal,
     under the source `start`, a refusal leaves the session paused with the
     reason, and a Start that resumes the run does not read again;
   - a session that reaches a limit sets its best values once, `set_best` and
     `restore` call the interface on a paused session, and a write that fails
-    prints one line and no traceback and leaves the session as it was;
+    prints one line and no traceback and leaves the session as it was, and a
+    `restore` that skips a global in no active group names it in one line;
+  - a Start that is refused records and pins nothing, and a later Start that
+    goes records what runmanager holds then, which `restore` writes;
   - after a Reset, `restore` writes the originals from before the first run,
-    and the new session's first Start does not record them again;
+    and the new session's first Start records only a global the file adds;
   - a Reset after the file changed builds the session from the new
     configuration and shows it, and a Reset whose file does not load shows
-    `Ended: <message>`, prints nothing, takes no shots and keeps the originals,
-    and a further Reset after the fix opens a session.
-- **The interface,** against a fake client: the first `check_ready` records the
-  configured globals' raw values, a later one does not record again, and the
-  first of an interface handed originals records only the globals it was not
-  handed,
-  `set_values(params)` writes `globals_for(params)` unraw, and `set_values()`
-  writes the recorded originals raw. `get_start()` returns the direct
-  globals' values in parameter order, and refuses a value outside the bounds,
-  a value that is not a real number, and a parameter with no direct global.
+    `Ended: <message>`, prints nothing, takes no shots, keeps the originals and
+    ignores a Start, Pause, Set best or Restore click queued behind it, and a
+    further Reset after the fix opens a session.
+- **The interface,** against a fake client: `check_ready` returns the
+  configured globals' raw values until `pin_labscript_file` has run and `None`
+  after, a labscript file changed after a `check_ready` that was not followed by
+  a pin is not refused, a later pin does not move the file,
+  `set_values(params)` writes `globals_for(params)` unraw,
+  `set_values(originals, raw=True)` writes the dict raw, and with
+  `skip_missing=True` it returns the names runmanager skipped. `get_start()`
+  returns the direct globals' values in parameter order, and refuses a value
+  outside the bounds, a value that is not a real number, and a parameter with
+  no direct global.
 - **The window,** with an indicator that is never started: it enables Start
   only when the session can start and runmanager answers, and Set best values
   and Restore original values only while the session is paused or has ended,
   runmanager answers, and there is a best cost or `restorable` respectively.
   Shots submitted do not enable Restore, and a Reset session that has submitted
-  none does. The Start click carries the Start from runmanager values box's
-  state, and the parameters table's Start column shows the status's start.
+  none does. It puts `link` on the queue for the indicator's first answer,
+  whichever it is, and for each change. The Start click carries the Start from
+  runmanager values box's state, and the parameters table's Start column shows
+  the status's start.
   labscript-utils tests the indicator.
 - **The routine, end to end,** through lyse's real worker subprocess, as lyse's
   own `GuiWorkerTests` drive it: a routine folder whose subclass sets

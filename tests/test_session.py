@@ -2,13 +2,18 @@
 
 import numpy as np
 import pytest
-from runmanager.client import SequenceRefused
+from runmanager.client import (
+    LYSE_NOT_SENT,
+    LYSE_REJECTED,
+    LYSE_WAITING,
+    SequenceRefused,
+)
 
 from labscript_optimization import config as config_module
 from labscript_optimization.observations import COMPLETE, DROPPED, PENDING, usable
 from labscript_optimization.session import Session
 
-from conftest import settle
+from conftest import STILL_COMING, settle
 
 BASE = """
 [ANALYSIS]
@@ -324,9 +329,8 @@ def test_reconciling_asks_only_about_shots_still_awaited(session, runmanager):
     session.refill()
     session.record('shot-0', 1.0, None, False)
     asked = []
-    still_coming = {'pending': True, 'state': 'running'}
     runmanager.shot_status = lambda ids: (
-        asked.extend(ids) or {i: dict(still_coming) for i in ids}
+        asked.extend(ids) or {i: dict(STILL_COMING) for i in ids}
     )
     session.reconcile()
     assert sorted(asked) == ['shot-1', 'shot-2']
@@ -339,14 +343,16 @@ def test_nothing_is_asked_when_nothing_is_awaited(session, runmanager):
 
 def test_a_shot_that_has_only_just_run_is_not_treated_as_lost(session, runmanager):
     """A completed shot leaves runmanager's queue at once, while its cost is
-    still on its way through lyse. runmanager reports it exactly as it reports
-    an id it has never heard of, so giving up on that answer alone would make
-    the ordinary end of every healthy shot count as a loss -- and the number of
-    dropped shots is what a user reads to see whether shots are being lost.
+    still on its way through lyse, so giving up on it would make the ordinary
+    end of every healthy shot count as a loss -- and the number of dropped
+    shots is what a user reads to see whether shots are being lost. So is a
+    shot that has not yet been handed to lyse.
     """
     session.refill()
     runmanager.finish('shot-0')
+    runmanager.finish('shot-1', lyse=LYSE_WAITING)
 
+    assert session.reconcile() == []
     assert session.reconcile() == []
     assert session.status()['dropped'] == 0
 
@@ -355,19 +361,21 @@ def test_a_shot_that_has_only_just_run_is_not_treated_as_lost(session, runmanage
     assert session.status()['dropped'] == 0
 
 
-def test_a_shot_still_unknown_at_the_next_reconcile_is_dropped(session, runmanager):
-    """Staying unknown with no cost is how a shot that has really gone is told
-    from one that has just finished. An operator's deletion and a runmanager
-    restart both leave an id nothing will ever answer for, and its place must
-    not be held for the rest of the session.
+def test_a_shot_whose_cost_cannot_come_is_dropped_at_the_first_reconcile(
+    session, runmanager
+):
+    """A shot lyse will not get is how a shot whose cost will never come is told
+    from one that has just finished, as is an id runmanager has forgotten, such
+    as one from before a restart. Its place must not be held for the rest of
+    the session.
     """
     session.refill()
-    runmanager.finish('shot-0')
+    runmanager.finish('shot-0', lyse=LYSE_NOT_SENT)
+    runmanager.finish('shot-1', lyse=LYSE_REJECTED)
+    runmanager.submitted.remove('shot-2')
 
-    assert session.reconcile() == []
-    assert session.reconcile() == ['shot-0']
-    assert session.awaiting == ['shot-1', 'shot-2']
-    assert session.refill() == ['shot-3']
+    assert session.reconcile() == ['shot-0', 'shot-1', 'shot-2']
+    assert session.awaiting == []
 
 
 def test_a_shot_with_a_reason_is_dropped_at_the_first_reconcile(session, runmanager):

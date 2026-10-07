@@ -45,7 +45,14 @@ def test_window_shows_progress_and_controls(qt_application, monkeypatch, tmp_pat
     # Start needs runmanager answering as well as a session that can start, and
     # needs no Reset once it does.
     assert not window.ui.start_button.isEnabled()
+    # The worker is told of the first answer, whichever it is, and then of
+    # each change.
+    window.link.on_answer(False, "gone")
+    window.link.on_answer(False, "gone")
+    assert commands.get_nowait() == ("link", None, False)
+    assert commands.empty()
     window.link.on_answer(True, None)
+    assert commands.get_nowait() == ("link", None, True)
     qt_application.processEvents()
     window.ui.start_button.click()
     assert commands.get_nowait() == ("start", None, False)

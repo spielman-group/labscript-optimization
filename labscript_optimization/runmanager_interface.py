@@ -31,26 +31,33 @@ class RunmanagerInterface:
         self.config = config
         self.client = client
         self.labscript_file = None
-        # The raw Default expressions of every global a session has set, as
-        # runmanager held them before the first Start that set it. The worker
-        # hands them to the interface of each later session.
-        self.original = None
         # The runmanager sequence this session's shots go into, once the first
         # submission has started it. Its index tells it apart from another
         # sequence started in the same second, which shares its id.
         self.sequence = None
         self.sequence_index = None
 
-    def check_ready(self) -> None:
-        """Raise if runmanager cannot take a session's shots; pin its labscript file.
+    def check_ready(self) -> dict[str, str] | None:
+        """Raise if runmanager cannot take a session's shots.
 
         Called at each Start. A global that does not evaluate is a shot that
-        will not compile, and every shot this session submits would be one. The
-        labscript file is pinned by the first call, and is what
-        :meth:`check_unchanged` compares against for the rest of the session, so
-        a Start that resumes the run does not move it. The first call also
-        records the original values, which :meth:`set_values` restores, of the
-        globals it was not handed them for.
+        will not compile, and every shot this session submits would be one.
+        Nothing is pinned or kept here, so a Start refused after this call
+        leaves the interface as it was.
+
+        Returns
+        -------
+        dict of str to str or None
+            Until :meth:`pin_labscript_file` has run, the raw Default expression
+            of each of the configuration's globals, as runmanager holds it now,
+            which is what the worker records and :meth:`set_values` restores.
+            ``None`` after that.
+
+        Raises
+        ------
+        RuntimeError
+            If runmanager's globals do not evaluate or, until a Start has gone,
+            a global the configuration sets is in no active group.
         """
         if self.client.error_in_globals():
             raise RuntimeError(
@@ -59,7 +66,6 @@ class RunmanagerInterface:
             )
 
         if self.labscript_file is None:
-            # Read first: a failure here leaves both unset for the next Start.
             raw = self.client.get_values(raw=True)
             missing = [g.name for g in self.config.globals if g.name not in raw]
             if missing:
@@ -67,11 +73,17 @@ class RunmanagerInterface:
                     f"Global {', '.join(missing)} not found in any active group "
                     f"in runmanager"
                 )
+            return {g.name: raw[g.name] for g in self.config.globals}
+        return None
+
+    def pin_labscript_file(self) -> None:
+        """Note the labscript file that :meth:`check_unchanged` compares against.
+
+        Called by a Start once it has passed every check. The first call pins
+        the file, and a Start that resumes the run does not move it.
+        """
+        if self.labscript_file is None:
             self.labscript_file = self.client.get_labscript_file()
-            # What an earlier session recorded is what runmanager held before any
-            # run, so it wins over what runmanager holds now.
-            held = {g.name: raw[g.name] for g in self.config.globals}
-            self.original = held | (self.original or {})
 
     def check_unchanged(self) -> None:
         """Raise if the labscript file has changed since the session started."""
@@ -90,22 +102,12 @@ class RunmanagerInterface:
         every later one names it and joins it.
 
         A refusal means nothing was queued: submit_shots checks every entry --
-        that the globals evaluate, and that each produces exactly one shot --
-        and the sequence named before submitting any of them, so a raise here
-        leaves nothing behind to account for.
+        that the globals evaluate, that none has Scan? or JIT? ticked, and that
+        each produces exactly one shot -- and the sequence named before
+        submitting any of them, so a raise here leaves nothing behind to
+        account for.
         """
         entries = [self.config.globals_for(p) for p in proposals]
-        # A ticked global runs its scan value, or under JIT? the window's value
-        # at compile time, rather than the value submitted.
-        scan, jit = self.client.get_scan_enabled(), self.client.get_jit_enabled()
-        ticked = [
-            g.name for g in self.config.globals if scan.get(g.name) or jit.get(g.name)
-        ]
-        if ticked:
-            raise RuntimeError(
-                f"Untick Scan? and JIT? in runmanager for {', '.join(ticked)}: "
-                f"their shots would not run the values this session submits."
-            )
         descriptors = self.client.submit_shots(
             entries, sequence=self.sequence, sequence_index=self.sequence_index
         )
@@ -155,31 +157,58 @@ class RunmanagerInterface:
             start.append(float(value))
         return np.array(start)
 
-    def set_values(self, params: Sequence[float] | None = None) -> None:
+    def set_values(
+        self,
+        values: Sequence[float] | dict[str, str],
+        raw: bool = False,
+        skip_missing: bool = False,
+    ) -> list[str]:
         """Set runmanager's Default values without submitting a shot.
 
         Parameters
         ----------
-        params : sequence of float, optional
-            The parameter vector whose globals to set: exactly what submitting
-            it would leave in runmanager's window. Without it, the original
-            values recorded at the first Start are written back as written.
-        """
-        if params is None:
-            self.client.set_values(self.original, raw=True)
-        else:
-            self.client.set_values(self.config.globals_for(params))
+        values : sequence of float or dict
+            Without ``raw``, the parameter vector whose globals to set: exactly
+            what submitting it would leave in runmanager's window. With
+            ``raw``, a dict of global name to the Default expression to write,
+            as written.
+        raw : bool, optional
+            Whether ``values`` are expressions to write as they are.
+        skip_missing : bool, optional
+            Whether to write the globals that are in an active group and skip
+            the rest, rather than refuse them all.
 
-    def shot_status(self, shot_ids: Iterable[str]) -> dict[str, dict]:
+        Returns
+        -------
+        list of str
+            The names skipped for being in no active group, empty unless
+            ``skip_missing``.
+        """
+        return self.client.set_values(
+            values if raw else self.config.globals_for(values),
+            raw=raw,
+            skip_missing=skip_missing,
+        )
+
+    def shot_status(self, shot_ids: Iterable[str]) -> dict[str, dict | None]:
         """What runmanager says about each of these shots, as it says it.
 
-        ``{shot_id: {'pending': bool, 'state': str}}``, one entry per id asked
-        about: runmanager loops over the ids it was handed and answers for each
-        of them, so an id it has no row for comes back ``'unknown'`` rather
-        than absent. ``pending`` is whether that shot could still produce a
-        cost. ``state`` is the queue row's own state, ``'blocked'`` for a row
-        sitting behind one an operator has to clear, and ``'unknown'`` for an
-        id runmanager does not know.
+        Parameters
+        ----------
+        shot_ids : iterable of str
+            The shots to ask about.
+
+        Returns
+        -------
+        dict
+            One entry per id asked about: runmanager's record of the shot, or
+            ``None`` for an id it has not held since it started. The record
+            holds ``shot_id``, ``sequence_id``, ``sequence_index``,
+            ``run_number``, ``path``, the states ``compile``, ``queue``,
+            ``blacs`` and ``lyse``, ``pending``, ``since`` and ``message``.
+            ``compile``, ``blacs`` and ``lyse`` are ``None`` for a stage the
+            shot left before reaching. ``pending`` is whether the shot may
+            still complete in BLACS, and says nothing of lyse.
         """
         shot_ids = list(shot_ids)
         if not shot_ids:

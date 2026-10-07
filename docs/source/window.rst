@@ -26,7 +26,7 @@ Set best values
     Sets the Default values of the globals the configuration sets, in runmanager, to those of the shot with the best cost, and submits no shot. It is enabled while the session is paused or has ended, once a usable cost has arrived, and runmanager is answering. A run otherwise leaves runmanager showing the last proposal it submitted.
 
 Restore original values
-    Writes back the Default expressions that runmanager held for those globals before the optimizer first ran, exactly as they were written, so ``2*pi*5`` comes back as ``2*pi*5``. Each global is recorded once, at the first Start of a session whose configuration sets it, and kept through Pause and Reset, so Restore original values works after a Reset and puts back the same values. A Reset to a file that sets another global records that one at its first Start, and Restore original values still writes back a global the file no longer sets. A recorded global is recorded again only when the routine is restarted. It is enabled while the session is paused or has ended, once they are recorded, and runmanager is answering.
+    Writes back the Default expressions that runmanager held for those globals before the optimizer first ran, exactly as they were written, so ``2*pi*5`` comes back as ``2*pi*5``. Each global is recorded once, at the first Start that is not refused of a session whose configuration sets it, and kept through Pause and Reset, so Restore original values works after a Reset and puts back the same values. A Reset to a file that sets another global records that one at its first Start, and Restore original values still writes back a global the file no longer sets. A recorded global is recorded again only when the routine is restarted. A global that is in no active group in runmanager any more is skipped and the others are written, and the Output dock gets one line, ``Restored runmanager's values, except those in no active group: <globals>``. It is enabled while the session is paused or has ended, once they are recorded, and runmanager is answering.
 
 Start from runmanager values
     A box in the second row, to the right of the two buttons. Ticked at the run's first Start, it opens the run at runmanager's current values of the parameters instead of the configuration's ``start``: the first shot is that point, and reads ``start`` in the ``phase`` column as a configured one does. It applies to every parameter the configuration searches, whether or not the file gives them a ``start``, and nothing else about how the run begins changes. The box is always enabled, and is read only at a run's first Start: a Start that resumes the run does not read runmanager again, whether or not it is ticked. Reset opens a new run, which has its own first Start. lyse remembers whether the box is ticked when the routine restarts.
@@ -44,7 +44,7 @@ The runmanager indicator
 
 To the right of the buttons are runmanager's icon, then its name and a light that shows whether runmanager is answering. The window asks runmanager every two seconds. A tick means it answers, an exclamation mark means it does not, and an hourglass means it has not yet been asked. Under the name and the light is a short status, "Checking...", "Responding" or "Not responding", and hovering it shows the whole status. The light's tooltip names the host runmanager is expected on, and gives the reason when runmanager does not answer. Nothing is printed to the Output dock for a runmanager that is not answering.
 
-Start, Set best values and Restore original values need the tick. Each enables itself once runmanager answers, with no Reset, and disables itself when runmanager stops.
+Start, Set best values and Restore original values need the tick. Each enables itself once runmanager answers, with no Reset, and disables itself when runmanager stops. While the light shows an exclamation mark, the session does not ask runmanager what became of the shots it queued, so that Reset and Pause do not wait behind a request that would time out.
 
 Status tab
 ----------
@@ -92,9 +92,9 @@ Counters
         * - Awaiting
           - Submitted shots that have neither reported a cost nor been given up on.
         * - Dropped
-          - Shots that will not produce a cost: deleted from runmanager's queue, failed to compile, refused by BLACS, or stuck behind a queue row an operator has to clear. A cost that arrives later is still taken, and its shot stops counting as dropped.
+          - Shots that will not produce a cost: deleted from runmanager's queue or no longer held by it, failed to compile, refused by BLACS, not handed to lyse because Analyse is off in runmanager or lyse rejected the file, or stuck behind a queue row an operator has to clear. A cost that arrives later is still taken, and its shot stops counting as dropped.
         * - Blocked
-          - The dropped shots stuck behind a queue row only an operator can clear, such as a shot that failed to compile. They are counted in Dropped too.
+          - The dropped shots waiting in runmanager's queue behind a row only an operator can clear, such as a shot that failed to compile. They are counted in Dropped too.
         * - Starved
           - How often the session ran and found none of its shots queued, so runmanager gave BLACS a default shot. ``differential_evolution`` empties the queue by design and does not count it. See :ref:`troubleshooting:Starved counts`.
 

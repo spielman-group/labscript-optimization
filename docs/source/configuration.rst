@@ -148,7 +148,7 @@ A runmanager global computed from one or more parameters. ``<name>`` is the glob
 
 Global names are unique across the listed groups, whether they come from a ``global_name`` or from a ``[RUNMANAGER_GLOBALS...]`` table, because each global is set once per shot.
 
-Every global the session sets must exist in an active runmanager group, with Scan? and JIT? unticked. The load does not check this. runmanager refuses a name no active group has, and the session refuses to submit while a global it sets has Scan? or JIT? ticked; either stops the session with an error. After each submission runmanager's globals hold the last values submitted.
+Every global the session sets must exist in an active runmanager group, with Scan? and JIT? unticked. The load does not check this. runmanager refuses to submit a name no active group has, or a global that has Scan? or JIT? ticked; either stops the session with an error. After each submission runmanager's globals hold the last values submitted.
 
 Groups
 ------

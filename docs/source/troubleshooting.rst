@@ -21,7 +21,7 @@ runmanager is not answering
 
 The light beside "runmanager" in the window shows an exclamation mark, its tooltip gives the reason, and Start is disabled. Nothing is printed. Start runmanager. Once the light shows a tick, Start enables itself, with no Reset.
 
-If runmanager stops answering during a run, for instance with its GUI inside a compile or behind an open dialog, the request it left unanswered pauses the session after the client's own timeout. The phase reads ``Paused: runmanager is not answering``. The shots in flight are kept, and no traceback is printed. When the light shows a tick again, press Start to resume the same run. A runmanager whose GUI is busy still answers the light, so Start can be enabled while its requests time out. The session then stays paused with the request's timeout as the reason.
+If runmanager stops answering during a run, for instance with its GUI inside a compile or behind an open dialog, the request it left unanswered pauses the session after the client's own timeout. The phase reads ``Paused: runmanager is not answering``. The shots in flight are kept, and no traceback is printed. While the light shows an exclamation mark, the session does not ask runmanager what became of its shots, so Reset and Pause do not wait for that timeout. When the light shows a tick again, press Start to resume the same run. A runmanager whose GUI is busy still answers the light, so Start can be enabled while its requests time out. The session then stays paused with the request's timeout as the reason.
 
 If runmanager was restarted, and not just busy, it no longer knows the run's sequence. The next submission after Start is refused and the session ends; see :ref:`troubleshooting:A refused sequence join`.
 
@@ -30,7 +30,7 @@ The globals do not evaluate
 
 Start leaves the session paused, and the phase reads ``Paused: runmanager reports an error in its globals; fix it before starting an optimization``. Fix the globals in runmanager, then press Start again.
 
-A global that evaluates when you press Start can still stop a later submission. runmanager refuses a batch whose globals cannot be evaluated, and its message becomes the reason. A global the configuration sets that is in no active group in runmanager is refused at Start, which leaves the session paused with ``Global <name> not found in any active group in runmanager``.
+A global that evaluates when you press Start can still stop a later submission. runmanager refuses a batch whose globals cannot be evaluated, and its message becomes the reason. A global the configuration sets that is in no active group in runmanager is refused at Start, which leaves the session paused with ``Global <name> not found in any active group in runmanager``. Only the Starts before the first one that goes check this. A global that leaves the active groups after that makes runmanager refuse the next submission, and the session ends with runmanager's reason.
 
 Start from runmanager values is refused
 ---------------------------------------
@@ -44,14 +44,14 @@ With the box ticked, the run's first Start reads runmanager's current values of 
 Scan? or JIT? ticked
 --------------------
 
-Before each submission the session checks the globals the configuration sets. If any has Scan? or JIT? ticked, the session stops with ``Untick Scan? and JIT? in runmanager for <globals>: their shots would not run the values this session submits.`` A ticked global runs its scan values, or under JIT? the value in runmanager's window, instead of the value submitted. Untick the boxes in runmanager, press Reset and then Start.
+runmanager refuses a submission that sets a global whose Scan? or JIT? box is ticked, and queues nothing, because a ticked global runs its scan values, or under JIT? the value in runmanager's window, instead of the value submitted. The session ends with runmanager's message, ``Cannot submit a value for a global with its Scan? or JIT? box ticked, since the shot would not run it: <globals>.``, which names every global that has a box ticked. It is the reason in the window when Start or a finished Gaussian process batch made the submission, and the error the routine raises when a shot's pass did; see :ref:`troubleshooting:Where errors appear`. Untick the boxes in runmanager, press Reset and then Start.
 
 A scan on a global the configuration does not set makes runmanager refuse the submission, because the entry would not produce exactly one shot. Its message names the globals that expand it.
 
 The labscript file changed during a session
 -------------------------------------------
 
-The session notes runmanager's labscript file at its first Start and compares it before every submission. If it has changed, the session stops with ``the labscript file changed from '<old>' to '<new>' while this session was running; its shots would no longer be the experiment it has been optimizing``. Press Reset. The new session notes whichever file runmanager has when you press Start, and starts with an empty history.
+The session notes runmanager's labscript file at its first Start that is not refused and compares it before every submission. If it has changed, the session stops with ``the labscript file changed from '<old>' to '<new>' while this session was running; its shots would no longer be the experiment it has been optimizing``. Press Reset. The new session notes whichever file runmanager has when you press Start, and starts with an empty history.
 
 A refused sequence join
 -----------------------

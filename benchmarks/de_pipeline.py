@@ -48,6 +48,14 @@ from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
+from runmanager.client import (
+    BLACS_COMPLETED,
+    BLACS_RUNNING,
+    LYSE_SENT,
+    LYSE_WAITING,
+    QUEUE_LEFT,
+    QUEUE_QUEUED,
+)
 
 from labscript_optimization import config as config_module
 from labscript_optimization.learners import DifferentialEvolutionLearner, RandomLearner
@@ -142,9 +150,19 @@ class FakeRunmanager:
     def shot_status(self, shot_ids):
         return {
             shot_id: (
-                {"pending": False, "state": "unknown"}
+                {
+                    "pending": False,
+                    "queue": QUEUE_LEFT,
+                    "blacs": BLACS_COMPLETED,
+                    "lyse": LYSE_SENT,
+                }
                 if shot_id in self.finished
-                else {"pending": True, "state": "running"}
+                else {
+                    "pending": True,
+                    "queue": QUEUE_QUEUED,
+                    "blacs": BLACS_RUNNING,
+                    "lyse": LYSE_WAITING,
+                }
             )
             for shot_id in shot_ids
         }
