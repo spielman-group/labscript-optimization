@@ -19,16 +19,19 @@ from .session import Session
 REPLY_TIMEOUT = 2.0
 
 
-def _set_runmanager_values(session, best):
+def _set_runmanager_values(session, original, best):
     """Set runmanager's values to the session's best, or to the originals.
 
     A failure is one line of output and leaves the session as it was.
     """
     # A click queued behind a Reset can find nothing yet to set.
-    if session.best is None if best else session.interface.original is None:
+    if session.best is None if best else not original:
         return
     try:
-        session.interface.set_values(session.best.params if best else None)
+        if best:
+            session.interface.set_values(session.best.params)
+        else:
+            session.interface.set_values(original, raw=True)
     except Exception as exc:
         reason = (
             "runmanager is not answering"
@@ -119,22 +122,30 @@ class Worker:
 
     def _run_session(self):
         session = None
-        # The values runmanager held before the first run, which outlast the
-        # session and a Reset whose file does not load.
-        original = None
+        # The raw Default expressions of every global a session has set, as
+        # runmanager held them before the first Start that set it. They outlast
+        # the session and a Reset whose file does not load.
+        original = {}
         printed = None
         watched_future = None
+        # Whether runmanager answers, as the window's light last said.
+        answering = True
         while True:
             command, reply, payload = self.command_queue.get()
             if command == "quit":
                 return
+            if command == "link":
+                answering = payload
+                continue
+            if session is None and command in ("start", "pause", "set_best", "restore"):
+                # A click queued behind a Reset whose file did not load. The
+                # file's error is what the window shows, so it is left there.
+                continue
             recorded = ()
             error = None
             try:
                 if command == "reset":
                     # Opening is a reset too, so a failed one is retried by Reset.
-                    if session is not None:
-                        original = session.interface.original
                     session = None
                     try:
                         self.config, text = self.load()
@@ -147,25 +158,34 @@ class Worker:
                     # session's own status replaces it.
                     self.window.update({}, False, (), False, False)
                     session = Session(self.config, self.interface_factory(self.config))
-                    session.interface.original = original
                 elif command == "start":
                     try:
-                        session.interface.check_ready()
+                        raw = session.interface.check_ready()
                         # The payload says whether the box was ticked; it
                         # applies to the run's first Start only.
+                        start = None
                         if payload and not session.proposals:
-                            session.start_point = session.interface.get_start()
+                            start = session.interface.get_start()
+                        session.interface.pin_labscript_file()
                     except RuntimeError as exc:
                         # Start did not go: the session stays paused, with
-                        # runmanager's reason in the window.
+                        # runmanager's reason in the window, and nothing of
+                        # this Start is kept.
                         session.pause(str(exc))
                     else:
+                        # A global already recorded keeps what runmanager held
+                        # before any run.
+                        original = (raw or {}) | original
+                        if start is not None:
+                            session.start_point = start
                         session.start()
                         session.refill()
                 elif command == "pause":
                     session.pause()
                 elif command in ("set_best", "restore"):
-                    _set_runmanager_values(session, best=command == "set_best")
+                    _set_runmanager_values(
+                        session, original, best=command == "set_best"
+                    )
                 elif command == "observe":
                     if session is None:
                         recorded = (None,) * len(payload)
@@ -184,7 +204,10 @@ class Worker:
                     reply.set_result((recorded, status))
 
                 if session is not None and command in ("observe", "shot"):
-                    session.reconcile()
+                    # A runmanager that is not answering would hold this up for
+                    # its client's whole timeout.
+                    if answering:
+                        session.reconcile()
                     session.refill()
             except Exception as exc:
                 if session is not None and isinstance(exc, TimeoutError):
@@ -223,8 +246,7 @@ class Worker:
                     sign = -1 if self.config.maximize else 1
                     self.window.update(
                         # The originals outlast the session, which does not own them.
-                        session.status()
-                        | {"restorable": session.interface.original is not None},
+                        session.status() | {"restorable": bool(original)},
                         computation is not None and not computation.done(),
                         tuple(
                             (
@@ -240,6 +262,6 @@ class Worker:
                         # After the window shows the end, so a runmanager that
                         # does not answer cannot hold it up. runmanager
                         # otherwise shows the last proposal made.
-                        _set_runmanager_values(session, best=True)
+                        _set_runmanager_values(session, original, best=True)
                 elif error is not None:
                     self.window.update({"stopped": error}, False, (), False, False)

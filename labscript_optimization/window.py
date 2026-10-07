@@ -36,10 +36,11 @@ class WindowController:
         self.ui.runmanager_link_layout.addWidget(self.link)
         # Whether the session could start, or has values to set in runmanager,
         # and whether runmanager answers: each of these buttons needs both.
+        # None says the light has not heard runmanager yet.
         self.startable = False
         self.best_settable = False
         self.restorable = False
-        self.link_online = False
+        self.link_online = None
         # Whether the box is ticked is read at the click, for the first Start.
         self.ui.start_button.clicked.connect(
             lambda checked=False: self.command_queue.put(
@@ -111,11 +112,14 @@ class WindowController:
         )
 
     def _link_answered(self, reachable, answer):
+        # The first answer is sent whichever it is, then each change.
+        if reachable != self.link_online:
+            self.command_queue.put(("link", None, reachable))
         self.link_online = reachable
         self._enable_buttons()
 
     def _enable_buttons(self):
-        online = self.link_online
+        online = bool(self.link_online)
         self.ui.start_button.setEnabled(self.startable and online)
         self.ui.set_best_button.setEnabled(self.best_settable and online)
         self.ui.restore_button.setEnabled(self.restorable and online)

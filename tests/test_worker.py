@@ -17,12 +17,13 @@ from conftest import STILL_COMING
 
 
 class FakeInterface:
-    original = None
-
     def __init__(self, config):
         self.submitted = []
 
     def check_ready(self):
+        pass
+
+    def pin_labscript_file(self):
         pass
 
     def check_unchanged(self):
@@ -166,10 +167,11 @@ def test_a_start_runmanager_refuses_leaves_the_session_paused_and_a_later_one_go
 def test_runmanager_not_answering_mid_run_pauses_the_session_and_start_resumes_it(
     capsys,
 ):
-    silent = [True]
+    silent, asked = [True], []
 
     class Silent(FakeInterface):
         def shot_status(self, shot_ids):
+            asked.append(shot_ids)
             if silent:
                 raise TimeoutError('No response from server: timed out')
             return super().shot_status(shot_ids)
@@ -187,6 +189,17 @@ def test_runmanager_not_answering_mid_run_pauses_the_session_and_start_resumes_i
     hand_over(worker)
     # The run goes on: the shot in flight is kept, and the queue topped up.
     assert not shown[-1]['paused'] and shown[-1]['submitted'] == 3
+
+    # While the light shows runmanager not answering, nothing asks it what
+    # became of the shots, which would wait out the client's timeout.
+    asked.clear()
+    commands.put(('link', None, False))
+    hand_over(worker, 'shot-1')
+    assert asked == []
+    assert not shown[-1]['paused'] and shown[-1]['stopped'] is None
+    commands.put(('link', None, True))
+    hand_over(worker)
+    assert asked
 
 
 def test_a_session_thread_that_has_died_is_reported(monkeypatch):
@@ -216,25 +229,41 @@ def test_a_session_that_reaches_a_limit_says_why_once(capsys):
 
 
 def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(capsys):
-    writes, failures, reads = [], [], itertools.count()
+    writes, failures, pins, refusals = [], [], [], ['out of bounds']
+    held = itertools.count()
 
     class Writes(FakeInterface):
-        def check_ready(self):
-            # The first Start records what runmanager holds, and a later one
-            # does not.
-            if self.original is None:
-                self.original = {'x': str(next(reads))}
+        def __init__(self, config):
+            super().__init__(config)
+            self.names = [g.name for g in config.globals]
 
-        def set_values(self, params=None):
+        def check_ready(self):
+            # What runmanager holds now, which only a Start that goes records.
+            read = str(next(held))
+            return dict.fromkeys(self.names, read)
+
+        def get_start(self):
+            if refusals:
+                raise RuntimeError(refusals.pop())
+            return np.array([0.5])
+
+        def pin_labscript_file(self):
+            pins.append(self)
+
+        def set_values(self, values, raw=False):
             if failures:
                 raise failures[0]
-            writes.append(self.original if params is None else list(params))
+            writes.append(values if raw else list(values))
 
     text = CONFIG.replace(
         'num_buffered_runs = 2', 'num_buffered_runs = 2\nmax_num_runs = 2'
     )
     worker, commands, shown = start(Writes, text)
     assert not shown[-1]['restorable']
+    # A Start that is refused records and pins nothing.
+    commands.put(('start', None, True))
+    hand_over(worker)
+    assert shown[-1]['paused'] and not shown[-1]['restorable'] and not pins
     commands.put(('start', None, None))
     hand_over(worker, 'shot-0')
     commands.put(('pause', None, None))
@@ -242,7 +271,7 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
     commands.put(('restore', None, None))
     hand_over(worker)
     best = shown[-1]['best_params']
-    assert shown[-1]['restorable'] and writes == [best, {'x': '0'}]
+    assert shown[-1]['restorable'] and writes == [best, {'gx': '1'}]
 
     # A write runmanager does not take is one line, and the run is as it was.
     capsys.readouterr()
@@ -264,18 +293,22 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
     hand_over(worker, 'shot-1')
     hand_over(worker)
     assert shown[-1]['stopped']
-    assert writes == [best, {'x': '0'}, shown[-1]['best_params']]
+    assert writes == [best, {'gx': '1'}, shown[-1]['best_params']]
 
     # Reset keeps the originals from before the first run, and the new
-    # session's own first Start does not record them again.
+    # session's own first Start records only a global the file adds.
     writes.clear()
+    worker.load = reads(
+        text + '[RUNMANAGER_GLOBALS.G.other]\nexpr = "lambda v: v"\nargs = ["x"]'
+    )
     commands.put(('reset', None, None))
     commands.put(('restore', None, None))
     commands.put(('start', None, None))
     commands.put(('pause', None, None))
     commands.put(('restore', None, None))
     hand_over(worker)
-    assert shown[-1]['restorable'] and writes == [{'x': '0'}, {'x': '0'}]
+    assert shown[-1]['restorable']
+    assert writes == [{'gx': '1'}, {'gx': '1', 'other': '3'}]
 
 
 def test_reset_reads_the_file_again_and_a_file_that_does_not_load_ends_the_session(
@@ -283,7 +316,7 @@ def test_reset_reads_the_file_again_and_a_file_that_does_not_load_ends_the_sessi
 ):
     class Records(FakeInterface):
         def check_ready(self):
-            self.original = self.original or {'x': '0'}
+            return {'x': '0'}
 
     worker, commands, shown = start(Records)
     commands.put(('start', None, None))
@@ -298,6 +331,9 @@ def test_reset_reads_the_file_again_and_a_file_that_does_not_load_ends_the_sessi
     # with the originals still recorded.
     worker.load = reads(edited.replace('"random"', '"nonesuch"'))
     commands.put(('reset', None, None))
+    # A click queued behind the Reset leaves the file's error on screen.
+    for click in ('start', 'pause', 'set_best', 'restore'):
+        commands.put((click, None, None))
     assert hand_over(worker, 'shot-0') == []
     assert 'nonesuch' in shown[-1]['stopped']
     worker.load = reads(CONFIG)

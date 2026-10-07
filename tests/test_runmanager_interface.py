@@ -106,6 +106,7 @@ def interface(config, client):
 
 def test_a_session_starts_when_runmanager_can_sustain_it(interface):
     interface.check_ready()
+    interface.pin_labscript_file()
     interface.check_unchanged()
 
 
@@ -118,9 +119,13 @@ def test_a_runmanager_whose_globals_do_not_evaluate_is_refused(interface, client
 
 def test_a_labscript_file_changed_mid_session_is_refused(interface, client):
     interface.check_ready()
+    # A Start refused after its checks has pinned nothing.
+    client.labscript = '/lab/another.py'
+    interface.pin_labscript_file()
+    interface.check_unchanged()
     client.labscript = '/lab/something_else.py'
     # A Start that resumes the run does not move the file it is compared with.
-    interface.check_ready()
+    interface.pin_labscript_file()
     with pytest.raises(RuntimeError, match='labscript file changed'):
         interface.check_unchanged()
 
@@ -131,31 +136,23 @@ def test_a_global_runmanager_does_not_have_is_refused_at_start(interface, client
         interface.check_ready()
 
 
-def test_the_original_values_are_recorded_once_and_restored_as_written(
+def test_the_original_values_are_read_until_a_start_goes_and_restored_as_written(
     interface, client
 ):
-    interface.check_ready()
+    originals = {'gx': '2*pi*5', 'gy_doubled': '3'}
+    assert interface.check_ready() == originals
+    # A Start refused after its checks has kept nothing, so the next reads again.
     client.values = {'gx': '1', 'gy_doubled': '2', 'other': '3'}
-    # A Start that resumes the run does not record what the run has since set.
-    interface.check_ready()
-    interface.set_values()
+    assert interface.check_ready() == {'gx': '1', 'gy_doubled': '2'}
+    interface.pin_labscript_file()
+    # A Start that resumes the run reads nothing.
+    assert interface.check_ready() is None
+    interface.set_values(originals, raw=True)
     interface.set_values([1.0, 2.0])
     assert client.written == [
-        ({'gx': '2*pi*5', 'gy_doubled': '3'}, True),
+        (originals, True),
         ({'gx': 1.0, 'gy_doubled': 4.0}, False),
     ]
-
-    # A later session is handed them, and its own first Start keeps them and
-    # records only the global its configuration adds.
-    other = '[RUNMANAGER_GLOBALS.G.other]\nexpr = "lambda v: v"\nargs = ["x"]'
-    later = RunmanagerInterface(config_module.loads(CONFIG + other), client)
-    later.original = interface.original
-    later.check_ready()
-    later.set_values()
-    assert client.written[-1] == (
-        {'gx': '2*pi*5', 'gy_doubled': '3', 'other': '3'},
-        True,
-    )
 
 
 def test_runmanagers_values_are_read_back_as_the_start(interface, client):
