@@ -339,8 +339,7 @@ def test_nothing_is_asked_when_nothing_is_awaited(session, runmanager):
 
 def test_a_shot_that_has_only_just_run_is_not_treated_as_lost(session, runmanager):
     """A completed shot leaves runmanager's queue at once, while its cost is
-    still on its way through lyse. runmanager reports it exactly as it reports
-    an id it has never heard of, so giving up on that answer alone would make
+    still on its way through lyse, so giving up on that answer alone would make
     the ordinary end of every healthy shot count as a loss -- and the number of
     dropped shots is what a user reads to see whether shots are being lost.
     """
@@ -355,19 +354,21 @@ def test_a_shot_that_has_only_just_run_is_not_treated_as_lost(session, runmanage
     assert session.status()['dropped'] == 0
 
 
-def test_a_shot_still_unknown_at_the_next_reconcile_is_dropped(session, runmanager):
-    """Staying unknown with no cost is how a shot that has really gone is told
-    from one that has just finished. An operator's deletion and a runmanager
-    restart both leave an id nothing will ever answer for, and its place must
+def test_a_shot_still_without_a_cost_at_the_next_reconcile_is_dropped(
+    session, runmanager
+):
+    """Still completed, or still unknown, with no cost, is how a shot whose
+    cost will never come is told from one that has just finished: an analysis
+    that failed, or a runmanager restart that forgot the id. Its place must
     not be held for the rest of the session.
     """
     session.refill()
     runmanager.finish('shot-0')
+    runmanager.submitted.remove('shot-1')
 
     assert session.reconcile() == []
-    assert session.reconcile() == ['shot-0']
-    assert session.awaiting == ['shot-1', 'shot-2']
-    assert session.refill() == ['shot-3']
+    assert session.reconcile() == ['shot-0', 'shot-1']
+    assert session.awaiting == ['shot-2']
 
 
 def test_a_shot_with_a_reason_is_dropped_at_the_first_reconcile(session, runmanager):

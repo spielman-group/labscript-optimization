@@ -41,9 +41,9 @@ class FakeRunmanager:
     """Stands in for runmanager, and decides what is still coming.
 
     It answers as runmanager does: one ``{'pending', 'state'}`` per id asked
-    about. A rejected shot keeps its row and says so, while a shot that has
-    run leaves the queue and becomes indistinguishable from an id runmanager
-    never had -- both are ``unknown``.
+    about. A rejected shot keeps its row and says so, a shot that has run
+    leaves the queue and is ``completed``, and an id runmanager has not had
+    since it started is ``unknown``.
     """
 
     def __init__(self):
@@ -72,7 +72,9 @@ class FakeRunmanager:
                 answers[shot_id] = {'pending': False, 'state': 'blocked'}
             elif shot_id in self.rejected:
                 answers[shot_id] = {'pending': False, 'state': 'rejected'}
-            elif shot_id in self.finished or shot_id not in self.submitted:
+            elif shot_id in self.finished:
+                answers[shot_id] = {'pending': False, 'state': 'completed'}
+            elif shot_id not in self.submitted:
                 answers[shot_id] = {'pending': False, 'state': 'unknown'}
             else:
                 answers[shot_id] = {'pending': True, 'state': 'running'}
