@@ -13,6 +13,10 @@
 
 # Configuration file for the Sphinx documentation builder.
 #
+# Build in a throwaway venv, never the labscript one: `pip install -e .[docs]`,
+# then `sphinx-build -E -W -n -b dirhtml docs/source <out>`. Offline, -W fails
+# on intersphinx's inventory fetches, which are not doc errors.
+#
 # This file only contains a selection of the most common options. For a full
 # list see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
