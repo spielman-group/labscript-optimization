@@ -8,9 +8,8 @@ sweep found".
 
 This is not a second test suite. A benchmark measures search quality, which is
 a number that moves; the suite in `tests/` proves behavior, which is a thing
-that either holds or does not. What the suite does run is the `smoke` sweep
-(`tests/test_benchmarks.py`), because a harness nobody runs rots, and a check
-that does not run looks exactly like one that passes.
+that either holds or does not. The `smoke` sweep is a quick check that the
+harness still drives the current learner; run it before trusting a sweep.
 
 ## The rule the numbers depend on
 
@@ -183,6 +182,4 @@ different numbers of shots is a way to make the mistake again. It is one line:
 ```
 
 Apply it, run `run barrier --out benchmarks/results/truncated_4d.csv`, and
-revert it. That edit is also the mutation that proves
-`tests/test_benchmarks.py`: under it the smoke test fails with
-`assert 9 == 12`.
+revert it.

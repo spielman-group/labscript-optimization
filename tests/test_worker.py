@@ -1,6 +1,5 @@
 """The session thread, driven in process with runmanager faked."""
 
-import itertools
 import queue
 import threading
 from types import SimpleNamespace
@@ -13,29 +12,20 @@ from labscript_optimization import worker as worker_module
 from labscript_optimization.worker import Worker
 
 from conftest import SESSION_CONFIG as CONFIG
-from conftest import STILL_COMING
+from conftest import FakeRunmanager
 
 
-class FakeInterface:
+class FakeInterface(FakeRunmanager):
+    """The fake runmanager, built from a configuration, and ready to Start."""
+
     def __init__(self, config):
-        self.submitted = []
+        super().__init__()
 
     def check_ready(self):
         pass
 
     def pin_labscript_file(self):
         pass
-
-    def check_unchanged(self):
-        pass
-
-    def submit(self, proposals):
-        ids = [f'shot-{len(self.submitted) + i}' for i in range(len(proposals))]
-        self.submitted.extend(ids)
-        return ids
-
-    def shot_status(self, shot_ids):
-        return {i: dict(STILL_COMING) for i in shot_ids}
 
 
 class Shown(list):
@@ -87,14 +77,6 @@ def hand_over(worker, *shot_ids):
     return saved
 
 
-def test_a_session_opens_paused_and_start_fills_the_queue():
-    worker, commands, shown = start()
-    assert shown[-1]['paused'] and shown[-1]['submitted'] == 0
-    commands.put(('start', None, None))
-    hand_over(worker)
-    assert shown[-1]['submitted'] == 2
-
-
 def test_only_the_shots_the_session_proposed_get_their_status():
     worker, commands, _ = start()
     commands.put(('start', None, None))
@@ -134,34 +116,6 @@ def test_a_failure_after_a_reply_stops_the_session_and_is_raised_next(capsys):
     shown.wait_for(lambda status: status.get('stopped') == 'stopped by an error')
     # Shown at once, in case no later pass comes to raise it.
     assert 'runmanager went away' in capsys.readouterr().err
-
-
-def test_a_session_opens_paused_without_asking_runmanager_anything():
-    class Absent(FakeInterface):
-        def check_ready(self):
-            raise TimeoutError('No response from server: timed out')
-
-    _, _, shown = start(Absent)
-    assert shown[-1]['paused'] and shown[-1]['pause_reason'] is None
-
-
-def test_a_start_runmanager_refuses_leaves_the_session_paused_and_a_later_one_goes():
-    refusals = ['runmanager reports an error in its globals']
-
-    class Refuses(FakeInterface):
-        def check_ready(self):
-            if refusals:
-                raise RuntimeError(refusals.pop())
-
-    worker, commands, shown = start(Refuses)
-    commands.put(('start', None, None))
-    hand_over(worker)
-    assert shown[-1]['paused'] and shown[-1]['submitted'] == 0
-    assert shown[-1]['pause_reason'] == 'runmanager reports an error in its globals'
-    commands.put(('start', None, None))
-    hand_over(worker)
-    assert not shown[-1]['paused'] and shown[-1]['submitted'] == 2
-    assert shown[-1]['pause_reason'] is None
 
 
 def test_runmanager_not_answering_mid_run_pauses_the_session_and_start_resumes_it(
@@ -217,20 +171,9 @@ def test_a_session_thread_that_has_died_is_reported(monkeypatch):
     assert not worker.unsaved
 
 
-def test_a_session_that_reaches_a_limit_says_why_once(capsys):
-    text = CONFIG.replace(
-        'num_buffered_runs = 2', 'num_buffered_runs = 2\nmax_num_runs = 2'
-    )
-    worker, commands, _ = start(text=text)
-    commands.put(('start', None, None))
-    hand_over(worker, 'shot-0', 'shot-1')
-    hand_over(worker)
-    assert capsys.readouterr().out.count('The optimization has stopped') == 1
-
-
 def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(capsys):
-    writes, failures, pins, refusals = [], [], [], ['out of bounds']
-    held, absent = itertools.count(), set()
+    writes, failures, absent = [], [], set()
+    holds = {'gx': '1', 'other': '3'}
 
     class Writes(FakeInterface):
         def __init__(self, config):
@@ -239,16 +182,7 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
 
         def check_ready(self):
             # What runmanager holds now, which only a Start that goes records.
-            read = str(next(held))
-            return dict.fromkeys(self.names, read)
-
-        def get_start(self):
-            if refusals:
-                raise RuntimeError(refusals.pop())
-            return np.array([0.5])
-
-        def pin_labscript_file(self):
-            pins.append(self)
+            return {name: holds[name] for name in self.names}
 
         def set_values(self, values, raw=False, skip_missing=False):
             if failures:
@@ -264,10 +198,6 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
     )
     worker, commands, shown = start(Writes, text)
     assert not shown[-1]['restorable']
-    # A Start that is refused records and pins nothing.
-    commands.put(('start', None, True))
-    hand_over(worker)
-    assert shown[-1]['paused'] and not shown[-1]['restorable'] and not pins
     commands.put(('start', None, None))
     hand_over(worker, 'shot-0')
     commands.put(('pause', None, None))
@@ -292,20 +222,23 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
     assert err == ''
     assert shown[-1]['paused'] and shown[-1]['stopped'] is None
 
-    # The limit ends the run, and runmanager is left showing its best once.
+    # The limit ends the run, said once however many passes follow it, and
+    # runmanager is left showing its best once.
     failures.clear()
     commands.put(('start', None, None))
     hand_over(worker, 'shot-1')
     hand_over(worker)
     assert shown[-1]['stopped']
     assert writes == [best, {'gx': '1'}, shown[-1]['best_params']]
+    stopped = shown[-1]['stopped']
+    assert capsys.readouterr().out == f'The optimization has stopped: {stopped}\n'
 
     # Reset keeps the originals from before the first run, and the new
     # session's own first Start records only a global the file adds. A global
     # runmanager no longer has is left out and named, in one line.
     writes.clear()
-    capsys.readouterr()
     absent.add('other')
+    holds['gx'] = '2'
     worker.load = reads(
         text + '[RUNMANAGER_GLOBALS.G.other]\nexpr = "lambda v: v"\nargs = ["x"]'
     )
@@ -357,31 +290,51 @@ def test_reset_reads_the_file_again_and_a_file_that_does_not_load_ends_the_sessi
     assert capsys.readouterr() == ('', '')
 
 
-def test_a_start_from_runmanagers_values_opens_the_run_there_or_is_refused():
-    reason = 'gx is 2, outside the range 0 to 1 of parameter x'
-    refusals, sent = [reason], []
+def test_a_start_runmanager_refuses_leaves_the_session_paused_and_a_later_one_goes():
+    out_of_range = 'gx is 2, outside the range 0 to 1 of parameter x'
+    refusals = {
+        'check_ready': 'runmanager reports an error in its globals',
+        'get_start': out_of_range,
+    }
+    sent, pins = [], []
 
-    class Reads(FakeInterface):
+    class Refuses(FakeInterface):
+        def check_ready(self):
+            if 'check_ready' in refusals:
+                raise RuntimeError(refusals.pop('check_ready'))
+            return {'gx': '0'}
+
         def get_start(self):
-            if refusals:
-                raise RuntimeError(refusals.pop())
+            if 'get_start' in refusals:
+                raise RuntimeError(refusals.pop('get_start'))
             return np.array([0.25])
+
+        def pin_labscript_file(self):
+            pins.append(self)
 
         def submit(self, proposals):
             sent.append(proposals[0].tolist())
             return super().submit(proposals)
 
-    worker, commands, shown = start(Reads)
-    commands.put(('start', None, True))
-    hand_over(worker)
-    assert shown[-1]['paused'] and shown[-1]['pause_reason'] == reason
-    assert shown[-1]['submitted'] == 0
+    worker, commands, shown = start(Refuses)
+    # The opening asks runmanager nothing, so a runmanager that is not running
+    # does not fail it.
+    assert shown[-1]['paused'] and shown[-1]['pause_reason'] is None
+    # A Start that is refused, whichever check refuses it, submits, records and
+    # pins nothing.
+    for reason in list(refusals.values()):
+        commands.put(('start', None, True))
+        hand_over(worker)
+        assert shown[-1]['paused'] and shown[-1]['pause_reason'] == reason
+        assert shown[-1]['submitted'] == 0
+        assert not shown[-1]['restorable'] and not pins
+    # A later one opens the run at runmanager's values.
     commands.put(('start', None, True))
     assert hand_over(worker, 'shot-0') == [('shot-0.h5', 'start')]
     assert sent[0] == [0.25] and shown[-1]['start'] == [0.25]
 
     # A Start that resumes the run does not read runmanager again.
-    refusals.append(reason)
+    refusals['get_start'] = out_of_range
     commands.put(('pause', None, None))
     commands.put(('start', None, True))
     hand_over(worker)

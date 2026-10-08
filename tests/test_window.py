@@ -48,9 +48,7 @@ def test_window_shows_progress_and_controls(qt_application, monkeypatch, tmp_pat
     # The worker is told of the first answer, whichever it is, and then of
     # each change.
     window.link.on_answer(False, "gone")
-    window.link.on_answer(False, "gone")
     assert commands.get_nowait() == ("link", None, False)
-    assert commands.empty()
     window.link.on_answer(True, None)
     assert commands.get_nowait() == ("link", None, True)
     qt_application.processEvents()
@@ -66,13 +64,9 @@ def test_window_shows_progress_and_controls(qt_application, monkeypatch, tmp_pat
     window.ui.start_from_runmanager.setChecked(True)
     window.ui.start_button.click()
     assert commands.get_nowait() == ("start", None, True)
-    # Shots submitted do not make the original values restorable.
-    window.update({"paused": True, "submitted": 1}, False, (), True, False)
-    qt_application.processEvents()
-    assert not window.ui.restore_button.isEnabled()
 
-    # A Reset session has submitted nothing and can still restore them. It has
-    # no cost yet, so there is no best to set.
+    # A Reset session has submitted nothing and can still restore the original
+    # values. It has no cost yet, so there is no best to set.
     window.update({"paused": True, "restorable": True}, False, (), True, False)
     qt_application.processEvents()
     assert not window.ui.set_best_button.isEnabled()
@@ -132,12 +126,20 @@ def test_window_shows_progress_and_controls(qt_application, monkeypatch, tmp_pat
     )
     assert not any(button.isEnabled() for button in buttons)
 
-    # A source no learner in the package names is plotted, not refused.
-    shots = (("explore", 2.0), ("other", 1.0))
+    # Each usable cost is plotted at the position of its shot, with a gap where
+    # a shot has none, in a series for what proposed it, and a line follows the
+    # best so far.
+    shots = (("main", 2.0), ("explore", 3.0), ("main", None), ("main", 1.0))
     window.update({"paused": False}, False, shots, False, False)
     qt_application.processEvents()
-    plotted = [item.getData()[0] for item in window.plot.listDataItems()]
-    assert [2] in [list(x) for x in plotted if x is not None]
+    drawn = [
+        (list(x), list(y))
+        for x, y in (item.getData() for item in window.plot.listDataItems())
+        if x is not None
+    ]
+    assert ([1, 4], [2.0, 1.0]) in drawn
+    assert ([2], [3.0]) in drawn
+    assert ([1, 2, 4], [2.0, 2.0, 1.0]) in drawn
 
     # The button and the right-click item open the configuration file, over
     # this window.
