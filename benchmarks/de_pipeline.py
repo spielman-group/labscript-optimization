@@ -32,8 +32,8 @@ was never allowed to use. See ``README.md`` beside this file.
 
 This is a benchmark, not a test: it measures quality, where the suite in
 ``tests/`` proves behavior. Its standing value is regression checking of what
-ships. The one part of it the suite does run is the ``smoke`` sweep, which
-proves the harness still drives the current learner.
+ships. The ``smoke`` sweep checks quickly that the harness still drives the
+current learner.
 
 Usage::
 
@@ -294,8 +294,8 @@ def jobs(sweep, seeds=None):
         parameters, 12 seeds.
     ``smoke``
         One seed at a budget of twelve shots over every variant and every
-        function: enough to prove the harness still drives the current learner,
-        and small enough for the test suite to run it.
+        function: enough to prove the harness still drives the current
+        learner.
     """
     if sweep == "barrier":
         seeds = 16 if seeds is None else seeds
