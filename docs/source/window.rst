@@ -59,7 +59,7 @@ Phase
         The session has not been started, or has been paused.
 
     ``Paused: <reason>``
-        Something other than you paused the session: Start found an error in runmanager's globals or could not use its values for the start, or runmanager stopped answering during the run. The run is kept, and Start resumes it. :doc:`troubleshooting` lists the reasons.
+        Something other than you paused the session: Start found an error in runmanager's globals, found no labscript file selected, or could not use its values for the start, or runmanager stopped answering during the run. The run is kept, and Start resumes it. :doc:`troubleshooting` lists the reasons.
 
     ``Running``
         A learner other than ``gaussian_process`` is proposing.

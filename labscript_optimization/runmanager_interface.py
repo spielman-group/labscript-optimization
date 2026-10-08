@@ -57,7 +57,8 @@ class RunmanagerInterface:
         ------
         RuntimeError
             If runmanager's globals do not evaluate or, until a Start has gone,
-            a global the configuration sets is in no active group.
+            runmanager has no labscript file selected or a global the
+            configuration sets is in no active group.
         """
         if self.client.error_in_globals():
             raise RuntimeError(
@@ -66,6 +67,11 @@ class RunmanagerInterface:
             )
 
         if self.labscript_file is None:
+            if not self.client.get_labscript_file():
+                raise RuntimeError(
+                    "No labscript file is selected; select a labscript file in "
+                    "runmanager"
+                )
             raw = self.client.get_values(raw=True)
             missing = [g.name for g in self.config.globals if g.name not in raw]
             if missing:

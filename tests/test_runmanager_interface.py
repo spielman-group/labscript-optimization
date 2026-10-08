@@ -81,7 +81,8 @@ def test_a_start_is_refused_while_runmanager_cannot_sustain_a_session(
     interface, client
 ):
     """Every shot the session went on to submit would fail to compile, if its
-    globals do not evaluate or one of the session's is in no active group.
+    globals do not evaluate, one of the session's is in no active group, or
+    no labscript file is selected.
     """
     client.broken_globals = True
     with pytest.raises(RuntimeError, match='error in its globals'):
@@ -89,6 +90,9 @@ def test_a_start_is_refused_while_runmanager_cannot_sustain_a_session(
     client.broken_globals = False
     del client.values['gx']
     with pytest.raises(RuntimeError, match='gx not found in any active group'):
+        interface.check_ready()
+    client.labscript = ''
+    with pytest.raises(RuntimeError, match='select a labscript file'):
         interface.check_ready()
 
 
