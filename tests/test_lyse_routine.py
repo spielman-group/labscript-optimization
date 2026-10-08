@@ -26,12 +26,6 @@ class Runmanager:
     def __init__(self, config):
         pass
 
-    def check_ready(self):
-        pass
-
-    def shot_status(self, shot_ids):
-        return {}
-
 
 class Optimization(OptimizationRoutine):
     config_path = 'config.toml'
