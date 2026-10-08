@@ -93,7 +93,7 @@ def test_a_start_is_refused_while_runmanager_cannot_sustain_a_session(
         interface.check_ready()
     client.labscript = ''
     with pytest.raises(RuntimeError, match='select a labscript file'):
-        interface.pin_labscript_file()
+        interface.check_ready()
 
 
 def test_a_labscript_file_changed_mid_session_is_refused(interface, client):

@@ -162,11 +162,12 @@ failed by its end, so lyse shows it as that analysis's error.
   which would wait out the client's timeout with Reset and Pause queued behind
   it; the hand-over still refills, so a submission that times out pauses the
   session as below.
-- **Start** checks that runmanager's globals evaluate and, when the Start from
+- **Start** checks that runmanager's globals evaluate and, at a session's first
+  Start, that runmanager has a labscript file selected and, when the Start from
   runmanager values box was ticked and the session has proposed nothing, reads
   the start from runmanager. Only once every check has passed does it pin the
-  labscript file, which is refused when runmanager has none selected, record
-  the original values of the globals not recorded yet, and begin submitting.
+  labscript file, record the original values of the globals not recorded yet,
+  and begin submitting.
   If a check raises, the session stays paused with the message as its pause
   reason, shown as `Paused: <reason>`, and nothing is printed or raised, pinned
   or recorded; Start again after fixing it.
