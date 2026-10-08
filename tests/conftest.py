@@ -73,9 +73,6 @@ class FakeRunmanager:
         self.finished: dict[str, str] = {}
         self.labscript_changed = False
 
-    def check_ready(self):
-        pass
-
     def check_unchanged(self):
         if self.labscript_changed:
             raise RuntimeError('the labscript file changed')
@@ -164,11 +161,6 @@ def run_loop(learner, space, cost_function, batches, k, rng, history=None):
                 observe(f'{batch}-{len(history)}', params, cost_function(params))
             )
     return history
-
-
-@pytest.fixture
-def loop():
-    return run_loop
 
 
 def settle(learner):
