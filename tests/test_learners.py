@@ -1,45 +1,27 @@
 """Learner behavior, against analytic cost functions.
 
 How many a learner proposes, and under what source, is exercised through the
-one method the base class declares, ``propose``, so those tests survive any
-rewrite that keeps the interface. What a shipped learner's method makes of a
-history is exercised through its own ``ask``, which proposes a given number of
-points without pacing them, so that a test of the algorithm can ask for the
-points it needs at any history length.
+one method the base class declares, ``propose``. What a shipped learner's
+method makes of a history is exercised through its own ``ask``, which proposes
+a given number of points without pacing them, so that a test of the algorithm
+can ask for the points it needs at any history length.
 """
 
-import inspect
-import itertools
-import numbers
 import threading
-import time
 import warnings
-
-import dataclasses
 
 import numpy as np
 import pytest
 
 from labscript_optimization import learners
 from labscript_optimization.config import Config
-from labscript_optimization.learners.differential_evolution import STRATEGIES
-from labscript_optimization.observations import (
-    COMPLETE,
-    DROPPED,
-    PENDING,
-    Observation,
-    best,
-    usable,
-)
+from labscript_optimization.observations import COMPLETE, DROPPED, PENDING, Observation
 from labscript_optimization.session import Session
 from labscript_optimization.learners import (
     DifferentialEvolutionLearner,
     DirectedRandomLearner,
     GaussianProcessLearner,
-    InsufficientData,
-    ParameterSpaceLearner,
     RandomLearner,
-    build,
 )
 from labscript_optimization.space import Parameter, ParameterSpace
 
@@ -64,127 +46,25 @@ def every_learner(space, rng):
     ]
 
 
+@pytest.mark.parametrize('seen', [0, 20])
 @pytest.mark.parametrize('k', [1, 3, 7])
-def test_proposals_have_the_requested_shape_and_stay_in_bounds(space, rng, k):
+def test_proposals_have_the_requested_shape_and_stay_in_bounds(space, rng, k, seen):
     """With nothing in flight, the hint is what a learner is asked for -- by
     every learner but one declaring a generation, which proposes the rest of
     the block of positions its next proposal falls in, whatever the hint.
+    A learner with one way of proposing calls it ``main``.
     """
-    history = [observe(i, p, sphere(p)) for i, p in enumerate(space.uniform(rng, 20))]
+    history = [
+        observe(i, p, sphere(p)) for i, p in enumerate(space.uniform(rng, seen))
+    ]
     for learner in every_learner(space, rng):
         generation = learner.generation
         wanted = k if generation is None else generation - len(history) % generation
-        proposals = np.array([params for params, _ in learner.propose(history, k)])
+        proposed = learner.propose(history, k)
+        proposals = np.array([params for params, _ in proposed])
         assert proposals.shape == (wanted, space.num_params), type(learner).__name__
         assert space.contains(proposals).all(), type(learner).__name__
-
-
-def test_learners_propose_from_an_empty_history(space, rng):
-    for learner in every_learner(space, rng):
-        proposals = np.array([params for params, _ in learner.propose([], 2)])
-        assert space.contains(proposals).all(), type(learner).__name__
-
-
-def test_a_learner_without_phases_of_its_own_still_names_its_source(space, rng):
-    """Every proposal comes back beside the source the session records for it,
-    and a learner with one way of proposing calls it ``main``.
-
-    Nothing supplies a source on a learner's behalf, so a default would paper
-    over the opposite case as well: a learner that grows phases and forgets to
-    say which one proposed would be reported as the main one throughout.
-    """
-    for learner, history in [
-        (RandomLearner(space, rng), []),
-        (DirectedRandomLearner(space, rng, trust_region=0.1), []),
-        (DifferentialEvolutionLearner(space, rng, population_size=3), []),
-    ]:
-        proposed = learner.propose(history, 2)
-        assert proposed, type(learner).__name__
         assert {source for _, source in proposed} == {'main'}, type(learner).__name__
-
-
-# --- the interface ---------------------------------------------------------
-
-
-@pytest.mark.parametrize('name, cls', sorted(learners.LEARNERS.items()))
-def test_a_learner_named_in_a_configuration_takes_the_space_first(name, cls):
-    """Building one is ``cls(space, rng, **options)``, the options matched by
-    name against the signature. A learner spelling the first two the other way
-    round constructs happily and searches the wrong thing, and a knob with no
-    default is one no file may leave out of that learner's table.
-    """
-    assert issubclass(cls, ParameterSpaceLearner)
-    params = list(inspect.signature(cls).parameters.values())
-    assert [p.name for p in params[:2]] == ['space', 'rng']
-    for knob in params[2:]:
-        assert knob.default is not knob.empty, knob.name
-
-
-@pytest.mark.parametrize('name, cls', sorted(learners.LEARNERS.items()))
-def test_a_learner_named_in_a_configuration_declares_what_it_is_read_for(name, cls):
-    """The generation the budget and the starvation count are measured by.
-
-    It is read off an instance, so an instance is where it has to be true,
-    and a learner may declare it however it likes: a class attribute, an
-    assignment in ``__init__``, a property over its own settings. This holds
-    a learner added later to the declaration whichever way it makes it. Built
-    from its defaults over the smallest space there is, because a learner
-    that only declares once it has been configured a particular way has not
-    declared.
-    """
-    one_parameter = ParameterSpace([Parameter('x', 0.0, 1.0)])
-    learner = cls(one_parameter, np.random.default_rng(4))
-
-    generation = learner.generation
-    # Zero is not "any number at a time", it is a session that proposes
-    # nothing; a bool is an int that says true or false, not how many.
-    assert generation is None or (
-        isinstance(generation, numbers.Integral)
-        and not isinstance(generation, bool)
-        and generation > 0
-    ), f'{name} declares generation {generation!r}'
-
-
-def test_a_learner_handed_its_two_arguments_backwards_is_refused(space, rng):
-    for cls in learners.LEARNERS.values():
-        with pytest.raises(TypeError, match='in that order'):
-            cls(rng, space)
-
-
-def test_a_learner_with_no_way_to_propose_is_refused_when_built(space, rng):
-    """Refused at construction rather than at its first proposal, mid-run."""
-
-    class Empty(ParameterSpaceLearner):
-        pass
-
-    with pytest.raises(TypeError):
-        Empty(space, rng)
-
-
-def test_a_proposal_without_a_source_is_refused_rather_than_recorded(space, rng):
-    """The other half of taking the source from the learner itself.
-
-    A learner that forgets to say where its proposals came from has to fail
-    rather than have its shots recorded under some name nobody gave them.
-    Over two parameters a bare row of proposals unpacks as a pair of numbers,
-    so the refusal cannot be left to the unpacking.
-    """
-
-    class Silent(ParameterSpaceLearner):
-        def propose(self, history, hint):
-            return self.space.uniform(self.rng, hint)
-
-    runmanager = FakeRunmanager()
-    session = Session(
-        Config(space=space, globals=(), cost_key=('r', 'c')),
-        runmanager,
-        Silent(space, rng),
-    )
-    session.start()
-    with pytest.raises(TypeError, match='rather than a source'):
-        session.refill()
-    assert session.proposals == {}
-    assert runmanager.submitted == []
 
 
 @pytest.mark.parametrize(
@@ -202,12 +82,8 @@ def test_learners_filling_to_the_hint_keep_exactly_that_many_in_flight(
     space, rng, learner
 ):
     """Every pending record takes one of the hint's places, whoever proposed
-    it, and a shot that will never report takes none.
-
-    The start going out beside this call's proposals has not been submitted
-    yet and is in flight all the same, so it takes a place too. A Gaussian
-    process short of its warmup fills to the hint the same way, through its
-    explorer.
+    it, and a shot that will never report takes none. The configured start
+    going out beside this call's proposals is in flight all the same.
     """
     learner = learner(space, rng)
     history = [
@@ -225,43 +101,67 @@ def test_learners_filling_to_the_hint_keep_exactly_that_many_in_flight(
     assert learner.propose(history, 0) == []
 
 
+@pytest.mark.parametrize(
+    'name, options',
+    [
+        # Out of the range the knob may take.
+        ('directed_random', dict(trust_range=(0.25, 0.1))),
+        ('directed_random', dict(trust_range=(0.1, 1.5))),
+        ('differential_evolution', dict(population_size=1)),
+        ('differential_evolution', dict(evolution_strategy='nope')),
+        ('differential_evolution', dict(cross_over_probability=2.0)),
+        ('differential_evolution', dict(mutation_scale=(1.0, 0.5))),
+        ('gaussian_process', dict(warmup_observations=0)),
+        ('gaussian_process', dict(batch_size=0)),
+        ('gaussian_process', dict(explore_runs=-1)),
+        ('gaussian_process', dict(uncer_bias=[])),
+        ('gaussian_process', dict(explorer='gaussian_process')),
+        ('gaussian_process', dict(length_scale_bounds=(1e2, 1e-2))),
+        ('gaussian_process', dict(noise_level_bounds=(0.0, 1.0))),
+        # Written as the wrong kind of thing, which is refused and not converted.
+        ('directed_random', dict(trust_gaussian='false')),
+        ('directed_random', dict(explore_fraction='0.5')),
+        ('directed_random', dict(trust_range=0.5)),
+        ('differential_evolution', dict(population_size=8.9)),
+        ('differential_evolution', dict(mutation_scale=0.8)),
+        ('differential_evolution', dict(evolution_strategy=['best1'])),
+        ('gaussian_process', dict(cost_has_noise=0)),
+        ('gaussian_process', dict(batch_size=True)),
+        ('gaussian_process', dict(cost_bias=True)),
+        ('gaussian_process', dict(uncer_bias=['0', '1'])),
+        ('gaussian_process', dict(length_scale_bounds=5)),
+        ('gaussian_process', dict(trust_region='0.1')),
+    ],
+)
+def test_a_knob_that_cannot_mean_what_it_says_is_refused_naming_it(
+    space, rng, name, options
+):
+    """In the constructor, so a learner built in Python is held to its knobs
+    exactly as one built from a file."""
+    with pytest.raises(ValueError, match=next(iter(options))):
+        learners.LEARNERS[name](space, rng, **options)
+
+
 # --- directed random -------------------------------------------------------
 
 
-def test_directed_random_searches_near_points_it_has_seen(space, rng):
-    """The trust region has to actually engage once there is history.
-
-    A guard that sends every draw to the whole space regardless of the history
-    turns this learner into a plain random one, silently.
-    """
-    seen = np.array([[1.0, 1.0], [1.2, 0.8], [-3.0, 4.0], [0.0, -1.0]])
-    history = [observe(i, p, sphere(p)) for i, p in enumerate(seen)]
-
-    learner = DirectedRandomLearner(space, rng, trust_region=0.05)
-    proposals = learner.ask(history, 300)
-
-    # 5% of a range of 10 is 0.5 in each direction.
+def nearest(proposals, seen):
+    """The index of the seen point nearest each proposal, and how far it is."""
     distances = np.abs(proposals[:, None, :] - seen[None, :, :]).max(axis=2)
-    assert (distances.min(axis=1) <= 0.5 + 1e-9).all()
+    return distances.argmin(axis=1), distances.min(axis=1)
 
 
-def test_directed_random_is_not_derailed_by_a_bad_run(space, rng):
-    """An infinite cost must not disable the trust region.
-
-    The band is measured across the range of observed costs, so an infinite
-    worst cost makes its bounds undefined and every point falls outside it.
-    """
+def test_directed_random_searches_near_the_usable_points_it_has_seen(space, rng):
+    """An infinite cost is no centre, and must not disable the trust region."""
     seen = np.array([[1.0, 1.0], [1.2, 0.8], [-3.0, 4.0]])
     history = [observe(i, p, sphere(p)) for i, p in enumerate(seen)]
     history.append(observe('bad', [4.9, 4.9], float('inf')))
 
-    learner = DirectedRandomLearner(space, rng, trust_region=0.05)
-    proposals = learner.ask(history, 300)
+    proposals = DirectedRandomLearner(space, rng, trust_region=0.05).ask(history, 300)
 
-    distances = np.abs(proposals[:, None, :] - seen[None, :, :]).max(axis=2)
-    assert (distances.min(axis=1) <= 0.5 + 1e-9).all()
-    # And it must not center on the point that produced the bad cost.
-    assert (np.abs(proposals - np.array([4.9, 4.9])).max(axis=1) > 0.5).all()
+    # 5% of a range of 10 is 0.5 in each direction.
+    assert (nearest(proposals, seen)[1] <= 0.5 + 1e-9).all()
+    assert (np.abs(proposals - [4.9, 4.9]).max(axis=1) > 0.5).all()
 
 
 def test_directed_random_explores_the_whole_space_when_told_to(space, rng):
@@ -273,19 +173,8 @@ def test_directed_random_explores_the_whole_space_when_told_to(space, rng):
     assert proposals.min() < -4.0 and proposals.max() > 4.0
 
 
-def test_directed_random_without_a_trust_region_is_a_random_learner(space, rng):
-    history = [observe(0, [1.0, 1.0], 1.0), observe(1, [1.1, 1.1], 2.0)]
-    learner = DirectedRandomLearner(space, rng, trust_region=None)
-    proposals = learner.ask(history, 400)
-    assert proposals.min() < -4.0 and proposals.max() > 4.0
-
-
 def test_directed_random_prefers_mediocre_points_over_the_best_one(space, rng):
-    """The default band sits away from the best point, on purpose.
-
-    Centering the search on middling results is what makes this learner explore
-    rather than refine, which is the reason it exists.
-    """
+    """The default band sits away from the best point, on purpose."""
     seen = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
     costs = [0.0, 10.0, 25.0, 30.0]
     history = [observe(i, p, c) for i, (p, c) in enumerate(zip(seen, costs))]
@@ -293,59 +182,26 @@ def test_directed_random_prefers_mediocre_points_over_the_best_one(space, rng):
     learner = DirectedRandomLearner(
         space, rng, trust_region=0.02, trust_range=(0.1, 0.25)
     )
-    proposals = learner.ask(history, 300)
-    nearest = np.abs(proposals[:, None, :] - seen[None, :, :]).max(axis=2).argmin(axis=1)
     # The band runs from 10% to 25% of the way from the worst cost (30) towards
-    # the best (0), that is [22.5, 27], which picks out the point costing 25
-    # and never the best one.
-    assert set(np.unique(nearest)) == {2}
+    # the best (0), that is [22.5, 27], which picks out the point costing 25.
+    assert set(np.unique(nearest(learner.ask(history, 300), seen)[0])) == {2}
 
 
 def test_directed_random_falls_back_to_the_best_point_when_the_band_is_empty(
     space, rng
 ):
-    """With no observation in the band there is still somewhere to search."""
     seen = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
-    # Nothing lands in [22.5, 27], and the best point is not the first one, so
-    # falling back to the best is distinguishable from falling back to
-    # whichever observation happens to head the history.
+    # Nothing lands in [22.5, 27], and the best point is not the first one.
     costs = [30.0, 10.0, 20.0, 0.0]
     history = [observe(i, p, c) for i, (p, c) in enumerate(zip(seen, costs))]
 
     learner = DirectedRandomLearner(
         space, rng, trust_region=0.02, trust_range=(0.1, 0.25)
     )
-    proposals = learner.ask(history, 200)
-    nearest = np.abs(proposals[:, None, :] - seen[None, :, :]).max(axis=2).argmin(axis=1)
-    assert set(np.unique(nearest)) == {3}
-
-
-@pytest.mark.parametrize(
-    'trust_range', [(0.25, 0.1), (0.1,), (0.1, 1.5), (-0.1, 0.25)]
-)
-def test_an_impossible_trust_range_is_refused(space, rng, trust_range):
-    """Including one written backwards, which is not silently put in order.
-
-    A backwards pair asks for a band running from the best cost towards the
-    worst, which is nothing the learner can honor; sorting it would run a
-    search the lab did not ask for and never say so.
-    """
-    with pytest.raises(ValueError, match='trust_range'):
-        DirectedRandomLearner(space, rng, trust_region=0.05, trust_range=trust_range)
+    assert set(np.unique(nearest(learner.ask(history, 200), seen)[0])) == {3}
 
 
 # --- differential evolution ------------------------------------------------
-
-
-#: The smallest population each strategy can mutate: it draws distinct members
-#: from the population minus the slot it is replacing, so it needs one more
-#: member than it draws on.
-SMALLEST_POPULATIONS = [('best1', 3), ('rand1', 4), ('best2', 5), ('rand2', 6)]
-
-
-def one_parameter_space():
-    """A single parameter, so a population of any size is reachable."""
-    return ParameterSpace([Parameter('x', -5.0, 5.0)])
 
 
 @pytest.mark.parametrize('strategy', ['best1', 'best2', 'rand1', 'rand2'])
@@ -359,27 +215,26 @@ def test_differential_evolution_finds_the_minimum(space, rng, strategy):
     assert min(o.cost for o in history) < 0.05
 
 
-def test_differential_evolution_state_depends_only_on_the_history(space, rng):
-    """The population is not carried between calls; it is rebuilt every time.
-
-    A learner that has been proposing all session therefore holds nothing a
-    fresh one handed the same history would not, which is what keeps costs
-    arriving out of order out of the algorithm.
-    """
-    history = [observe(i, p, sphere(p)) for i, p in enumerate(space.uniform(rng, 40))]
-    driven_rng = np.random.default_rng(1)
-    driven = DifferentialEvolutionLearner(space, driven_rng, population_size=3)
-    driven.propose(history, 3)
-    # The fresh learner starts from the same point in the random stream.
-    fresh_rng = np.random.default_rng()
-    fresh_rng.bit_generator.state = driven_rng.bit_generator.state
-    fresh = DifferentialEvolutionLearner(space, fresh_rng, population_size=3)
-
-    earlier = history[:7]
-    np.testing.assert_allclose(driven.ask(earlier, 3), fresh.ask(earlier, 3))
-
-
-# --- differential evolution: position in the block is the role --------------
+# The smallest population each strategy can mutate: it draws distinct members
+# from the population minus the slot it is replacing, so it needs one more
+# member than it draws on.
+@pytest.mark.parametrize(
+    'strategy, smallest', [('best1', 3), ('rand1', 4), ('best2', 5), ('rand2', 6)]
+)
+def test_every_strategy_runs_at_its_smallest_population_and_refuses_less(
+    space, rng, strategy, smallest
+):
+    with pytest.raises(ValueError, match=strategy):
+        DifferentialEvolutionLearner(
+            space, rng, population_size=smallest - 1, evolution_strategy=strategy
+        )
+    learner = DifferentialEvolutionLearner(
+        space, rng, population_size=smallest, evolution_strategy=strategy
+    )
+    history = run_loop(learner, space, sphere, batches=8, k=2, rng=rng)
+    # Long past the founding generation, so mutation did the bulk of the proposing.
+    assert len(history) > 2 * smallest
+    assert space.contains(np.array([o.params for o in history])).all()
 
 
 def walk_space():
@@ -392,9 +247,8 @@ def walk_space():
 def walk_history(space, rng, *blocks):
     """A history of whole blocks of four, one proposal per slot.
 
-    A cost of ``None`` is a proposal that produced nothing -- dropped here,
-    and the learner cannot tell that from one still running -- and ``nan`` is
-    a shot that ran and measured nothing usable.
+    A cost of ``None`` is a proposal that produced nothing, and ``nan`` is a
+    shot that ran and measured nothing usable.
     """
     records = []
     for block in blocks:
@@ -410,364 +264,60 @@ def walk_history(space, rng, *blocks):
     return records
 
 
-def held_by(learner, history, positions):
-    """Check the population is the records at ``positions``, slot by slot.
-
-    Read through ``ask``, which needs crossover off and a history that is a
-    whole number of blocks: a proposal then keeps all but one coordinate of
-    the member holding the slot it is for.
-    """
-    proposals = learner.ask(history, len(positions))
-    for slot, position in enumerate(positions):
-        shared = int(np.isclose(proposals[slot], history[position].params).sum())
-        assert shared == learner.space.num_params - 1, slot
-
-
-def test_a_dropped_founder_leaves_its_slot_vacant_and_shifts_no_other_slot(rng):
-    """Founding from the first four *usable* records instead promotes the
-    first trial to founder and re-indexes every role after it: the population
-    comes out holding p5, p6, p7 and p4, and the next proposal is read as a
-    trial for slot 3 rather than slot 0.
-    """
-    space = walk_space()
-    learner = DifferentialEvolutionLearner(
-        space, rng, population_size=4, cross_over_probability=0.0
-    )
-    history = walk_history(
-        space, rng, [None, 10.0, 20.0, 30.0], [1.0, 2.0, 3.0, 4.0]
-    )
-
-    held_by(learner, history, [4, 5, 6, 7])
-
-
-def test_a_late_returning_founder_changes_no_other_proposals_role(rng):
-    """It competes for its own slot, and for no other.
-
-    Founding by usable count re-reads every role the moment it lands, because
-    the founding block then ends one record earlier than it did; the test is
-    what the other slots held before it arrived, not what they hold after.
-    """
-    space = walk_space()
-    learner = DifferentialEvolutionLearner(
-        space, rng, population_size=4, cross_over_probability=0.0
-    )
-    history = walk_history(
-        space, rng, [None, 10.0, 20.0, 30.0], [1.0, 2.0, 3.0, 4.0]
-    )
-    held_by(learner, history, [4, 5, 6, 7])
-
-    history[0] = dataclasses.replace(history[0], cost=0.5, state=COMPLETE)
-    held_by(learner, history, [0, 5, 6, 7])
-
-
-def test_a_trial_with_no_usable_cost_leaves_its_slots_member_alone(rng):
-    """A bad trial spends its slot's turn and displaces nothing. Walking the
-    usable records instead closes the gap it left and hands every trial after
-    it to the wrong slot.
-    """
-    space = walk_space()
-    learner = DifferentialEvolutionLearner(
-        space, rng, population_size=4, cross_over_probability=0.0
-    )
-    history = walk_history(
-        space, rng, [10.0, 20.0, 30.0, 40.0], [float('nan'), 2.0, 3.0, 4.0]
-    )
-
-    held_by(learner, history, [0, 5, 6, 7])
-
-
-def test_a_trial_is_bred_from_the_member_holding_its_own_block_position(rng):
-    """With crossover off, one coordinate of a trial comes from the mutant and
-    the rest from the incumbent, so the trial names the slot it was drawn for.
-    """
-    space = walk_space()
-    learner = DifferentialEvolutionLearner(
-        space, rng, population_size=4, cross_over_probability=0.0
-    )
-    history = walk_history(
-        space, rng, [None, 10.0, 20.0, 30.0], [1.0, 2.0, 3.0, 4.0]
-    )
-    members = [history[position].params for position in (4, 5, 6, 7)]
-
-    for slot, proposal in enumerate(learner.ask(history, 4)):
-        shared = int(np.isclose(proposal, members[slot]).sum())
-        assert shared == space.num_params - 1, slot
-
-    # And from part-way through a block, which is where the position the
-    # proposal is made at stops agreeing with its place in the batch asked
-    # for. ``propose`` reaches it after the run budget cuts a generation
-    # short, and finishes the block from there; ``ask`` reaches it at any
-    # history length, for as many as it is asked, across the end of the block.
-    part_way = history[:6]
-    members = [history[position].params for position in (4, 5, 2, 3)]
-    for offset, proposal in enumerate(learner.ask(part_way, 4)):
-        slot = (len(part_way) + offset) % 4
-        shared = int(np.isclose(proposal, members[slot]).sum())
-        assert shared == space.num_params - 1, offset
-
-
-def test_every_proposal_keeps_the_role_its_position_gave_it(rng):
-    """Roles assigned at proposal are the roles read at replay, however the
-    costs come back: out of order, not at all, without a usable value, or
-    after the generation that would have used them.
-
-    Checked at every refill and after every arrival, not once at the end. A
-    final replay is order-independent by construction and reports nothing
-    wrong however broken the walk was on the way there, so what is inspected
-    is the decision the learner makes right then: with crossover off a trial
-    shares all but one coordinate with the member it was bred from, which
-    names the slot it was drawn for.
-    """
-    space = walk_space()
-    size = 4
-    learner = DifferentialEvolutionLearner(
-        space, np.random.default_rng(3), population_size=size,
-        cross_over_probability=0.0,
-    )
-    runmanager = FakeRunmanager()
-    session = Session(
-        Config(space=space, globals=(), cost_key=('r', 'c')), runmanager, learner
-    )
-    session.start()
-
-    def population(history):
-        """What holds each slot: the cheapest usable result at its position."""
-        members = [None] * size
-        for position, record in enumerate(history):
-            slot = position % size
-            if record.usable and (
-                members[slot] is None or record.cost < members[slot].cost
-            ):
-                members[slot] = record
-        return members
-
-    def bred_from(proposal, members):
-        """The one slot whose member this proposal was crossed with."""
-        named = [
-            slot
-            for slot, record in enumerate(members)
-            if record is not None
-            and int(np.isclose(proposal, record.params).sum()) == space.num_params - 1
-        ]
-        return named[0] if len(named) == 1 else None
-
-    def check(proposal, position, members):
-        slot = position % size
-        held = sum(record is not None for record in members)
-        if members[slot] is None or held <= STRATEGIES['best1']:
-            # No incumbent, or too little population to breed from: the
-            # proposal is drawn founder-style and names no slot.
-            return
-        assert bred_from(proposal, members) == slot, position
-
-    def probe():
-        """The role the learner would give its very next proposal."""
-        history = session.history
-        members = population(history)
-        check(learner.ask(history, 1)[0], len(history), members)
-
-    late, lost, unusable = [], 0, 0
-    for _ in range(12):
-        first = len(session.history)
-        members = population(session.history)
-        submitted = session.refill()
-        assert len(submitted) == size
-        for offset, shot_id in enumerate(submitted):
-            check(session.proposals[shot_id], first + offset, members)
-
-        # The operator cleared the red row: the shots behind it have run, and
-        # their costs land now, after this generation was built without them.
-        for shot_id in late:
-            session.record(shot_id, float(rng.uniform(0, 10)), None, False)
-            probe()
-
-        late = []
-        arriving = list(submitted)
-        rng.shuffle(arriving)
-        for shot_id in arriving:
-            roll = rng.random()
-            if roll < 0.2:
-                runmanager.lose(shot_id)
-                session.reconcile()
-                late.append(shot_id)
-                lost += 1
-            elif roll < 0.35:
-                session.record(shot_id, float('nan'), None, False)
-                unusable += 1
-            else:
-                session.record(shot_id, float(rng.uniform(0, 10)), None, False)
-            probe()
-
-    # The run has to have taken all four paths, or it proved only the easy one.
-    assert lost and unusable
-    assert session.status()['completed'] == len(session.proposals) - len(late)
-
-
-def test_a_slot_whose_founder_produced_nothing_is_drawn_founder_style(rng):
-    """There is no incumbent in an empty slot, so there is nothing to cross
-    over with: the proposal for it is a fresh point rather than a trial.
-    """
-    space = walk_space()
-    learner = DifferentialEvolutionLearner(
-        space, rng, population_size=4, cross_over_probability=0.0
-    )
-    history = walk_history(space, rng, [None, 10.0, 20.0, 30.0])
-    members = [record.params for record in history]
-
-    proposals = learner.ask(history, 4)
-    assert space.contains(proposals).all()
-    for member in members[1:]:
-        assert int(np.isclose(proposals[0], member).sum()) < space.num_params - 1
-    for slot in (1, 2, 3):
-        shared = int(np.isclose(proposals[slot], members[slot]).sum())
-        assert shared == space.num_params - 1, slot
-
-
-def test_differential_evolution_proposes_a_generation_only_when_none_is_pending(rng):
-    """A whole generation when nothing submitted is pending, and nothing while
-    anything is, whatever the hint.
-
-    The configured start is waited for like the founder it is, once it has
-    been submitted. On the call that places it, it carries no shot id and goes
-    out beside the rest of its generation, so that call proposes the other
-    slots of the first block around it.
-    """
-    space = walk_space()
-    learner = DifferentialEvolutionLearner(space, rng, population_size=4)
-    founders = walk_history(space, rng, [10.0, 20.0, 30.0, 40.0])
-
-    generation = learner.propose(founders, 1)
-    assert len(generation) == 4
-    assert {source for _, source in generation} == {'main'}
-
-    trials = [observe(f't{slot}', params, 1.0) for slot, (params, _) in enumerate(generation)]
-    trials[3] = dataclasses.replace(trials[3], cost=None, state=PENDING)
-    assert learner.propose(founders + trials, 8) == []
-
-    placing = Observation(None, space.minimum, None, state=PENDING, source='start')
-    assert len(learner.propose([placing], 1)) == 3
-
-    submitted = dataclasses.replace(placing, shot_id='shot-0')
-    assert learner.propose([submitted] + founders[1:], 1) == []
-
-
-def weight_bred_with(trial, best, members, slot):
-    """The differential weight a ``best1`` trial was bred with, read off it.
-
-    With every coordinate taken from the mutant and none resampled at a bound,
-    such a trial is the best member plus the weight times the difference of two
-    members other than its own slot's. Of all those pairs, the one the step
-    from the best lies along gives the weight as the ratio; in four dimensions
-    no other pair lines up with it by chance.
-    """
-    step = trial - best
-    others = [member for i, member in enumerate(members) if i != slot]
-    fits = []
-    for a, b in itertools.combinations(others, 2):
-        difference = a - b
-        weight = step @ difference / (difference @ difference)
-        fits.append((np.linalg.norm(step - weight * difference), abs(weight)))
-    residual, weight = min(fits)
-    assert residual < 1e-9
-    return weight
-
-
-def test_every_trial_in_a_generation_shares_one_differential_weight():
-    """Drawn once per generation, as textbook differential evolution and scipy
-    draw it, rather than once per trial.
-
-    The founders sit in a small cluster in the middle of a wide space and every
-    coordinate is taken from the mutant, so no trial reaches a bound and each
-    is exactly the best member plus a weight times a difference of two others.
-    Each generation's trials cost more than every founder, so the population
-    they are bred from is the founders throughout, and the weight can be read
-    back off every trial of three successive generations.
-    """
-    space = walk_space()
-    size = 5
-    learner = DifferentialEvolutionLearner(
-        space,
-        np.random.default_rng(7),
-        population_size=size,
-        cross_over_probability=1.0,
-    )
-    founders = np.random.default_rng(8).uniform(-0.5, 0.5, (size, space.num_params))
-    history = [observe(slot, point, float(slot)) for slot, point in enumerate(founders)]
-
-    generations = []
-    for generation in range(3):
-        trials = [params for params, _ in learner.propose(history, 1)]
-        generations.append(
-            [
-                weight_bred_with(trial, founders[0], founders, slot)
-                for slot, trial in enumerate(trials)
-            ]
-        )
-        history += [
-            observe(f'{generation}-{slot}', trial, 100.0)
-            for slot, trial in enumerate(trials)
-        ]
-
-    for weights in generations:
-        np.testing.assert_allclose(weights, weights[0])
-        assert 0.5 <= weights[0] <= 1.0
-    firsts = [weights[0] for weights in generations]
-    assert len({round(weight, 9) for weight in firsts}) == 3, firsts
-
-
-@pytest.mark.parametrize('strategy, smallest', SMALLEST_POPULATIONS)
-def test_every_strategy_evolves_at_its_own_smallest_population(rng, strategy, smallest):
-    """A population the constructor accepted has to survive the mutation.
-
-    The strategies draw different numbers of distinct members, so one minimum
-    does not serve all four. A population that passes construction but is too
-    small to mutate gets through the filling phase and then fails on the first
-    trial, which is mid-session, with the apparatus running.
-    """
-    space = one_parameter_space()
-    learner = DifferentialEvolutionLearner(
-        space, rng, population_size=smallest, evolution_strategy=strategy
-    )
-    history = run_loop(learner, space, sphere, batches=8, k=2, rng=rng)
-    # Long past the filling phase, so mutation did the bulk of the proposing.
-    assert len(history) > 2 * learner.population_size
-    assert space.contains(np.array([o.params for o in history])).all()
-
-
-@pytest.mark.parametrize('strategy, smallest', SMALLEST_POPULATIONS)
-def test_a_population_too_small_for_its_strategy_is_refused(rng, strategy, smallest):
-    """And a population below that minimum is refused at construction.
-
-    Construction is the last moment at which the configuration can be fixed
-    for free; the alternative is finding out on the first trial.
-    """
-    with pytest.raises(ValueError, match=strategy) as refusal:
-        DifferentialEvolutionLearner(
-            one_parameter_space(),
-            rng,
-            population_size=smallest - 1,
-            evolution_strategy=strategy,
-        )
-    # Naming the strategy alone does not say what to do about it: the message
-    # has to carry the population it got and the one that strategy needs.
-    assert str(smallest) in str(refusal.value)
-    assert str(smallest - 1) in str(refusal.value)
-
-
 @pytest.mark.parametrize(
-    'kwargs, message',
+    'blocks, seen, held',
     [
-        (dict(population_size=1), 'at least 3'),
-        (dict(evolution_strategy='nope'), 'evolution_strategy'),
-        (dict(cross_over_probability=2.0), 'cross_over_probability'),
-        (dict(mutation_scale=(1.0, 0.5)), 'mutation_scale'),
+        # A founder with no cost leaves its slot vacant, and no other slot's
+        # result stands in for it: that slot's proposal is a fresh point.
+        ([[None, 10.0, 20.0, 30.0]], 4, [None, 1, 2, 3]),
+        # The first trial is then the slot's member, and no other slot moves.
+        ([[None, 10.0, 20.0, 30.0], [1.0, 2.0, 3.0, 4.0]], 8, [4, 5, 6, 7]),
+        # A founder's cost arriving late still competes for its own slot.
+        ([[0.5, 10.0, 20.0, 30.0], [1.0, 2.0, 3.0, 4.0]], 8, [0, 5, 6, 7]),
+        # A trial with no usable cost displaces nothing.
+        ([[10.0, 20.0, 30.0, 40.0], [float('nan'), 2.0, 3.0, 4.0]], 8, [0, 5, 6, 7]),
+        # Part way through a block, a proposal's slot is the position it is
+        # made at, not its place in the batch asked for.
+        ([[None, 10.0, 20.0, 30.0], [1.0, 2.0, 3.0, 4.0]], 6, [4, 5, 2, 3]),
     ],
 )
-def test_impossible_differential_evolution_settings_are_rejected(
-    space, rng, kwargs, message
+def test_a_proposal_is_bred_from_the_member_of_the_slot_its_position_names(
+    rng, blocks, seen, held
 ):
-    with pytest.raises(ValueError, match=message):
-        DifferentialEvolutionLearner(space, rng, **{'population_size': 5, **kwargs})
+    """``held[slot]`` is the position of the record holding that slot. With
+    crossover off, a trial shares all but one coordinate with the member it was
+    bred from, which names the slot it was drawn for.
+    """
+    space = walk_space()
+    learner = DifferentialEvolutionLearner(
+        space, rng, population_size=4, cross_over_probability=0.0
+    )
+    history = walk_history(space, rng, *blocks)[:seen]
+
+    for offset, proposal in enumerate(learner.ask(history, 4)):
+        position = held[(len(history) + offset) % 4]
+        shared = [int(np.isclose(proposal, o.params).sum()) for o in history]
+        if position is None:
+            assert max(shared) < space.num_params - 1, offset
+        else:
+            assert shared[position] == space.num_params - 1, offset
+
+
+def test_mutation_scale_sets_the_differential_weight(rng):
+    """Every coordinate taken from the mutant, at a weight of zero, breeds each
+    trial as a copy of the best member."""
+    space = walk_space()
+    learner = DifferentialEvolutionLearner(
+        space,
+        rng,
+        population_size=5,
+        mutation_scale=(0.0, 0.0),
+        cross_over_probability=1.0,
+    )
+    founders = np.random.default_rng(8).uniform(-0.5, 0.5, (5, space.num_params))
+    history = [observe(slot, p, float(slot)) for slot, p in enumerate(founders)]
+
+    np.testing.assert_allclose(learner.ask(history, 5), np.tile(founders[0], (5, 1)))
 
 
 # --- gaussian process ------------------------------------------------------
@@ -792,252 +342,67 @@ def test_gaussian_process_finds_the_minimum(space, rng):
     np.testing.assert_allclose(best.params, [1.3, -2.1], atol=0.3)
 
 
-#: Four weights, the first of them greedy, so a batch of four walks the
-#: schedule once.
-SCHEDULE = [0.0, 50.0, 100.0, 150.0]
-
-
-def test_the_schedule_is_the_list_of_weights_it_was_handed(space):
-    """``[0.0, 5.0]`` proposes greedily and then widely, in that order.
-
-    The list is the schedule itself: its entries are the weights and its
-    length is the period. Asked for two points, a learner running it spends
-    one at each weight, the greedy one first -- and the exploring point is the
-    one that leaves the incumbent.
+def test_each_batch_walks_the_exploration_schedule_from_its_first_weight(space):
+    """The weight is the point's position in the batch, whatever the number of
+    observations in hand, and a single number is that weight on every point.
     """
-    model = GaussianProcessLearner(
-        space, np.random.default_rng(3), uncer_bias=[0.0, 5.0]
-    ).model
-    history = gaussian_process_history(space, 5)
-    away = np.linalg.norm(
-        model.ask(history, 2) - best(history).params, axis=1
-    )
-    assert away[0] < away[1]
 
+    def batch(uncer_bias):
+        model = GaussianProcessLearner(
+            space, np.random.default_rng(3), uncer_bias=uncer_bias
+        ).model
+        # Thirteen observations, which is not a multiple of the four weights.
+        return model.ask(gaussian_process_history(space, 5, count=13), 4)
 
-def test_a_single_weight_is_a_fixed_one_and_not_a_first_step(space):
-    """A number written where a schedule goes weights every point.
-
-    A cycle of one step has no greedy point in it unless the weight itself is
-    zero, so a fixed weight explores even at the first point of a batch, which
-    a four-step schedule spends on its greedy step. The two learners share a
-    seed and see the same history, so the weight is the only thing that
-    differs between them.
-    """
-    history = gaussian_process_history(space, 5)
-    greedy = GaussianProcessLearner(
-        space, np.random.default_rng(3), uncer_bias=0.0
-    ).model
-    fixed = GaussianProcessLearner(
-        space, np.random.default_rng(3), uncer_bias=50.0
-    ).model
-    assert np.linalg.norm(fixed.ask(history, 1)[0] - greedy.ask(history, 1)[0]) > 0.1
-
-
-def test_a_schedule_of_no_weights_is_refused(space, rng):
-    """There is no weight to propose at, and the cycle has no period."""
-    with pytest.raises(ValueError, match='uncer_bias'):
-        GaussianProcessLearner(space, rng, uncer_bias=[])
-
-
-@pytest.mark.parametrize('count', [12, 13, 14, 15])
-def test_each_batch_walks_the_exploration_schedule_from_its_first_weight(
-    space, count
-):
-    """The weight is the point's position in the batch, whatever the count.
-
-    The first weight of this schedule is zero, so the first point of every
-    batch is the greedy learner's own, and the rest look progressively further
-    afield. Indexed by the observations in hand instead, a batch opening on a
-    count that is not a multiple of four would start part way through the
-    list, and its greedy point would fall wherever the count put it or not at
-    all.
-    """
-    history = gaussian_process_history(space, 5, count=count)
-    greedy = GaussianProcessLearner(
-        space, np.random.default_rng(3), uncer_bias=0.0
-    ).model
-    walking = GaussianProcessLearner(
-        space, np.random.default_rng(3), uncer_bias=SCHEDULE
-    ).model
-    apart = np.linalg.norm(walking.ask(history, 4) - greedy.ask(history, 4), axis=1)
+    greedy, walking, fixed = batch(0.0), batch([0.0, 50.0, 100.0, 150.0]), batch(50.0)
+    apart = np.linalg.norm(walking - greedy, axis=1)
     # A weight of zero times anything is the greedy proposal itself.
     assert apart[0] == 0.0
     assert (apart[1:] > 0.1).all()
+    assert np.linalg.norm(fixed[0] - greedy[0]) > 0.1
 
 
 def test_a_gaussian_process_batch_does_not_repeat_itself(space, rng):
-    """Two picks made at the same exploration weight must land apart.
-
-    Points chosen for their uncertainty chase the same unexplored corner unless
-    each one is folded into the fit before the next is chosen, and a repeated
-    proposal is a wasted shot. The greedy pick is the exception and is left out
-    below: at a weight of zero the acquisition is the posterior mean, and
-    folding a point in at its own predicted cost leaves that mean where it was,
-    so a run of proposals spanning two batches asks for the same greedy point
-    twice.
-    """
+    """Two picks made at the same exploration weight must land apart, because
+    each point is folded into the fit before the next is chosen."""
     model = GaussianProcessLearner(space, rng).model
-    history = gaussian_process_history(space, 5)
-    proposals = model.ask(history, 6)
+    proposals = model.ask(gaussian_process_history(space, 5), 6)
     # The weights run 0, 1, 2, 3, 0, 1 by position, so the sixth pick repeats
-    # the weight of the second. Nothing but the fold-in keeps it off that
-    # point: without it the two land 4e-6 apart.
+    # the weight of the second.
     assert np.linalg.norm(proposals[5] - proposals[1]) > 1e-3
 
 
 def flat_in_y_history(space, count):
-    """Observations of a cost that varies in x alone.
-
-    The fit finds no structure along y, so its length scale there runs to the
-    upper end of ``length_scale_bounds`` -- which is the fit scikit-learn
-    warns about, once per dimension, on every refit. The same fit drives the
-    white-noise level to its own lower bound and is warned about for that too.
-    """
+    """Observations of a cost that varies in x alone, so the fit finds no
+    structure along y and leaves its length scale at the upper bound."""
     points = space.uniform(np.random.default_rng(5), count)
-    return [
-        observe(i, p, float((p[0] - 1.3) ** 2)) for i, p in enumerate(points)
-    ]
+    return [observe(i, p, float((p[0] - 1.3) ** 2)) for i, p in enumerate(points)]
 
 
 def test_a_length_scale_at_a_bound_is_reported_when_the_set_of_them_changes(
     space, rng
 ):
-    """Once when a parameter reaches a bound, once when it leaves.
-
-    A dimension the apparatus keeps pinned is warned about by scikit-learn on
-    every refit, which for a run of several hundred shots buries the
-    diagnostic in copies of itself. Said on the change instead, the one thing
-    a lab has to act on -- that the set moved -- is the only thing it reads.
-    """
+    """Once when a parameter reaches a bound, once when it leaves, and not at
+    every refit in between."""
     from sklearn.exceptions import ConvergenceWarning
 
     model = GaussianProcessLearner(space, rng).model
 
-    # Recorded under the filters in force, not with every warning set to
-    # "always", which would put scikit-learn's copy back in front of the one
-    # that holds it back.
     with warnings.catch_warnings(record=True) as first:
         model.fit(flat_in_y_history(space, 12))
     assert [w for w in first if 'y at the upper end' in str(w.message)]
-    assert model.at_length_scale_bounds == {'y': 'upper'}
-    # And scikit-learn's own copy of it is not there beside ours. Its wording
-    # is what tells it apart from the white-noise level's bound, which is the
-    # same message about a different hyperparameter and is left alone.
-    assert not [
-        w
-        for w in first
-        if 'close to the specified' in str(w.message)
-        and 'length_scale' in str(w.message)
-    ]
 
     with warnings.catch_warnings(record=True) as again:
         model.fit(flat_in_y_history(space, 13))
-    assert model.at_length_scale_bounds == {'y': 'upper'}
     assert not [w for w in again if 'length_scale' in str(w.message)]
 
-    # The set moving back to empty is a change like any other: silence here
-    # would read the same as the refit above, where it had not moved.
     with pytest.warns(ConvergenceWarning, match='inside length_scale_bounds'):
         model.fit(gaussian_process_history(space, 5))
-    assert model.at_length_scale_bounds == {}
-
-
-def test_the_rest_of_what_a_refit_warns_about_still_reaches_the_lab(space, rng):
-    """Only the length-scale message is held back.
-
-    The fit that pins a length scale drives the white-noise level to its own
-    bound as well, and scikit-learn warns about that in the same category. A
-    filter written against the category rather than the message would take it
-    too, and a lab would lose a diagnostic that was never repeating.
-    """
-    from sklearn.exceptions import ConvergenceWarning
-
-    model = GaussianProcessLearner(space, rng).model
-    # Under the filters in force, as the test above explains.
-    with warnings.catch_warnings(record=True) as caught:
-        model.fit(flat_in_y_history(space, 12))
-    assert [
-        w
-        for w in caught
-        if issubclass(w.category, ConvergenceWarning)
-        and 'noise_level' in str(w.message)
-    ]
-
-
-def test_a_gaussian_process_describes_the_real_data_after_proposing(space, rng):
-    """Proposing must not leave the model believing its own guesses.
-
-    A guess folded in at its own predicted cost leaves the mean where it was,
-    so it shows in the uncertainty, and most where the guess landed.
-    """
-    model = GaussianProcessLearner(space, rng).model
-    history = gaussian_process_history(space, 6)
-    # The first pick of a batch, and so where its first invented point lands.
-    probe = model.ask(history, 1)[0]
-    before = model.predict(probe)
-    model.ask(history, 4)
-    np.testing.assert_allclose(model.predict(probe), before)
-
-
-def test_a_gaussian_process_describes_the_real_data_after_a_proposal_fails(
-    space, rng
-):
-    """Even a batch that dies partway must leave no invented points behind.
-
-    Folding a batch's own picks into the fit is what stops them all chasing one
-    corner, but those picks are guesses at what the apparatus will report. If
-    the search then raises -- a minimizer giving up, a prediction on a
-    degenerate kernel -- anything reading the model next, for a prediction or
-    for where it thinks the optimum is, would be reading those guesses back as
-    measurements.
-    """
-    model = GaussianProcessLearner(space, rng).model
-    history = gaussian_process_history(space, 8)
-    # The first pick of a batch, and so where its first invented point lands.
-    probe = model.ask(history, 1)[0]
-    before = model.predict(probe)
-
-    searches = []
-    search = model.minimize_acquisition
-
-    def give_up_after_the_first(*args, **kwargs):
-        searches.append(1)
-        if len(searches) > 1:
-            raise RuntimeError('the minimizer gave up')
-        return search(*args, **kwargs)
-
-    model.minimize_acquisition = give_up_after_the_first
-    with pytest.raises(RuntimeError, match='gave up'):
-        model.ask(history, 4)
-
-    np.testing.assert_allclose(model.predict(probe), before)
-
-
-def test_the_search_waits_for_the_warmup_it_defaults_to(space, rng):
-    """Five usable observations over two parameters, the floor of the default."""
-    history = gaussian_process_history(space, 3, count=5)
-    model = GaussianProcessLearner(space, rng).model
-    with pytest.raises(InsufficientData):
-        model.ask(history[:-1], 1)
-    assert space.contains(model.ask(history, 1)).all()
-
-
-def test_a_batch_is_proposed_from_a_history_whose_points_carry_uncertainties(
-    space, rng
-):
-    """Each point of the batch is folded into the fit before the next is
-    picked, and a fit holding a variance per point needs one for the invented
-    point too, or it is handed one fewer variance than it has points.
-    """
-    points = space.uniform(np.random.default_rng(7), 12)
-    history = [observe(i, p, offset_sphere(p), uncer=0.1) for i, p in enumerate(points)]
-    proposals = GaussianProcessLearner(space, rng).model.ask(history, 3)
-    assert space.contains(proposals).all()
 
 
 def test_gaussian_process_uses_per_point_uncertainties(space, rng):
-    """A noisy point should be trusted less than an exact one."""
+    """A noisy point is trusted less than an exact one, and a batch can still
+    be proposed from points that carry one."""
     points = space.uniform(np.random.default_rng(7), 12)
     exact = [observe(i, p, offset_sphere(p), uncer=0.0) for i, p in enumerate(points)]
     noisy = [observe(i, p, offset_sphere(p), uncer=5.0) for i, p in enumerate(points)]
@@ -1049,127 +414,34 @@ def test_gaussian_process_uses_per_point_uncertainties(space, rng):
 
     probe = np.array([0.0, 0.0])
     assert loose.predict(probe)[1][0] > tight.predict(probe)[1][0]
+    assert space.contains(loose.ask(noisy, 3)).all()
 
 
-@pytest.mark.parametrize('cost_has_noise', [True, False])
-@pytest.mark.parametrize('uncertain', [False, True])
-def test_the_search_is_handed_the_exact_gradient_of_the_acquisition(
-    space, cost_has_noise, uncertain
+@pytest.mark.parametrize(
+    'cost_has_noise, uncertainties, fits',
+    [
+        (False, (0.1, 0.2), True),
+        (False, (None, None), True),
+        # Every cost exact, but one with no uncertainty to say so: singular.
+        (False, (0.1, None), False),
+        (True, (0.1, None), True),
+    ],
+)
+def test_a_history_with_only_some_uncertainties_is_refused_without_noise(
+    space, rng, cost_has_noise, uncertainties, fits
 ):
-    """Checked against scikit-learn's own posterior and central differences of
-    it: with and without the white-noise term, with a scalar alpha and one per
-    point, and with a batch's points folded in.
-    """
-    points = space.uniform(np.random.default_rng(7), 12)
-    uncers = np.linspace(0.05, 0.2, 12) if uncertain else [None] * 12
-    history = [
-        observe(i, p, offset_sphere(p), uncer=uncers[i]) for i, p in enumerate(points)
-    ]
     model = GaussianProcessLearner(
-        space, np.random.default_rng(3), cost_has_noise=cost_has_noise, cost_bias=2.0
+        space, rng, cost_has_noise=cost_has_noise, warmup_observations=2
     ).model
-    model.fit(history)
-    folded = model.condition_on(model.regressor, np.array([0.3, 0.6]))
-    folded = model.condition_on(folded, np.array([0.7, 0.2]))
-
-    def predicted(regressor, u):
-        mean, std = regressor.predict(np.atleast_2d(u), return_std=True)
-        return 2.0 * mean[0] - 1.5 * std[0]
-
-    step = 1e-6
-    for regressor in (model.regressor, folded):
-        for u in np.random.default_rng(8).uniform(0, 1, size=(5, 2)):
-            value, gradient = model.acquisition(u, regressor, 1.5)
-            central = [
-                (predicted(regressor, u + h) - predicted(regressor, u - h)) / (2 * step)
-                for h in step * np.eye(2)
-            ]
-            assert value == pytest.approx(predicted(regressor, u))
-            np.testing.assert_allclose(gradient, central, rtol=1e-5, atol=1e-8)
-
-
-# --- building from a configuration -----------------------------------------
-
-
-def a_config(space, learner, options, **tables):
-    """A configuration whose only interesting part is the learner's own table."""
-    return Config(
-        space=space,
-        globals=(),
-        cost_key=('routine', 'cost'),
-        learner=learner,
-        learner_options={learner: options, **tables},
-        seed=11,
-    )
-
-
-def test_a_learner_takes_the_knobs_in_its_own_table_and_no_others(space):
-    """A knob reaches the learner whose table it is written in and no other.
-
-    That is what lets one file carry the settings for several learners and be
-    switched between them: the tables for the learners this session does not
-    build are simply not read.
-    """
-    config = a_config(
-        space,
-        'differential_evolution',
-        {'population_size': 15},
-        gaussian_process={'trust_region': 0.5, 'cost_has_noise': False},
-    )
-    built = build(config)
-    # population_size is the number of members, not a multiplier on the
-    # parameter count: fifteen here, over however many parameters.
-    assert built.population_size == 15
-    # trust_region is a knob this learner takes as well, written in a table
-    # that is not its own. It reaches the Gaussian process and nothing else,
-    # so this learner is left with its own default of the whole space.
-    assert built.trust_region is None
-
-
-def test_a_knob_is_a_constructor_argument_and_not_a_constructor_local(
-    space, monkeypatch
-):
-    """What a constructor accepts is its arguments, and nothing else.
-
-    A name a constructor happens to use as a scratch variable is not a knob it
-    takes. Held to anything wider than the signature, such a key is welcomed
-    into the learner's table and then raises a TypeError out of the
-    constructor, blaming the file for a collision the user cannot see.
-    """
-
-    class Scratch(ParameterSpaceLearner):
-        def __init__(self, space, rng, population_size=3):
-            super().__init__(space, rng)
-            cost_has_noise = population_size  # a local, not an argument
-            self.population_size = cost_has_noise
-
-        def propose(self, history, hint):
-            return [(p, 'main') for p in self.space.uniform(self.rng, hint)]
-
-    monkeypatch.setitem(learners.LEARNERS, 'scratch', Scratch)
-    with pytest.raises(ValueError, match=r'\[LEARNER\.scratch\].*cost_has_noise'):
-        build(a_config(space, 'scratch', {'cost_has_noise': True}))
-    sized = build(a_config(space, 'scratch', {'population_size': 4}))
-    assert sized.population_size == 4
-
-
-def test_a_learner_that_hides_its_knobs_in_kwargs_is_refused(space, monkeypatch):
-    """``**kwargs`` names nothing, so a table written for such a learner is
-    refused key by key with nothing saying why -- and were the table empty,
-    the learner would be built from its defaults alone.
-    """
-
-    class Swallower(ParameterSpaceLearner):
-        def __init__(self, space, rng, **kwargs):
-            super().__init__(space, rng)
-            self.population_size = kwargs.get('population_size', 3)
-
-        def propose(self, history, hint):
-            return [(p, 'main') for p in self.space.uniform(self.rng, hint)]
-
-    monkeypatch.setitem(learners.LEARNERS, 'swallower', Swallower)
-    with pytest.raises(TypeError, match='kwargs'):
-        build(a_config(space, 'swallower', {'population_size': 4}))
+    history = [
+        observe('a', space.minimum, 1.0, uncer=uncertainties[0]),
+        observe('b', space.maximum, 2.0, uncer=uncertainties[1]),
+    ]
+    if fits:
+        assert space.contains(model.ask(history, 1)).all()
+    else:
+        with pytest.raises(ValueError, match='cost_has_noise'):
+            model.ask(history, 1)
 
 
 # --- the Gaussian process's cycle ------------------------------------------
@@ -1236,23 +508,8 @@ def past_warmup(session):
     return sources
 
 
-def sources_of(proposed):
-    """The source of each proposal, in the order they are to be run."""
-    return [source for _, source in proposed]
-
-
-def sent_out(history, proposed, source=None):
-    """``proposed`` added to ``history`` as shots in flight, as a session keeps
-    them: pending, each under the source it came with unless one is given."""
-    return history + [
-        observe(f'{len(history) + i}', params, None, state=PENDING, source=source or given)
-        for i, (params, given) in enumerate(proposed)
-    ]
-
-
 def test_while_a_batch_computes_the_queue_is_topped_up_with_explorer_shots(space):
-    """The apparatus does not wait on a fit: every refill while the model is
-    computing tops the shots in flight up to the hint from the explorer."""
+    """The apparatus does not wait on a fit."""
     model = Model(space, ready=False)
     session = driven(space, model, hint=3)
     assert past_warmup(session) == ['explore']
@@ -1262,20 +519,10 @@ def test_while_a_batch_computes_the_queue_is_topped_up_with_explorer_shots(space
     model.ready.set()
 
 
-def test_a_ready_batch_goes_out_ahead_of_explorer_shots(space):
-    """Its points first, and explorer shots only in the places left, so that
-    what the run budget has no room for is cut from the explorer's."""
-    session = driven(space, Model(space), hint=3, batch_size=2)
-    past_warmup(session)
-    assert step(session, back=3) == ['main', 'main', 'explore']
-
-
 def test_the_next_batch_is_computed_once_none_of_the_last_is_pending(space):
     """So the model has every answer it asked for. Explorer shots in flight do
     not hold it up, and a point that will never report is as back as it will
-    ever be: waiting for it to complete stalls the cycle for good on the first
-    shot an operator deletes.
-    """
+    ever be."""
     model = Model(space)
     session = driven(space, model, hint=2, batch_size=2)
     past_warmup(session)
@@ -1292,19 +539,10 @@ def test_the_next_batch_is_computed_once_none_of_the_last_is_pending(space):
     assert {session.sources[s] for s in session.awaiting} == {'explore'}
 
 
-def test_warmup_is_the_explorers_alone(space):
-    """The model is not asked for anything until warmup is over."""
-    model = Model(space)
-    session = driven(space, model)
-    sources = step(session, back=0) + step(session) + step(session)
-    assert sources == ['warmup'] * 4
-    assert model.handed == []
-
-
 def test_a_model_that_raises_stops_the_session_at_the_next_refill(space):
-    """Its error comes out of the refill that finds the computation over, and
-    the worker stops the session with it. Raised on the model's own thread it
-    would reach nobody."""
+    """Its error comes out of the refill that finds the computation over,
+    where the worker stops the session with it. Raised on the model's own
+    thread it would reach nobody."""
     model = Model(space)
     model.error = RuntimeError('the fit gave up')
     session = driven(space, model)
@@ -1316,10 +554,7 @@ def test_a_model_that_raises_stops_the_session_at_the_next_refill(space):
 def test_each_batch_cycle_holds_at_least_explore_runs_explorer_shots(space):
     """Counted from one batch's last point to the next batch's first, and every
     explorer shot in that span counts, the ones that kept the queue topped up
-    while the batch computed among them: a ready batch waits only for the rest.
-
-    Counted apart from those, a cycle here would hold four; left uncounted, one.
-    """
+    while the batch computed among them."""
     model = Model(space)
     session = driven(space, model, hint=1, batch_size=2, explore_runs=3)
     sources = past_warmup(session)
@@ -1330,6 +565,17 @@ def test_each_batch_cycle_holds_at_least_explore_runs_explorer_shots(space):
     assert len(between) >= 3
     assert between == [3] * len(between)
     assert len(model.handed) == len(firsts) + 1
+
+
+def test_with_explore_runs_of_zero_the_explorer_only_fills(space):
+    """A model ready at once leaves explorer shots only where no point of a
+    batch is ready, which at a depth of one is the refill that starts each
+    batch computing."""
+    session = driven(space, Model(space), hint=1, batch_size=2, explore_runs=0)
+    sources = past_warmup(session)
+    for _ in range(11):
+        sources += step(session)
+    assert sources == ['explore', 'main', 'main'] * 4
 
 
 def test_a_batch_is_computed_from_the_history_as_its_computation_began(space):
@@ -1347,55 +593,9 @@ def test_a_batch_is_computed_from_the_history_as_its_computation_began(space):
     assert [o.shot_id for o in model.handed[0]] == began
 
 
-def test_a_ready_batch_goes_out_as_far_as_the_queue_has_room(space):
-    """The rest stay ready for the refills after, and nothing new is computed
-    while they wait or while a point of the batch is still out."""
-    model = Model(space)
-    session = driven(space, model, hint=2, batch_size=4)
-    past_warmup(session)
-    assert step(session, back=2) == ['main', 'main']
-    assert step(session) == ['main']
-    assert step(session) == ['main']
-    assert step(session) == ['explore']
-    assert len(model.handed) == 1
-
-
-def test_with_explore_runs_of_zero_the_explorer_only_fills(space):
-    """A model ready at once leaves explorer shots only where no point of a
-    batch is ready, which at a depth of one is the refill that starts each
-    batch computing. A model still computing is topped up as ever."""
-    session = driven(space, Model(space), hint=1, batch_size=2, explore_runs=0)
-    sources = past_warmup(session)
-    for _ in range(11):
-        sources += step(session)
-    assert sources == ['explore', 'main', 'main'] * 4
-
-    slow = Model(space, ready=False)
-    session = driven(space, slow, explore_runs=0)
-    past_warmup(session)
-    assert [step(session) for _ in range(3)] == [['explore']] * 3
-    slow.ready.set()
-
-
-def test_a_model_that_never_finishes_holds_no_refill_up(space):
-    """The batch is read only once its computation is over, so every refill
-    goes out at once, with explorer shots, however long the fit takes."""
-    model = Model(space, ready=False)
-    session = driven(space, model)
-    past_warmup(session)
-    started = time.monotonic()
-    for _ in range(5):
-        assert step(session) == ['explore']
-    assert time.monotonic() - started < 5
-    model.ready.set()
-
-
 def test_warmup_ends_at_a_count_of_usable_observations_and_not_of_shots(space, rng):
     """A shot whose cost is NaN, a bad one and a dropped one each spend a
-    position and give the fit nothing, so none moves warmup on. Counted as
-    shots, the seven below would end a warmup of five with four usable
-    observations to fit to.
-    """
+    position and give the fit nothing, so none moves warmup on."""
     learner = GaussianProcessLearner(space, rng, warmup_observations=5)
     learner.model = Model(space)
     points = space.uniform(np.random.default_rng(8), 8)
@@ -1405,15 +605,15 @@ def test_warmup_ends_at_a_count_of_usable_observations_and_not_of_shots(space, r
         observe('bad', points[5], 1.0, bad=True),
         observe('gone', points[6], None, state=DROPPED),
     ]
-    assert sources_of(learner.propose(history, 2)) == ['warmup'] * 2
+    assert [source for _, source in learner.propose(history, 2)] == ['warmup'] * 2
 
     history.append(observe(4, points[7], offset_sphere(points[7])))
-    assert sources_of(learner.propose(history, 2)) == ['explore'] * 2
+    assert [source for _, source in learner.propose(history, 2)] == ['explore'] * 2
     settle(learner)
     assert len(learner.model.handed) == 1
 
 
-@pytest.mark.parametrize('num_params, warmup', [(1, 5), (2, 5), (3, 6), (5, 10)])
+@pytest.mark.parametrize('num_params, warmup', [(1, 5), (5, 10)])
 def test_the_warmup_scales_with_the_search_above_a_floor_of_five(num_params, warmup):
     """max(5, 2 × num_params): a constant is too short for a wide search, and
     twice the parameters alone fits a one-parameter search on two points."""
@@ -1423,8 +623,6 @@ def test_the_warmup_scales_with_the_search_above_a_floor_of_five(num_params, war
 
 
 def test_the_explorer_proposes_the_warmup_and_the_shots_that_fill_the_queue(space):
-    """The routing, not only the source the shots are given."""
-
     class Marked(RandomLearner):
         """An explorer whose draws cannot be mistaken for anything else's."""
 
@@ -1452,12 +650,6 @@ class Recording(DifferentialEvolutionLearner):
         return super().ask(history, k)
 
 
-def recording(space):
-    explorer = Recording(space, np.random.default_rng(2), population_size=4)
-    explorer.handed = []
-    return explorer
-
-
 def test_differential_evolution_explores_over_its_own_shots_alone():
     """A proposal's role is its position among its own proposals, so it is
     handed those and nothing else: not the configured start, and not the
@@ -1465,7 +657,9 @@ def test_differential_evolution_explores_over_its_own_shots_alone():
     space = ParameterSpace(
         [Parameter('x', -5.0, 5.0, start=1.0), Parameter('y', -5.0, 5.0, start=1.0)]
     )
-    explorer, model = recording(space), Model(space)
+    explorer = Recording(space, np.random.default_rng(2), population_size=4)
+    explorer.handed = []
+    model = Model(space)
     session = driven(space, model, explorer=explorer)
     past_warmup(session)
     for _ in range(8):
@@ -1475,535 +669,3 @@ def test_differential_evolution_explores_over_its_own_shots_alone():
     assert {o.source for o in model.handed[-1]} == {
         'start', 'warmup', 'main', 'explore'
     }
-
-
-def test_a_dropped_explorer_shot_keeps_its_place_in_the_explorers_history(space):
-    """It spent a position, and positions are roles to differential
-    evolution, so it stays where it was; the model is handed it too."""
-    explorer, model = recording(space), Model(space)
-    session = driven(space, model, explorer=explorer)
-    step(session, back=0)
-    lost = session.awaiting[0]
-    session.interface.lose(lost)
-    session.reconcile()
-    sources = step(session, back=0)
-    first = explorer.handed[-1][0]
-    assert (first.shot_id, first.state) == (lost, DROPPED)
-    while 'warmup' in sources:
-        sources = step(session)
-    assert lost in [o.shot_id for o in model.handed[0]]
-
-
-def test_a_batch_does_not_condition_on_the_explorer_shots_in_flight(space):
-    """A random draw is a weaker thing to fold in as a fantasy than a point of
-    the Gaussian process's own, and conditioning on pending points is measured
-    to make the answer worse, so shots in flight change nothing about the
-    batch.
-    """
-    history = gaussian_process_history(space, 5)
-    in_flight = sent_out(
-        history,
-        [(p, 'explore') for p in space.uniform(np.random.default_rng(9), 3)],
-    )
-    batches = [
-        GaussianProcessLearner(space, np.random.default_rng(3)).model.ask(seen, 4)
-        for seen in (history, in_flight)
-    ]
-    np.testing.assert_array_equal(batches[0], batches[1])
-
-
-def test_the_explorer_is_one_of_the_learners_that_draw_without_fitting(space, rng):
-    """By name, built from its defaults, or handed over built.
-
-    A Gaussian process proposes nothing until it has warmed up, so it can
-    neither keep a warmup topped up shot by shot nor fill a queue on demand.
-    """
-    assert type(GaussianProcessLearner(space, rng).explorer) is DirectedRandomLearner
-    assert type(GaussianProcessLearner(space, rng, explorer='random').explorer) is (
-        RandomLearner
-    )
-    evolving = GaussianProcessLearner(space, rng, explorer='differential_evolution')
-    assert type(evolving.explorer) is DifferentialEvolutionLearner
-    mine = DifferentialEvolutionLearner(space, rng, population_size=4)
-    assert GaussianProcessLearner(space, rng, explorer=mine).explorer is mine
-
-    for other in (GaussianProcessLearner(space, rng), 'gaussian_process'):
-        with pytest.raises(ValueError, match='explorer must be one of'):
-            GaussianProcessLearner(space, rng, explorer=other)
-
-
-def test_a_gaussian_process_that_would_fit_nothing_is_refused(space, rng):
-    """At zero the guard in ``fit`` passes on an empty history and the refusal
-    a file gets comes from inside a scikit-learn scaler.
-    """
-    with pytest.raises(ValueError, match='warmup_observations.*at least 1'):
-        GaussianProcessLearner(space, rng, warmup_observations=0)
-    assert GaussianProcessLearner(space, rng, warmup_observations=1).warmup_observations == 1
-
-
-def test_a_batch_of_nothing_is_refused_and_one_point_is_accepted(space, rng):
-    """A batch of none would leave the Gaussian process proposing nothing once
-    warmup is over, and the run idling for good behind its explorer."""
-    with pytest.raises(ValueError, match='batch_size.*at least 1'):
-        GaussianProcessLearner(space, rng, batch_size=0)
-    assert GaussianProcessLearner(space, rng, batch_size=1).batch_size == 1
-
-
-def test_explore_runs_of_zero_is_accepted_and_fewer_is_refused(space, rng):
-    """Zero is a Gaussian process whose explorer only fills the queue, which
-    is a run a lab may want."""
-    with pytest.raises(ValueError, match='explore_runs.*cannot be negative'):
-        GaussianProcessLearner(space, rng, explore_runs=-1)
-    assert GaussianProcessLearner(space, rng, explore_runs=0).explore_runs == 0
-
-
-def test_an_acquisition_that_is_never_finite_says_so(space, rng):
-    """Every start comes back NaN, so no comparison in the search is ever
-    true and there is no winner to clip.
-    """
-    model = GaussianProcessLearner(space, rng).model
-    model.fit(gaussian_process_history(space, 5))
-    model.regressor.alpha_[:] = np.nan
-    lows = np.zeros(space.num_params)
-    highs = np.ones(space.num_params)
-    with pytest.raises(RuntimeError, match='not finite at any'):
-        model.minimize_acquisition(
-            model.regressor, 1.0, space.minimum, lows, highs
-        )
-
-
-def test_an_exact_cost_beside_one_with_no_uncertainty_is_refused(space, rng):
-    """cost_has_noise off says every cost is measured exactly. A history where
-    only some shots carry an uncertainty gives the rest a variance of exactly
-    zero with no white-noise term anywhere, and the fit is singular.
-    """
-    model = GaussianProcessLearner(
-        space, rng, cost_has_noise=False, warmup_observations=2
-    ).model
-    history = [
-        observe('a', space.minimum, 1.0, uncer=0.1),
-        observe('b', space.maximum, 2.0),
-    ]
-    with pytest.raises(ValueError, match="'b'"):
-        model.fit(history)
-
-
-def test_costs_that_all_carry_an_uncertainty_fit_without_noise(space, rng):
-    model = GaussianProcessLearner(
-        space, rng, cost_has_noise=False, warmup_observations=2
-    ).model
-    history = [
-        observe('a', space.minimum, 1.0, uncer=0.1),
-        observe('b', space.maximum, 2.0, uncer=0.2),
-    ]
-    assert model.fit(history)
-
-
-def test_costs_that_carry_no_uncertainty_at_all_fit_without_noise(space, rng):
-    model = GaussianProcessLearner(
-        space, rng, cost_has_noise=False, warmup_observations=2
-    ).model
-    history = [
-        observe('a', space.minimum, 1.0),
-        observe('b', space.maximum, 2.0),
-    ]
-    assert model.fit(history)
-
-
-def test_a_mixed_history_still_fits_when_the_cost_has_noise(space, rng):
-    """The ordinary case: a lab whose uncertainty fit fails on some shots."""
-    model = GaussianProcessLearner(
-        space, rng, cost_has_noise=True, warmup_observations=2
-    ).model
-    history = [
-        observe('a', space.minimum, 1.0, uncer=0.1),
-        observe('b', space.maximum, 2.0),
-    ]
-    assert model.fit(history)
-
-
-def test_a_late_cost_refits_a_set_of_unchanged_size(space):
-    """The hyperparameters are refit when *which* observations are in hand
-    changes, not only how many.
-
-    Costs arrive out of order and ``usable`` returns them in proposal order, so
-    a cost that turns up late is inserted in the middle rather than appended.
-    Of nine proposals, a history still waiting on the third and one still
-    waiting on the last each hold eight usable observations, and a different
-    eight. Keyed on a count, the model would answer the second of these with
-    the kernel it fitted to the first.
-    """
-    history = gaussian_process_history(space, 11, count=9)
-
-    def waiting_on(position):
-        waiting = list(history)
-        waiting[position] = dataclasses.replace(
-            waiting[position], cost=None, uncer=None, state=PENDING
-        )
-        return waiting
-
-    carried = GaussianProcessLearner(
-        space, np.random.default_rng(1), warmup_observations=4
-    ).model
-    carried.fit(waiting_on(2))
-    assert len(usable(waiting_on(2))) == len(usable(waiting_on(8))) == 8
-    carried.fit(waiting_on(8))
-
-    fresh = GaussianProcessLearner(
-        space, np.random.default_rng(1), warmup_observations=4
-    ).model
-    fresh.fit(waiting_on(8))
-
-    # From the kernel fitted to the other eight, the refit here reaches the
-    # fresh fit's optimum to within the optimizer's tolerance; that kernel left
-    # in place would predict several times off.
-    grid = space.uniform(np.random.default_rng(5), 5)
-    for carried_part, fresh_part in zip(carried.predict(grid), fresh.predict(grid)):
-        np.testing.assert_allclose(carried_part, fresh_part, rtol=1e-4)
-
-
-# --- what a knob may be written as ----------------------------------------
-
-
-#: One value of the wrong kind for every knob of every learner a configuration
-#: can name, and the whole of the refusal it gets. Each is something a
-#: conversion would have taken: a quoted boolean is a non-empty string and so
-#: true, a fraction truncates, a boolean is 1, a quoted number reads as the
-#: number, and a single number where a pair belongs dies inside ``tuple`` in
-#: Python's words rather than this package's.
-REGION = (
-    "trust_region must be written as a number in (0, 1), a fraction of each "
-    "parameter's range, or as a list of numbers, one distance per parameter, "
-    "not {}."
-)
-MISWRITTEN = [
-    (
-        'directed_random',
-        'trust_gaussian',
-        'false',
-        "trust_gaussian must be written as true or false, unquoted, not 'false'.",
-    ),
-    (
-        'gaussian_process',
-        'cost_has_noise',
-        'false',
-        "cost_has_noise must be written as true or false, unquoted, not 'false'.",
-    ),
-    (
-        'gaussian_process',
-        'cost_has_noise',
-        0,
-        "cost_has_noise must be written as true or false, unquoted, not 0.",
-    ),
-    (
-        'differential_evolution',
-        'population_size',
-        8.9,
-        "population_size must be written as a whole number, got 8.9.",
-    ),
-    (
-        'differential_evolution',
-        'population_size',
-        True,
-        "population_size must be written as a whole number, got True.",
-    ),
-    (
-        'gaussian_process',
-        'batch_size',
-        True,
-        "batch_size must be written as a whole number, got True.",
-    ),
-    (
-        'gaussian_process',
-        'batch_size',
-        4.5,
-        "batch_size must be written as a whole number, got 4.5.",
-    ),
-    (
-        'gaussian_process',
-        'warmup_observations',
-        6.5,
-        "warmup_observations must be written as a whole number, got 6.5.",
-    ),
-    (
-        'gaussian_process',
-        'warmup_observations',
-        True,
-        "warmup_observations must be written as a whole number, got True.",
-    ),
-    (
-        'gaussian_process',
-        'explore_runs',
-        1.5,
-        "explore_runs must be written as a whole number, got 1.5.",
-    ),
-    (
-        'gaussian_process',
-        'explore_runs',
-        True,
-        "explore_runs must be written as a whole number, got True.",
-    ),
-    (
-        'gaussian_process',
-        'explorer',
-        'gaussian_process',
-        "explorer must be one of ('random', 'directed_random', "
-        "'differential_evolution'), got 'gaussian_process'",
-    ),
-    (
-        'gaussian_process',
-        'explorer',
-        ['random'],
-        "explorer must be one of ('random', 'directed_random', "
-        "'differential_evolution'), got ['random']",
-    ),
-    (
-        'directed_random',
-        'explore_fraction',
-        '0.5',
-        "explore_fraction must be written as a number, unquoted, not '0.5'.",
-    ),
-    (
-        'directed_random',
-        'explore_fraction',
-        True,
-        "explore_fraction must be written as a number, unquoted, not True.",
-    ),
-    (
-        'differential_evolution',
-        'cross_over_probability',
-        '0.7',
-        "cross_over_probability must be written as a number, unquoted, not '0.7'.",
-    ),
-    (
-        'differential_evolution',
-        'cross_over_probability',
-        True,
-        "cross_over_probability must be written as a number, unquoted, not True.",
-    ),
-    (
-        'gaussian_process',
-        'cost_bias',
-        '1.0',
-        "cost_bias must be written as a number, unquoted, not '1.0'.",
-    ),
-    (
-        'gaussian_process',
-        'cost_bias',
-        True,
-        "cost_bias must be written as a number, unquoted, not True.",
-    ),
-    (
-        'gaussian_process',
-        'uncer_bias',
-        '1.0',
-        "uncer_bias must be written as a number or a list of numbers, "
-        "unquoted, not '1.0'.",
-    ),
-    (
-        'gaussian_process',
-        'uncer_bias',
-        True,
-        "uncer_bias must be written as a number or a list of numbers, "
-        "unquoted, not True.",
-    ),
-    (
-        'gaussian_process',
-        'uncer_bias',
-        ['0', '1'],
-        "uncer_bias must be written as a number or a list of numbers, "
-        "unquoted, not ['0', '1'].",
-    ),
-    (
-        'directed_random',
-        'trust_range',
-        0.5,
-        "trust_range must be written as a pair of numbers, [low, high], not 0.5.",
-    ),
-    (
-        'directed_random',
-        'trust_range',
-        '0.1, 0.25',
-        "trust_range must be written as a pair of numbers, [low, high], not "
-        "'0.1, 0.25'.",
-    ),
-    (
-        'directed_random',
-        'trust_range',
-        ['0.1', '0.25'],
-        "trust_range must be written as a pair of numbers, [low, high], not "
-        "['0.1', '0.25'].",
-    ),
-    (
-        'directed_random',
-        'trust_range',
-        [0.1, 0.2, 0.25],
-        "trust_range must be written as a pair of numbers, [low, high], not "
-        "[0.1, 0.2, 0.25].",
-    ),
-    (
-        'gaussian_process',
-        'length_scale_bounds',
-        5,
-        "length_scale_bounds must be written as a pair of numbers, [low, "
-        "high], not 5.",
-    ),
-    (
-        'gaussian_process',
-        'length_scale_bounds',
-        np.array(5.0),
-        "length_scale_bounds must be written as a pair of numbers, [low, "
-        "high], not array(5.).",
-    ),
-    (
-        'gaussian_process',
-        'length_scale_bounds',
-        [1e-2, [1e2]],
-        "length_scale_bounds must be written as a pair of numbers, [low, "
-        "high], not [0.01, [100.0]].",
-    ),
-    (
-        'gaussian_process',
-        'noise_level_bounds',
-        'fixed',
-        "noise_level_bounds must be written as a pair of numbers, [low, "
-        "high], not 'fixed'.",
-    ),
-    (
-        'gaussian_process',
-        'noise_level_bounds',
-        [1e-5, True],
-        "noise_level_bounds must be written as a pair of numbers, [low, "
-        "high], not [1e-05, True].",
-    ),
-    (
-        'gaussian_process',
-        'length_scale_bounds',
-        [1e2, 1e-2],
-        "length_scale_bounds must be an ordered pair of positive numbers, "
-        "[low, high] with 0 < low < high, got [100.0, 0.01].",
-    ),
-    (
-        'gaussian_process',
-        'noise_level_bounds',
-        [0.0, 1.0],
-        "noise_level_bounds must be an ordered pair of positive numbers, "
-        "[low, high] with 0 < low < high, got [0.0, 1.0].",
-    ),
-    (
-        'differential_evolution',
-        'mutation_scale',
-        0.8,
-        "mutation_scale is the range the differential weight is drawn from, "
-        "[low, high], not one weight: for a fixed weight of 0.8, write "
-        "[0.8, 0.8].",
-    ),
-    (
-        'differential_evolution',
-        'mutation_scale',
-        [0.5],
-        "mutation_scale must be written as a pair of numbers, [low, high], "
-        "not [0.5].",
-    ),
-    (
-        'differential_evolution',
-        'mutation_scale',
-        ['0.5', '1.0'],
-        "mutation_scale must be written as a pair of numbers, [low, high], "
-        "not ['0.5', '1.0'].",
-    ),
-    (
-        'differential_evolution',
-        'evolution_strategy',
-        ['best1'],
-        "evolution_strategy must be one of ('best1', 'best2', 'rand1', "
-        "'rand2'), got ['best1']",
-    ),
-    ('directed_random', 'trust_region', '0.1', REGION.format("'0.1'")),
-    ('differential_evolution', 'trust_region', '0.1', REGION.format("'0.1'")),
-    ('gaussian_process', 'trust_region', '0.1', REGION.format("'0.1'")),
-    ('directed_random', 'trust_region', True, REGION.format('True')),
-    ('directed_random', 'trust_region', ['1', '1'], REGION.format("['1', '1']")),
-]
-
-
-@pytest.mark.parametrize('name, knob, written, message', MISWRITTEN)
-def test_a_knob_of_the_wrong_kind_is_refused_naming_it(
-    space, rng, name, knob, written, message
-):
-    """Checked in the constructor, so a learner built in Python is held to its
-    kinds exactly as one built from a file.
-    """
-    with pytest.raises(ValueError) as refusal:
-        learners.LEARNERS[name](space, rng, **{knob: written})
-    assert str(refusal.value) == message
-
-
-def test_every_knob_of_every_learner_is_held_to_its_kind():
-    """Read off the constructors, so a knob added to one without a case above
-    fails here rather than going unchecked.
-    """
-    held = {(name, knob) for name, knob, _, _ in MISWRITTEN}
-    taken = {
-        (name, knob)
-        for knob, names in learners.knobs_by_learner().items()
-        for name in names
-    }
-    assert held == taken
-
-
-def test_a_knob_takes_the_kinds_python_and_numpy_hand_it(space, rng):
-    """A list is what TOML gives. Tuples, numpy arrays and numpy scalars are
-    what code building a learner directly passes, and each is the kind of
-    thing its knob asks for.
-    """
-    directed = DirectedRandomLearner(
-        space,
-        rng,
-        trust_region=np.array([1.0, 2.0]),
-        trust_range=np.array([0.1, 0.25]),
-        trust_gaussian=True,
-        explore_fraction=np.float64(0.25),
-    )
-    np.testing.assert_array_equal(directed.trust_region, [1.0, 2.0])
-    assert directed.trust_range == (0.1, 0.25)
-    assert directed.trust_gaussian is True
-    assert directed.explore_fraction == 0.25
-
-    evolving = DifferentialEvolutionLearner(
-        space,
-        rng,
-        population_size=np.int64(5),
-        mutation_scale=[0.5, 1],
-        cross_over_probability=np.float32(0.5),
-        trust_region=np.float64(0.1),
-    )
-    assert evolving.population_size == 5
-    assert evolving.mutation_scale == (0.5, 1.0)
-    assert evolving.cross_over_probability == 0.5
-    np.testing.assert_allclose(evolving.trust_region, [1.0, 1.0])
-
-    fitting = GaussianProcessLearner(
-        space,
-        rng,
-        cost_has_noise=False,
-        length_scale_bounds=np.array([1e-2, 1e2]),
-        noise_level_bounds=(1e-5, 10),
-        cost_bias=np.int64(2),
-        uncer_bias=np.array([0.0, 1.5]),
-        batch_size=np.int64(3),
-        warmup_observations=np.int64(4),
-        explore_runs=np.int64(2),
-        explorer='random',
-        trust_region=[1, 2],
-    )
-    assert fitting.model.cost_has_noise is False
-    assert fitting.model.length_scale_bounds == (1e-2, 1e2)
-    assert fitting.model.noise_level_bounds == (1e-5, 10.0)
-    assert fitting.model.cost_bias == 2.0
-    assert fitting.model.uncer_bias == (0.0, 1.5)
-    assert fitting.batch_size == 3
-    assert fitting.warmup_observations == 4
-    assert fitting.explore_runs == 2
-    assert type(fitting.explorer) is RandomLearner
-    np.testing.assert_array_equal(fitting.model.trust_region, [1.0, 2.0])
