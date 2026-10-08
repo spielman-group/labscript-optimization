@@ -165,8 +165,8 @@ failed by its end, so lyse shows it as that analysis's error.
 - **Start** checks that runmanager's globals evaluate and, when the Start from
   runmanager values box was ticked and the session has proposed nothing, reads
   the start from runmanager. Only once every check has passed does it pin the
-  labscript file, record the original values of the globals not recorded yet,
-  and begin submitting.
+  labscript file, which is refused when runmanager has none selected, record
+  the original values of the globals not recorded yet, and begin submitting.
   If a check raises, the session stays paused with the message as its pause
   reason, shown as `Paused: <reason>`, and nothing is printed or raised, pinned
   or recorded; Start again after fixing it.

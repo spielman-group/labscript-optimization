@@ -25,6 +25,11 @@ If runmanager stops answering during a run, for instance with its GUI inside a c
 
 If runmanager was restarted, and not just busy, it no longer knows the run's sequence. The next submission after Start is refused and the session ends; see :ref:`troubleshooting:A refused sequence join`.
 
+No labscript file is selected
+-----------------------------
+
+Start leaves the session paused, and the phase reads ``Paused: No labscript file is selected; select a labscript file in runmanager``. Select the labscript file in runmanager, then press Start again.
+
 The globals do not evaluate
 ---------------------------
 

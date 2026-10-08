@@ -80,10 +80,17 @@ class RunmanagerInterface:
         """Note the labscript file that :meth:`check_unchanged` compares against.
 
         Called by a Start once it has passed every check. The first call pins
-        the file, and a Start that resumes the run does not move it.
+        the file, and a Start that resumes the run does not move it. It raises
+        if runmanager has no labscript file selected, which refuses the Start.
         """
         if self.labscript_file is None:
-            self.labscript_file = self.client.get_labscript_file()
+            labscript_file = self.client.get_labscript_file()
+            if not labscript_file:
+                raise RuntimeError(
+                    "No labscript file is selected; select a labscript file in "
+                    "runmanager"
+                )
+            self.labscript_file = labscript_file
 
     def check_unchanged(self) -> None:
         """Raise if the labscript file has changed since the session started."""
