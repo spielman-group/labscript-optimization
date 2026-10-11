@@ -1,15 +1,11 @@
 """The routine end to end, in a lyse worker process started as lyse starts one."""
 
-import warnings
-
 import pytest
 
-with warnings.catch_warnings():
-    warnings.simplefilter('ignore')
-    import lyse.analysis_subprocess
-    from labscript_utils.ls_zprocess import ProcessTree
-    from lyse.routine import RoutineSettings
-    from lyse.utils import LYSE_DIR
+import lyse.analysis_subprocess
+from labscript_utils.ls_zprocess import ProcessTree
+from lyse.routine import RoutineSettings
+from lyse.utils import LYSE_DIR
 
 from conftest import SESSION_CONFIG
 
