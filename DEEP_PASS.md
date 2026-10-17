@@ -209,3 +209,36 @@ nothing to lyse, uses no costs, and does no slow work in `run()`.
 | G | Reading the routine's TOML: `tomllib` here, `labscript_profile.toml_config.load_toml_file` in agents | one each | Yes | `load_toml_file` in both (labscript-utils' step-2 entry 11 moved agents to it) |
 | H | `RunmanagerInterface.shot_status` | both | Here a bare pass-through of the client's; agents' skips the request for no ids and backs a tool | Here: dropped, the session calling the client through the interface's `client`; agents keeps its own |
 | I | "This shot is ours; take it once": the session's `proposals`/`results` here, agents' `_engaged`/`_reported`/`take_unreported` | one each | Yes | Each keeps its own: a few lines, and each package needs its own records of the shots anyway (Ian decides) |
+
+### 2.1 Within this package, and against the rest of the suite
+
+| # | Item | Copies | Proposal |
+| --- | --- | --- | --- |
+| J | Two sets of value checks: `knobs.py` (`boolean`, `integer`, `number`, `choice`, `pair`) for learner knobs, and `config.py`'s `require_type` plus `Config.__post_init__`'s own bool-is-not-an-int and integer checks for the session's settings | `knobs.py`, `config.py` | One set, `knobs.py`, used by `config.py` too; the librarian is asked whether the suite already has one |
+| K | Two unknown-key refusals: `config.reject_unknown` and `learners.validate_options`' own message, with its "takes no knobs at all" variant | `config.py`, `learners/__init__.py` | `validate_options` calls `reject_unknown` |
+| L | Two repeated-name checks written the same way: repeated globals (`Config.__post_init__`) and repeated parameters (`ParameterSpace.__init__`) | `config.py`, `space.py` | Keep: two lines each, on different objects |
+| M | `in_background`: a daemon thread returning a `Future`, because `ThreadPoolExecutor` joins its threads at exit | `learners/gaussian_process.py` | Keep unless the librarian finds the suite already has one |
+
+## Step 3: root causes
+
+Every line of this package postdates the fork, so the guards here are those
+that work around another module's behaviour, traced to it.
+
+| # | Guard | Cause | Proposal |
+| --- | --- | --- | --- |
+| 3.1 | `analyzed` sorts the frame's columns, because pandas warns of lexsort depth when an unsorted MultiIndex is read by a shallower key, as `extract` does | `lyse.data` returns columns in the order they were added (`lyse/dataframe_utilities.py` sorts only the rows) | Keep the one-line sort here (it is 2.2 row A): sorting in `lyse.data` would reorder every lab's columns |
+| 3.2 | `NO_VALUE_YET`: typed stand-ins (`""`, NaN, `[]`) saved until a status value exists | lyse fixes a column's dtype from the first value saved, and a later value of another type cannot be written into it | Keep: a lyse change to that would touch every lab's dataframe. Ian decides |
+| 3.3 | `RunmanagerInterface.check_unchanged` and `pin_labscript_file`: a round trip before every submission, refusing a labscript file changed mid-run | runmanager itself refuses to add shots to a sequence of another labscript file (`submit_shots`, "of another labscript file"), which ends the session with runmanager's reason | Drop both and the per-submission round trip; runmanager's refusal already stops the run. The no-labscript-file refusal in `check_ready` stays |
+| 3.4 | `save_status` catches any exception and prints it | a save into a row lyse no longer has; lyse already warns of that at the reply (`lyse/filebox.py:435`) | Trace what else can raise; if nothing, drop the catch |
+| 3.5 | `Worker.hand_over`'s bounded wait, and late replies saved on a later pass | lyse saves a routine's results only inside `run()` | Keep: it is lyse's design |
+| 3.6 | `GlobalMapping.evaluate` converts a numpy scalar with `.item()` | runmanager writes a submitted value as its `repr`, which names numpy | Keep: Ian settled it ("You convert, not runmanager") |
+
+## Step 4: dead code, compatibility leftovers and branches
+
+| # | Item | Evidence | Proposal |
+| --- | --- | --- | --- |
+| 4.1 | `ParameterSpace.contains` | used only by tests (`git grep '\bcontains\b'` over this repo; no other repo imports the package) | Drop, with `test_containment_is_answered_once_per_row`; the learner tests check bounds with numpy |
+| 4.2 | `InsufficientData` | raised by the GP's model short of warmup, which no session reaches (step 1 #4) | Drop with step 1 #4 |
+| 4.3 | `benchmarks/` (`de_pipeline.py` 692 lines, README, four result CSVs) | a developer sweep that informed the DE decisions; nothing runs it since its smoke test went | Keep as a tool, or remove it: Ian decides |
+| 4.4 | Branch `LinkCheck` (`3d95d7d`, on origin) | every commit in `Development`; Ian said "keep LinkCheck for now"; CODEX.md keeps it with the suite-wide LinkCheck effort | Delete under cb8ef42 once Ian releases it, or rename `spielman_retired/LinkCheck` |
+| 4.5 | Compatibility leftovers | none: no upstream, and no old interface kept for a caller (M-LOOP's old names are step 1 #1) | Nothing |
