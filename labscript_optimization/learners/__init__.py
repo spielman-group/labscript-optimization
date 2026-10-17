@@ -22,13 +22,10 @@ __all__ = [
 ]
 
 
-#: Learners that can be named in a configuration. Every class here is
-#: resolved whenever a configuration is loaded, because its constructor is the
-#: schema for its own table, and the selected one is built there as well and
-#: asked what it proposes as a run opens, because what it proposes at a time
-#: is a fact about an instance. So none of them may import the scientific
-#: stack to be imported, to be built, or to open a run; see
-#: :mod:`labscript_optimization.learners.gaussian_process`.
+#: The learners a configuration can name. Loading a configuration resolves every
+#: class, to hold each table to its constructor, and builds the selected one, to
+#: read its ``generation``. So none may import the scientific stack before a
+#: batch is asked for; see :mod:`labscript_optimization.learners.gaussian_process`.
 #:
 #: :meta hide-value:
 LEARNERS = {
@@ -40,7 +37,6 @@ LEARNERS = {
 
 
 def _constructor_parameters(name: str):
-    """The constructor signature of one named learner, by parameter name."""
     try:
         cls = LEARNERS[name]
     except KeyError:
@@ -51,24 +47,17 @@ def _constructor_parameters(name: str):
 
 
 def _option_names(name: str) -> frozenset[str]:
-    """The configuration options accepted by one named learner."""
     return frozenset(_constructor_parameters(name)) - {"space", "rng"}
 
 
 def _explorer_name(config) -> str | None:
-    """The learner the selected one explores with, by name, or ``None``.
-
-    A learner whose constructor takes an ``explorer`` runs one beside itself:
-    the one its own table names, or the knob's default where the table names
-    none. The default is read off the constructor because the constructor is
-    the schema for the table, and a second copy of it here could drift. The
-    name is held to :data:`~labscript_optimization.learners.gaussian_process.EXPLORERS`
-    in the words the constructor uses, because it is looked up to build the
-    explorer before the constructor ever sees it.
-    """
+    """The explorer the selected learner runs, or ``None`` if it runs none."""
     accepted = _constructor_parameters(config.learner)
     if "explorer" not in accepted:
         return None
+    # The default is read off the constructor, the schema for the table, so no
+    # copy drifts. The name is checked here because it is looked up to build
+    # the explorer before the constructor sees it.
     named = config.learner_options.get(config.learner, {}).get(
         "explorer", accepted["explorer"].default
     )
@@ -76,27 +65,21 @@ def _explorer_name(config) -> str | None:
 
 
 def validate_options(config) -> None:
-    """Hold a configuration to the learners it names.
+    """Hold a configuration to the learners it names, before any is built.
 
-    The learner has to be one of :data:`LEARNERS`, and the explorer it runs,
-    if it runs one, one of the explorers; otherwise the misspelling is found
-    at ``build()`` -- which is worker configure, with the session already
-    starting. A ``[LEARNER.<name>]`` table has one constructor that defines
-    its keys, so anything else in it is a knob that learner ignores.
-
-    Everything here is answered by a name and a table, before any learner
-    exists. What only a learner can answer is checked in :func:`build`.
+    Checks that the learner and the explorer it runs are available, and that each
+    ``[LEARNER.<name>]`` table holds only keys its learner takes. What only a
+    built learner can answer is checked in :func:`build`.
 
     Parameters
     ----------
     config : labscript_optimization.config.Config
-        Names the learner and holds the ``[LEARNER.<name>]`` tables.
 
     Raises
     ------
     ValueError
-        If the learner or its explorer is not one of those available, or a
-        table holds a key its learner does not take.
+        If the learner or its explorer is unknown, or a table holds a key its
+        learner does not take.
     """
     if config.learner not in LEARNERS:
         raise ValueError(
@@ -108,29 +91,20 @@ def validate_options(config) -> None:
         knobs.reject_unknown(table, _option_names(name), f"[LEARNER.{name}]")
 
 
-def build(config, rng: np.random.Generator | None = None):
+def build(config, rng: np.random.Generator | None = None) -> Learner:
     """Build the learner a configuration asks for, and hold it to the budget.
 
-    A learner that runs an explorer -- the Gaussian process -- is handed it
-    built: the learner its ``explorer`` knob names, from that learner's own
-    ``[LEARNER.<name>]`` table, so an explorer and the learner running it that
-    take the same knob take it separately.
-
-    The budget is then measured against the learner that came back, because
-    how many proposals it makes at a time is its own to say and no signature
-    or class attribute answers for it.
+    A learner that runs an explorer, the Gaussian process, is handed one built
+    from the explorer's own ``[LEARNER.<name>]`` table, so the two take a shared
+    knob separately. The budget is checked against the built learner, because
+    how many proposals it makes at a time is its own to say.
 
     Parameters
     ----------
     config : labscript_optimization.config.Config
         Names the learner, holds the tables of knobs, and sets the budget.
-    rng : numpy.random.Generator or None
-        Source of randomness. ``None`` makes one seeded from ``config.seed``.
-
-    Returns
-    -------
-    labscript_optimization.learners.base.Learner
-        The learner, built from its ``[LEARNER.<name>]`` table.
+    rng : numpy.random.Generator, optional
+        Source of randomness; ``None`` makes one seeded from ``config.seed``.
 
     Raises
     ------
@@ -162,12 +136,8 @@ def build(config, rng: np.random.Generator | None = None):
         raise ValueError(
             f"max_num_runs {config.max_num_runs} leaves less than two whole "
             f"generations of the {generation} proposals {name!r} makes at a "
-            f"time, so set it to at least {2 * generation}, or configure "
-            f"{name!r} to propose fewer at a time. The first generation is "
-            f"the population itself and the second is the first to evolve it, "
-            f"so a budget under two of them never evolves anything at all. "
-            f"The budget need not be a whole number of generations: the last "
-            f"one is cut short where it runs out, and its trials compete for "
-            f"their own slots like any other."
+            f"time, and a budget under two never evolves anything. Set it to "
+            f"at least {2 * generation}, or configure {name!r} to propose "
+            f"fewer at a time."
         )
     return learner

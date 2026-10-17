@@ -10,44 +10,43 @@ The cycle, which :meth:`GaussianProcessLearner.acquire` is the whole of:
 
 - **Warmup.** Until the history holds ``warmup_observations`` usable
   observations, the explorer alone tops the run's shots in flight up to the
-  hint. It counts usable observations, not shots: a shot whose cost is NaN, or
-  one that was dropped, moves it no nearer the end. Warmup ends at the count,
-  and the explorer shots already queued at that moment still run and join the
-  fit when their costs land. That is the design, not an overrun: nothing takes
-  a queued shot back.
+  hint. Usable observations are counted, not shots: a shot whose cost is NaN, or
+  one that was dropped, moves it no nearer the end. Explorer shots already
+  queued when warmup ends still run and join the fit when their costs land;
+  nothing takes a queued shot back.
 - **Batches.** After warmup the model computes ``batch_size`` points, each
   conditioned on the ones before it, from the history as it stood when the
-  computation began. Every refill tops the shots in flight up to the hint:
-  with the batch's points as soon as they are ready, and with explorer shots
-  while it computes or once its points have gone out. The next batch is
-  computed once every point of the last has completed or been dropped, so it
-  has every answer it asked for. Explorer shots never hold it up.
+  computation began. Every refill tops the shots in flight up to the hint: with
+  the batch's points as soon as they are ready, and with explorer shots while it
+  computes or once its points have gone out. The next batch is computed once
+  every point of the last has completed or been dropped, so it has every answer
+  it asked for. Explorer shots never hold it up.
 - **Exploring.** A batch's first point waits until ``explore_runs`` explorer
   shots have gone out since the previous batch's last point, wherever in that
   cycle they fell.
 
-The explorer is handed the part of the history its ``history_scope`` names:
-all of it, its own shots, or none. The model is always handed all of it.
+The explorer is handed the part of the history its ``history_scope`` names: all
+of it, its own shots, or none. The model is always handed all of it.
 
-The hint is the session's ``num_buffered_runs``, and it also sets roughly how
-many explorer shots a cycle holds: while the last of a batch's points come
-back, each shot that returns is replaced from the explorer, so a cycle holds
-about the hint's worth even when a fit is instant, and more while it is slow.
+The hint is the session's ``num_buffered_runs``. It also sets roughly how many
+explorer shots a cycle holds: while the last of a batch's points come back, each
+shot that returns is replaced from the explorer, so a cycle holds about the
+hint's worth even when a fit is instant, and more while it is slow.
 ``explore_runs`` adds only what that leaves short.
 
 Pending means submitted and not yet completed or dropped, and a shot is known
 dropped only once a reconcile has said so, which runs when a shot arrives. So
 the next batch waits on a deleted point until some shot reaches lyse: with
-nothing of this run's still queued and runmanager sending nothing in its
-place, no refill runs and the apparatus idles.
+nothing of this run's still queued and runmanager sending nothing in its place,
+no refill runs and the apparatus idles.
 
 Each proposal carries the source a lab reads in the ``phase`` column:
 :data:`WARMUP_SOURCE` for the explorer's shots during warmup,
 :data:`BATCH_SOURCE` for the Gaussian process's own, and
 :data:`EXPLORE_SOURCE` for the explorer's shots after warmup. The configured
-start, which the session proposes itself, reads ``start``. The batch barrier
-is read off those sources, so a history whose records carry none -- one built
-outside a session -- holds no barrier.
+start, which the session proposes itself, reads ``start``. The batch barrier is
+read off those sources, so a history whose records carry none, one built outside
+a session, holds no barrier.
 
 Exploration within the batch comes from the acquisition, which minimizes
 
@@ -58,26 +57,23 @@ so each batch starts from the first weight. The default runs 0, 1, 2, 3: the
 first point of a batch is purely greedy and the rest trade predicted cost for a
 look somewhere less certain, and the default batch of four is one pass of it.
 The Gaussian process does not condition on the explorer's shots in flight: a
-random draw is a weaker thing to fold in as a fantasy than a point of its own,
-and conditioning on pending points is measured to make the answer worse.
+random draw is a weaker fantasy than a point of its own, and conditioning on
+pending points is measured to make the answer worse.
 
-The kernel hyperparameters are refit once per batch, on the usable
-observations in hand when the batch is computed, starting from the last
-refit's; the posterior is refit to all of them with those hyperparameters
-held.
+The kernel hyperparameters are refit once per batch, on the usable observations
+in hand when the batch is computed, starting from the last refit's; the
+posterior is refit to all of them with those hyperparameters held.
 
-scikit-learn and scipy are imported where they are used rather than at the top
-of this module, and nothing here reaches a point of use until a batch is
-asked for. Loading a configuration resolves the class of the learner it names,
-to hold the file's knobs to the constructor, and builds it and asks it to open
-a run, to learn what it does with the queue depth -- and that happens in the
+scikit-learn and scipy are imported where they are used, and nothing here
+reaches a point of use until a batch is asked for. Loading a configuration
+resolves the learner's class and builds it, to read its ``generation``, in the
 lyse routine's own process, which should not pay several seconds to import the
-scientific stack. Opening a run is warmup, which is the explorer's.
+scientific stack.
 """
 
 import threading
+from collections.abc import Sequence
 from concurrent.futures import Future
-from typing import Sequence
 
 import numpy as np
 
@@ -91,15 +87,14 @@ from ..observations import (
     uncers_array,
     usable,
 )
+from ..space import ParameterSpace
 from .base import ParameterSpaceLearner
 from .differential_evolution import DifferentialEvolutionLearner
 from .random import DirectedRandomLearner, RandomLearner
-from ..space import ParameterSpace
 
-
-#: The learners a Gaussian process may explore with, by the name its
-#: ``explorer`` knob takes. None of them fits anything, so an explorer proposes
-#: from the first shot of a run and never waits on a fit.
+#: The learners a Gaussian process may explore with, by the name its ``explorer``
+#: knob takes. None fits anything, so an explorer proposes from the first shot of
+#: a run and never waits on a fit.
 EXPLORERS = {
     "random": RandomLearner,
     "directed_random": DirectedRandomLearner,
@@ -117,13 +112,10 @@ EXPLORE_SOURCE = "explore"
 
 
 def in_background(function, *args) -> Future:
-    """Run ``function(*args)`` on a daemon thread, and return its future.
-
-    Whatever it raises is set on the future, to be raised by ``result()``:
-    left to the thread it would reach ``threading.excepthook`` and nobody
-    else. Not a ``ThreadPoolExecutor``, which joins its threads at exit, so a
-    worker quitting mid-fit would wait for the fit to end.
-    """
+    """Run ``function(*args)`` on a daemon thread and return its future."""
+    # Not a ThreadPoolExecutor, which joins its threads at exit: a worker
+    # quitting mid-fit would wait for the fit. An error goes onto the future,
+    # not to threading.excepthook, where only the thread would see it.
     future = Future()
 
     def run():
@@ -141,12 +133,11 @@ def in_background(function, *args) -> Future:
 class GaussianProcess:
     """A Gaussian process fit to the history, and a search of its posterior.
 
-    What it keeps between calls is the kernel of its last refit, which the
-    next refit starts from, so its fit depends on the histories it was handed
-    before as well as the one in hand. :class:`GaussianProcessLearner` runs
-    :meth:`ask` on a thread of its own and reads nothing else of it. Past
-    ``space`` and ``rng`` it takes, by keyword, the knobs of the same names
-    that :class:`GaussianProcessLearner` documents.
+    It keeps the kernel of its last refit, which the next refit starts from, so
+    its fit depends on the histories handed before as well as the one in hand.
+    :class:`GaussianProcessLearner` runs :meth:`ask` on a thread of its own and
+    reads nothing else of it. Past ``space`` and ``rng`` it takes, by keyword,
+    the knobs of the same names that :class:`GaussianProcessLearner` documents.
 
     Parameters
     ----------
@@ -176,8 +167,8 @@ class GaussianProcess:
             "length_scale_bounds", length_scale_bounds
         )
         self.noise_level_bounds = knobs.pair("noise_level_bounds", noise_level_bounds)
-        # Refused here as trust_range is: scikit-learn rejects a reversed pair
-        # only at the first fit, and a zero or negative one makes numpy warn.
+        # scikit-learn rejects a reversed pair only at the first fit, and numpy
+        # warns on a zero or negative one.
         for name, (low, high) in (
             ("length_scale_bounds", self.length_scale_bounds),
             ("noise_level_bounds", self.noise_level_bounds),
@@ -188,12 +179,8 @@ class GaussianProcess:
                     f"[low, high] with 0 < low < high, got {[low, high]}."
                 )
         self.cost_bias = knobs.number("cost_bias", cost_bias)
-        # Written out rather than derived from a step and a period, because
-        # the schedule a session runs is what a lab wants to read off the
-        # file: a list says which point of a batch explores how far, where a
-        # pair of numbers leaves that to be worked out. A single number is a
-        # cycle of one step, so a file that writes a weight gets that weight
-        # on every point.
+        # A list, not a step and a period, so a file shows which point of a batch
+        # explores how far. A single number is a cycle of one step.
         if knobs.is_number(uncer_bias):
             schedule = [uncer_bias]
         elif knobs.is_numbers(uncer_bias):
@@ -206,27 +193,22 @@ class GaussianProcess:
         self.uncer_bias = tuple(float(weight) for weight in schedule)
         if not self.uncer_bias:
             raise ValueError(
-                "uncer_bias is the cycle of weights the exploration schedule "
-                "runs through and needs at least one of them; an empty list "
-                "leaves no weight to propose at"
+                "uncer_bias needs at least one weight; an empty list leaves "
+                "none to propose at"
             )
         self.trust_region = space.absolute_trust_region(trust_region)
-        # Scaled with the search, because a constant warmup is too short for a
-        # search over enough parameters and too long for one over few; the
-        # floor keeps a one-parameter search from fitting on two points.
+        # Scaled with the parameter count; the floor keeps a one-parameter
+        # search from fitting on two points.
         self.warmup_observations = (
             max(5, 2 * space.num_params)
             if warmup_observations is None
             else knobs.integer("warmup_observations", warmup_observations)
         )
         if self.warmup_observations < 1:
-            # A fit needs something to fit to; at zero the refusal a file gets
-            # is scikit-learn's, naming neither this setting nor the learner.
             raise ValueError(
-                f"warmup_observations is how many usable observations the "
-                f"Gaussian process gathers before it will fit, so it must be "
-                f"at least 1, got {self.warmup_observations}. A fit has "
-                f"nothing to work from on an empty history."
+                f"warmup_observations must be at least 1, got "
+                f"{self.warmup_observations}; a fit has nothing to work from "
+                f"on an empty history."
             )
         self.num_restarts = max(10, space.num_params)
 
@@ -250,51 +232,33 @@ class GaussianProcess:
         return kernel
 
     def point_variances(self, seen: Sequence[Observation], scaler):
-        """Per-point variances for the regressor, in standardized cost units.
-
-        An observation with no uncertainty of its own gets zero here rather
-        than the scalar floor, because ``uncers_array`` fills it in as exact.
-
-        With ``cost_has_noise`` off there is no jitter anywhere else, so those
-        zeros are the whole of what keeps the covariance matrix conditioned
-        and a history carrying only some uncertainties is refused here. It is
-        refused at the first moment it is knowable: whether a lab's
-        uncertainty column is written on every shot is not something a
-        configuration can say, and the alternative is the ``LinAlgError`` the
-        fit raises from inside scikit-learn two calls later.
-        """
+        """Per-point variances for the regressor, in standardized cost units."""
         uncers = uncers_array(seen)
         if uncers is None:
             return 1e-10
         if not self.cost_has_noise:
+            # Observations lacking an uncertainty get a variance of zero, and
+            # with no white-noise term the fit is then singular. Refused here,
+            # where it is first known, not as scikit-learn's LinAlgError.
             missing = [o.shot_id for o in seen if o.uncer is None]
             if missing:
                 raise ValueError(
                     f"cost_has_noise is off, which says every cost is measured "
                     f"exactly, but {len(missing)} of {len(seen)} observations "
-                    f"carry no uncertainty -- the first is shot "
-                    f"{missing[0]!r}. Those are fitted with a variance of "
-                    f"exactly zero and there is no white-noise term to "
-                    f"condition the covariance matrix, so the fit is singular. "
+                    f"carry no uncertainty; the first is shot {missing[0]!r}. "
                     f"Turn cost_has_noise on, or write an uncertainty on every "
                     f"shot."
                 )
         return (uncers / scaler.scale_[0]) ** 2
 
     def fit_hyperparameters(self, seen: Sequence[Observation]):
-        """Fit the cost scaling and the kernel hyperparameters to ``seen``.
-
-        The scaling belongs with them because it sets the units the noise level
-        is measured in: restandardizing as each observation arrived would leave
-        a cached kernel describing units that had since moved. The fit starts
-        from the kernel of the last refit, or from :meth:`new_kernel` at the
-        first, and runs no restarts, so a refit is one descent from where the
-        last one ended.
-        """
+        """Fit the cost scaling and kernel to ``seen``, from the last refit's kernel."""
         from sklearn.gaussian_process import GaussianProcessRegressor
         from sklearn.preprocessing import StandardScaler
 
         costs = costs_array(seen).reshape(-1, 1)
+        # Fitted with the kernel, not per observation, since the noise level is in
+        # its units.
         scaler = StandardScaler().fit(costs)
         regressor = GaussianProcessRegressor(
             kernel=self.new_kernel() if self._kernel is None else self._kernel,
@@ -308,22 +272,14 @@ class GaussianProcess:
         return scaler, regressor.kernel_
 
     def fit(self, history: Sequence[Observation]) -> None:
-        """Fit the regressor to ``history``, which holds the warmup at least.
-
-        The hyperparameters are fitted to the usable observations in hand and
-        kept for as long as those are the observations handed over, which
-        within a session is the one call per batch that computes it.
-        """
+        """Fit the regressor to ``history``; the kernel refits if its data changed."""
         from sklearn.gaussian_process import GaussianProcessRegressor
 
         seen = usable(history)
-        # The learner asks the model only once the warmup is in hand.
         assert len(seen) >= self.warmup_observations
 
-        # Keyed on which observations they were fitted to and not how many: a
-        # cost arriving late lands in proposal order, in the middle, so two
-        # histories holding the same number of usable observations can hold
-        # different ones.
+        # Keyed on which observations, not how many: a late cost lands mid-history,
+        # so equal counts can hold different observations.
         fitted_to = tuple(o.shot_id for o in seen)
         if fitted_to != self._fitted_to:
             self._cost_scaler, self._kernel = self.fit_hyperparameters(seen)
@@ -369,8 +325,8 @@ class GaussianProcess:
         dk = -k[:, None] * scaled_distance / length_scale
         v = solve_triangular(regressor.L_, k, lower=True, check_finite=False)
         variance = 1.0 + noise - v @ v
-        # Rounding takes the variance to zero or below at a training point, so
-        # it is floored there and the standard deviation held flat.
+        # Rounding takes the variance to zero or below at a training point, so it
+        # is floored there and the standard deviation held flat.
         if variance > 1e-12:
             std = np.sqrt(variance)
             k_solved = solve_triangular(
@@ -387,17 +343,13 @@ class GaussianProcess:
     def minimize_acquisition(
         self, regressor, uncer_weight: float, best: np.ndarray, lows, highs
     ):
-        """Multi-start L-BFGS-B over the acquisition. Returns scaled parameters.
-
-        ``uncer_weight`` is one weight, the step of the exploration schedule
-        this proposal stands at, rather than the whole of ``uncer_bias``.
-        ``lows`` and ``highs`` are the search bounds, already scaled. Each
-        start descends on :meth:`acquisition`'s exact gradient.
-        """
+        """Multi-start L-BFGS-B over the acquisition, in scaled parameters."""
         from scipy.optimize import minimize
 
         starts = [self.space.scale(best)]
-        starts.extend(self.rng.uniform(lows, highs, size=(self.num_restarts, len(lows))))
+        starts.extend(
+            self.rng.uniform(lows, highs, size=(self.num_restarts, len(lows)))
+        )
 
         winner, winning_value = None, np.inf
         for start in starts:
@@ -412,35 +364,23 @@ class GaussianProcess:
             if result.fun < winning_value:
                 winner, winning_value = result.x, result.fun
         if winner is None:
-            # Every start came back non-finite, so no comparison above was
-            # ever true. Raised rather than clipped: ``np.clip`` on nothing
-            # gives a type error out of numpy, which names neither this
-            # learner nor the fit it came from.
+            # Every start was non-finite. np.clip on None would fail with a type
+            # error naming neither this learner nor the fit.
             raise RuntimeError(
                 f"the acquisition was not finite at any of the "
                 f"{len(starts)} starting points, so there is no point to "
-                f"propose. The posterior this was searched over is not "
-                f"usable: check the costs in the history for a range a fit "
-                f"cannot describe, and the length scales the last refit "
-                f"reported."
+                f"propose. Check the costs in the history for a range a fit "
+                f"cannot describe, and the length scales of the last refit."
             )
         return np.clip(winner, lows, highs)
 
     def condition_on(self, regressor, scaled_point: np.ndarray):
-        """A copy of ``regressor`` with a point folded in at its predicted cost.
-
-        Posterior variance depends on where a point was measured, not on what
-        came back, so adding a proposal at its predicted mean shrinks the
-        uncertainty around it exactly as the real shot will. Without this every
-        point in a batch with a high uncertainty weight chases the same
-        unexplored corner and the batch is spent on one location.
-
-        Returned rather than stored, so that invented points never reach the
-        model and :meth:`predict` describes the measured data however a batch
-        turns out.
-        """
+        """A copy of ``regressor`` with a point folded in at its predicted cost."""
         from sklearn.gaussian_process import GaussianProcessRegressor
 
+        # Posterior variance depends on where a point was measured, not on what
+        # came back, so a point at its predicted mean shrinks the uncertainty
+        # around it as the real shot will, and a batch does not chase one corner.
         mean = regressor.predict(np.atleast_2d(scaled_point))
         alpha = regressor.alpha
         if not np.isscalar(alpha):
@@ -459,28 +399,19 @@ class GaussianProcess:
         return conditioned
 
     def ask(self, history: Sequence[Observation], k: int) -> np.ndarray:
-        """The next ``k`` points, each folded into the fit before the next.
-
-        The search without the cycle, as a ``(k, num_params)`` array: what
-        :class:`GaussianProcessLearner` computes each batch with. The
-        exploration schedule is walked from its first weight by position among
-        these ``k``, and the hyperparameters are refit here if the usable
-        observations differ from the ones they were last fitted to.
-        """
+        """The next ``k`` points, each folded into the fit before the next."""
         self.fit(history)
         best_params = best(history).params
         low, high = self.space.bounds_near(best_params, self.trust_region)
         lows, highs = self.space.scale(low), self.space.scale(high)
 
-        # The points of this batch are folded into a fit held here and nowhere
-        # else, so the model goes on describing the measured data.
+        # Batch points are folded into a fit held only here, so ``predict`` goes
+        # on describing the measured data.
         regressor = self.regressor
         proposals = np.empty((k, self.space.num_params))
         for i in range(k):
-            # Where the exploration schedule stands is the point's position in
-            # the batch, so every batch starts from the first weight -- the
-            # greedy one, by default -- and a batch as long as the schedule
-            # spends one point at each weight.
+            # The schedule is walked by position in the batch, so every batch
+            # starts from the first weight.
             weight = self.uncer_bias[i % len(self.uncer_bias)]
             scaled = self.minimize_acquisition(
                 regressor, weight, best_params, lows, highs
@@ -492,8 +423,7 @@ class GaussianProcess:
 
 
 class GaussianProcessLearner(ParameterSpaceLearner):
-    """Run a Gaussian process beside an explorer, keeping the queue topped up
-    while each batch is computed.
+    """Run a Gaussian process beside an explorer, keeping the queue topped up.
 
     Parameters
     ----------
@@ -503,39 +433,34 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         Source of randomness. The model draws on a generator spawned from it,
         because it draws on a thread of its own.
     cost_has_noise : bool
-        Add a white-noise term to the kernel. Leave this on for real data;
-        turning it off asserts the cost is measured exactly. With it off, a
-        history in which only some observations carry an uncertainty is
-        refused: the rest would be fitted with an ``alpha`` of exactly zero
-        and there is no jitter anywhere else, so the covariance matrix is
-        singular. The refusal comes from
-        :meth:`GaussianProcess.point_variances`, the first place that can see
-        the history is mixed.
+        Add a white-noise term to the kernel. Leave this on for real data: off
+        asserts the cost is measured exactly, and a history in which only some
+        observations carry an uncertainty is then refused, by
+        :meth:`GaussianProcess.point_variances`.
     length_scale_bounds : (float, float)
-        Bounds on the RBF length scale, in units of the unit cube the
-        parameters are scaled onto. ``0 < low < high``.
+        Bounds on the RBF length scale, in units of the unit cube the parameters
+        are scaled onto. ``0 < low < high``.
     noise_level_bounds : (float, float)
         Bounds on the white-noise level, in units of the standardized cost.
         ``0 < low < high``.
     cost_bias : float
         Weight on predicted cost in the acquisition.
-    uncer_bias : float or Sequence[float]
+    uncer_bias : float or sequence of float
         The weights on predicted uncertainty the exploration schedule walks
         through, one per point of a batch, starting again from the first at
-        every batch. A single number is a cycle of one step, and so a fixed
-        weight on every point. A zero in the list is a purely greedy point;
-        the larger the weight, the wider the look.
+        every batch. A single number is a fixed weight on every point. A zero
+        is a purely greedy point; the larger the weight, the wider the look.
     batch_size : int
         How many points the Gaussian process computes at a time, each
-        conditioned on the ones before it. The kernel hyperparameters are
-        refit once per batch.
-    trust_region : float or Sequence[float] or None
+        conditioned on the ones before it. The kernel hyperparameters are refit
+        once per batch.
+    trust_region : float or sequence of float or None
         Restrict the search to this distance around the best point seen.
     warmup_observations : int or None
         How many usable observations the explorer gathers before the Gaussian
-        process computes, counted as observations a fit can use and not as
-        shots. Defaults to max(5, twice the parameter count). Warmup ends at
-        the count, and explorer shots already queued then still run.
+        process computes, counted as observations a fit can use, not shots.
+        Defaults to max(5, twice the parameter count). Explorer shots already
+        queued when warmup ends still run.
     explorer : str or ParameterSpaceLearner
         The learner whose shots run the warmup and fill the queue after it:
         ``"random"``, ``"directed_random"`` or ``"differential_evolution"``,
@@ -545,9 +470,9 @@ class GaussianProcessLearner(ParameterSpaceLearner):
     explore_runs : int
         How many explorer shots each batch cycle holds at the least, from one
         batch's last point to the next batch's first, wherever in the cycle
-        they fall. Zero guarantees none, and the explorer only fills the
-        queue. Filling alone already puts about ``num_buffered_runs`` in each
-        cycle, so a smaller ``explore_runs`` changes nothing.
+        they fall. Zero guarantees none, and the explorer only fills the queue.
+        Filling alone already puts about ``num_buffered_runs`` in each cycle, so
+        a smaller ``explore_runs`` changes nothing.
     """
 
     def __init__(
@@ -566,8 +491,8 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         explore_runs: int = 1,
     ):
         super().__init__(space, rng)
-        # The model draws on a thread of its own, and two threads must not
-        # share a Generator.
+        # The model runs on a thread of its own, and threads must not share a
+        # Generator.
         self.model = GaussianProcess(
             space,
             rng.spawn(1)[0],
@@ -583,10 +508,8 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         self.batch_size = knobs.integer("batch_size", batch_size)
         if self.batch_size < 1:
             raise ValueError(
-                f"batch_size is how many points the Gaussian process proposes "
-                f"at a time, so it must be at least 1, got {self.batch_size}. "
-                f"A batch of none is a learner that never proposes after "
-                f"warmup."
+                f"batch_size must be at least 1, got {self.batch_size}; a batch "
+                f"of none never proposes after warmup."
             )
         if isinstance(explorer, tuple(EXPLORERS.values())):
             self.explorer = explorer
@@ -597,10 +520,8 @@ class GaussianProcessLearner(ParameterSpaceLearner):
         self.explore_runs = knobs.integer("explore_runs", explore_runs)
         if self.explore_runs < 0:
             raise ValueError(
-                f"explore_runs is how many explorer shots each batch cycle "
-                f"holds at the least, so it cannot be negative, got "
-                f"{self.explore_runs}. Zero guarantees none: the explorer then "
-                f"only fills the queue."
+                f"explore_runs cannot be negative, got {self.explore_runs}; "
+                f"zero guarantees none, and the explorer only fills the queue."
             )
         #: The batch being computed, as a future, or ``None``.
         self.computation: Future | None = None
@@ -610,12 +531,7 @@ class GaussianProcessLearner(ParameterSpaceLearner):
     def acquire(
         self, history: Sequence[Observation], k: int
     ) -> list[tuple[np.ndarray, str]]:
-        """The cycle: warmup, then batch points as they are ready, topped up
-        with explorer shots.
-
-        The model is read only through the future of its computation, and
-        only once that is done, so a refill never waits on a fit.
-        """
+        """The cycle: warmup, then batch points as ready, plus explorer shots."""
         # "mine" is the explorer's own shots, which excludes the configured
         # start and the batches.
         scoped = {
@@ -629,7 +545,8 @@ class GaussianProcessLearner(ParameterSpaceLearner):
             ]
 
         if self.computation is not None and self.computation.done():
-            # Raises here, on the message loop, whatever the model raised.
+            # Read only once done, so a refill never waits on a fit. Whatever the
+            # model raised is raised here, on the message loop.
             self.ready.extend(self.computation.result())
             self.computation = None
         if (
@@ -645,10 +562,9 @@ class GaussianProcessLearner(ParameterSpaceLearner):
 
         released = []
         if self.ready:
-            # Only a whole batch waits, for explore_runs explorer shots since
-            # the run began or the last batch's last point. A batch goes out
-            # unbroken, so that is the count from its first, however many the
-            # budget cut.
+            # Only a whole batch waits, for explore_runs explorer shots since the
+            # run began or the last batch's last point. One already begun goes out
+            # without waiting.
             mains = [i for i, o in enumerate(history) if o.source == BATCH_SOURCE]
             since = (mains or [0])[-1]
             explored = sum(

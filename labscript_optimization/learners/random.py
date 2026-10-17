@@ -1,21 +1,17 @@
 """Random and directed random learners.
 
-:class:`RandomLearner` draws uniformly from the whole space. It is the simplest
-thing that works and the reference every other learner is measured against.
+:class:`RandomLearner` draws uniformly from the whole space, the reference every
+other learner is measured against. :class:`DirectedRandomLearner` draws near a
+previously seen point, which biases it towards exploring; it is the explorer the
+Gaussian process runs unless told otherwise.
 
-:class:`DirectedRandomLearner` draws near a previously seen point rather than
-near the best one, which biases it towards exploring the space instead of
-refining a single minimum. It is the explorer the Gaussian process runs unless
-told otherwise.
-
-Both keep exactly the hint of the run's shots in flight, as every learner
-declaring no generation does: each proposes as many as the hint leaves room for
-beside the history's pending records, whoever proposed them, so a configured
-start the session has placed takes one of their places. How a point is drawn
-is :meth:`RandomLearner.ask`, which is the whole of what the two differ in.
+Neither declares a generation, so both keep the hint's number of the run's shots
+in flight, each proposing as many as the hint leaves room for beside the
+history's pending records, whoever proposed them. They differ only in
+:meth:`RandomLearner.ask`.
 """
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -28,49 +24,50 @@ from .base import ParameterSpaceLearner
 class RandomLearner(ParameterSpaceLearner):
     """Uniform random draws from the whole space.
 
-    Args:
-        space: The parameter space to search.
-        rng: Source of randomness.
+    Parameters
+    ----------
+    space : ParameterSpace
+        The parameter space to search.
+    rng : numpy.random.Generator
+        Source of randomness.
     """
 
     #: It draws without reading the history.
     history_scope = "none"
 
     def ask(self, history: Sequence[Observation], k: int) -> np.ndarray:
-        """The next ``k`` points, as a ``(k, num_params)`` array.
-
-        The drawing without the pacing: what
-        :meth:`~labscript_optimization.learners.base.Learner.propose` tops the
-        queue up with, whatever is in flight.
-        """
+        """The next ``k`` points as a ``(k, num_params)`` array, without the pacing."""
         return self.space.uniform(self.rng, k)
 
 
 class DirectedRandomLearner(RandomLearner):
     """Random draws centered on a previously seen point.
 
-    Each proposal is either a pure random draw, with probability
-    ``explore_fraction``, or a draw from a trust region centered on one of the
-    observations whose cost falls inside ``trust_range``.
+    Each proposal is a draw from the whole space with probability
+    ``explore_fraction``, otherwise a draw from the trust region centered on one
+    of the observations whose cost lies inside ``trust_range``. That range is a
+    fraction of the way from the worst cost seen (0) to the best (1), so
+    ``[1, 1]`` centers on the best point. The default sits near the worst end,
+    which is what makes this learner an explorer.
 
-    ``trust_range`` is measured as a fraction of the way from the worst cost
-    seen to the best, so ``[1, 1]`` centers on the best point and values near
-    zero center on poor ones. The default sits near the worst end: spreading
-    the search over mediocre points is what makes this learner an explorer.
-
-    Args:
-        space: The parameter space to search.
-        rng: Source of randomness.
-        trust_region: Maximum distance from the center point. A float in (0, 1)
-            is a fraction of each parameter's range; a sequence is absolute
-            distances. ``None`` searches the whole space, which makes this
-            learner equivalent to :class:`RandomLearner`.
-        trust_range: Two fractions, in order, bounding which observations may
-            be chosen as the center.
-        trust_gaussian: Draw from a Gaussian of width ``trust_region`` about
-            the center instead of uniformly within it.
-        explore_fraction: Share of proposals that ignore the trust region and
-            draw from the whole space.
+    Parameters
+    ----------
+    space : ParameterSpace
+        The parameter space to search.
+    rng : numpy.random.Generator
+        Source of randomness.
+    trust_region : float or sequence of float or None
+        Largest distance from the center. A float in (0, 1) is a fraction of
+        each parameter's range; a sequence is absolute distances. ``None``
+        searches the whole space, as :class:`RandomLearner` does.
+    trust_range : (float, float)
+        Ordered pair of fractions bounding which observations may be the center.
+    trust_gaussian : bool
+        Draw from a Gaussian of width ``trust_region`` about the center instead
+        of uniformly within it.
+    explore_fraction : float
+        Share of proposals, in [0, 1], that ignore the trust region and draw
+        from the whole space.
     """
 
     #: It centers its draws on the shots seen, whoever proposed them.
@@ -96,9 +93,8 @@ class DirectedRandomLearner(RandomLearner):
             )
 
         self.trust_range = knobs.pair("trust_range", trust_range)
-        # Refused rather than sorted: a pair written backwards is a
-        # misunderstanding of which end is which, and putting it in order
-        # quietly runs a search the lab did not ask for.
+        # Refused, not sorted: a pair written backwards misreads which end is
+        # which, and sorting it would quietly run a search nobody asked for.
         if not 0 <= self.trust_range[0] <= self.trust_range[1] <= 1:
             raise ValueError(
                 f"trust_range must be an ordered pair within [0, 1], got "
@@ -106,14 +102,7 @@ class DirectedRandomLearner(RandomLearner):
             )
 
     def _center(self, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
-        """Pick the point to draw around.
-
-        The band is a slice out of the middle of the observed cost range, so a
-        history whose costs all lie outside it -- two observations, one at each
-        end -- leaves nothing to choose from, and the best point is used. A
-        single observation is not that case: it is both best and worst, which
-        collapses the band onto it.
-        """
+        """A point in the cost band to draw around, else the best point."""
         best, worst = costs.min(), costs.max()
         high = worst + (best - worst) * self.trust_range[0]
         low = worst + (best - worst) * self.trust_range[1]
@@ -124,7 +113,6 @@ class DirectedRandomLearner(RandomLearner):
         return candidates[self.rng.integers(len(candidates))]
 
     def _draw_near(self, center: np.ndarray) -> np.ndarray:
-        """One draw about a center point, Gaussian or uniform per ``trust_gaussian``."""
         if self.trust_gaussian:
             return self.space.clip(self.rng.normal(center, self.trust_region))
         return self.space.uniform(self.rng, 1, center, self.trust_region)[0]

@@ -1,23 +1,19 @@
-"""What a learner is.
+"""What a learner is: a function from the proposal history to proposals.
 
-A learner is a function from the proposal history and a hint -- how many of
-the run's shots to keep in flight -- to whatever its method allows it to
-propose now, each proposal with its source. It is given the whole history
-every time, in the order the proposals were made, and holding every one of
-them: a shot still running and a shot that will never report are both in
-there as a position spent without a usable cost. Anything a learner computes
-from the history and keeps between calls is a cache: it must hold what an
-instance handed the same history for the first time would compute. The one
-thing a learner carries that the history does not fix is the position of its
-own rng stream, which decides where a draw lands and nothing about what the
-learner believes. That rule is what keeps the out-of-order arrival of costs out
-of the learners. The Gaussian process's kernel is an exception, for speed: each
-refit starts from where the last one ended. So is its timing: whether a batch
-is ready at a refill depends on how long its fit took, and a run under it is
-not reproducible from a seed.
+A learner is given the whole history every time, in the order the proposals were
+made, and every record is in it: a shot still running and one that will never
+report are both a position spent without a usable cost. Anything a learner keeps
+between calls is a cache and must hold what a new instance handed the same
+history would compute. Only the position of its rng stream is state the history
+does not fix, and it decides where a draw lands, not what the learner believes.
+That rule keeps the out-of-order arrival of costs out of the learners.
+
+The Gaussian process breaks it twice, for speed: each kernel refit starts from
+the last, and whether a batch is ready at a refill depends on how long its fit
+took, so a run under it is not reproducible from a seed.
 """
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -26,61 +22,43 @@ from ..space import ParameterSpace
 
 
 class Learner:
-    """Proposes the next parameters to try.
+    """Proposes the next parameters to try; the whole of what a session drives.
 
-    This is the whole of what a session drives. A learner that wraps other
-    learners is one of these too, so anything holding a learner can hold a
-    wrapped one without knowing it.
+    A learner supplies ``ask(history, k)``, its method without the pacing, which
+    returns ``k`` points as a ``(k, num_params)`` array. One with more than one
+    way of proposing overrides :meth:`acquire` instead. :meth:`propose` does the
+    pacing. A session proposes from anything carrying ``propose`` and
+    ``generation``, but every learner this package names inherits from this
+    class.
 
-    Pacing is written once, in :meth:`propose`. A learner supplies
-    ``ask(history, k)``, its method without the pacing, which returns ``k``
-    points as a ``(k, num_params)`` array; one with more than one way of
-    proposing overrides :meth:`acquire` instead.
+    A learner that wraps others must answer for every attribute read from
+    outside a learner, such as ``generation`` for the session and the
+    configuration. It may answer for itself, pass the wrapped learner's on, or
+    refuse to be built. An attribute left unanswered takes the reader's default
+    and drops the wrapped learner's declaration without a word.
 
-    Inheriting is not what makes an object usable -- a session proposes from
-    anything carrying these two members -- but everything this package calls
-    a learner is one.
+    These declarations are facts about an instance, read by building a learner
+    and asking it, never from a class, a signature or a registry entry, which
+    agree with the learner only in the cases that exist when they are written.
+    A learner may declare from a value its constructor was handed.
 
-    A wrapper owes an answer for every attribute something outside a learner
-    reads off it: ``generation`` here, read by the session and by the
-    configuration. Three answers are honest -- answer for itself, where
-    the wrapper's own value is the true one; pass the wrapped learner's on,
-    where the wrapper can hold what that value promises; or refuse to be
-    built, where it cannot. Leaving one unanswered is none of the three: the
-    reader's own default becomes the answer, and the wrapped learner's
-    declaration is dropped with nothing said. That is how a generation gets
-    lost behind a wrapper while everything still runs.
-
-    These declarations are facts about an instance. Nothing outside a learner
-    reads one from a class, a signature, a registry entry or a count: it
-    builds a learner and asks that. Every one of those stands in for the
-    learner and agrees with it only in the cases that exist on the day it is
-    written -- a class attribute misses the learner that assigns in
-    ``__init__``, which is the ordinary way; a signature default misses the
-    learner that derives or clamps what it was given; a count of proposals is
-    not the position one was made at. A learner is therefore free to declare
-    however it likes, including from a value its constructor was handed, and
-    the declaration is read where it is true.
-
-    Where a proposal came from is not a declaration. It is returned beside the
-    proposal, by the call that made it, so it cannot describe some other call,
-    and nothing supplies it on a learner's behalf: a proposal returned without
-    one is refused by the session rather than recorded as the main learner's.
+    Where a proposal came from is not a declaration. The call that made it
+    returns the source beside it, and the session refuses a proposal returned
+    without one.
     """
 
     #: How many proposals this learner makes at a time, or ``None`` for any
     #: number. A learner that declares one proposes only whole groups of that
-    #: many, and only when nothing of the last group is outstanding: declaring
-    #: it is what makes :meth:`propose` hold that barrier. What else reads it
-    #: is the budget refused below two of them, the ``num_buffered_runs``
-    #: refused beside one, and the session's count of starved refills, which
-    #: skips a learner whose queue empties once a generation by design.
+    #: many, and only when nothing of the last group is pending;
+    #: :meth:`propose` holds that barrier. The configuration refuses a budget
+    #: below two groups and a ``num_buffered_runs`` beside one, and the
+    #: session's count of starved refills skips such a learner, whose queue
+    #: empties once a generation by design.
     generation: int | None = None
 
     #: Which records of the history this learner reads when another runs it:
-    #: ``"all"``, ``"mine"`` -- the shots it proposed -- or ``"none"``. Read
-    #: only by a learner that runs others, as the Gaussian process runs its
-    #: explorer.
+    #: ``"all"``, ``"mine"`` (the shots it proposed) or ``"none"``. Read only by
+    #: a learner that runs others, as the Gaussian process runs its explorer.
     history_scope: str = "all"
 
     def propose(
@@ -88,39 +66,35 @@ class Learner:
     ) -> list[tuple[np.ndarray, str]]:
         """Return what this learner's method allows it to propose now.
 
-        A learner declaring no ``generation`` tops the run's shots in flight up
-        to ``hint``, counting every pending record whoever proposed it. One
-        declaring a generation proposes the rest of the block of
-        ``generation`` positions its next proposal falls in when nothing of the
-        last is pending, and nothing otherwise. The number settled on is
-        handed to :meth:`acquire`.
+        With no ``generation``, tops the run's shots in flight up to ``hint``,
+        counting every pending record whoever proposed it. With one, proposes
+        the rest of the block of ``generation`` positions the next proposal
+        falls in when nothing of the last is pending, and nothing otherwise.
+        The count settled on goes to :meth:`acquire`.
 
         Parameters
         ----------
-        history : Sequence[Observation]
-            Every proposal made so far, in the order they were made, each with
-            what became of it. The ones still pending are the run's shots in
-            flight.
+        history : sequence of Observation
+            Every proposal made so far, in the order made, each with what became
+            of it. The pending ones are the run's shots in flight.
         hint : int
-            How many of the run's shots to keep in flight: the session's
-            ``num_buffered_runs``. A learner declaring a generation does not
-            read it.
+            How many of the run's shots to keep in flight, the session's
+            ``num_buffered_runs``. A learner declaring a generation ignores it.
 
         Returns
         -------
         list of (numpy.ndarray, str)
-            Zero or more ``(params, source)`` pairs, in the order they are to
-            be run, so that what the run budget has no room for is cut from
-            the end: every ``params`` inside the bounds, and every ``source`` a
-            string naming which of the learner's ways of proposing made it,
-            which is what that shot reads in the ``phase`` column.
+            ``(params, source)`` pairs in the order they are to run, so that
+            what the run budget has no room for is cut from the end. Each
+            ``params`` is inside the bounds, and ``source`` names which of the
+            learner's ways of proposing made it: the shot's ``phase``.
         """
         if self.generation is None:
             k = hint - sum(o.state == PENDING for o in history)
         else:
-            # The configured start, on the call that places it, is pending with
-            # no shot id yet: it founds slot 0 and goes out with the rest of its
-            # generation rather than being waited for alone.
+            # The configured start is pending with no shot id on the call that
+            # places it. It founds slot 0 and goes out with its generation, not
+            # waited for alone.
             if any(o.state == PENDING and o.shot_id is not None for o in history):
                 return []
             k = self.generation - len(history) % self.generation
@@ -131,22 +105,12 @@ class Learner:
     def acquire(
         self, history: Sequence[Observation], k: int
     ) -> list[tuple[np.ndarray, str]]:
-        """Return ``k`` proposals, each beside its source.
+        """Return ``k`` proposals as ``(params, source)`` pairs.
 
         The step a learner with more than one way of proposing overrides. By
-        default it is ``ask(history, k)``'s points, each sourced ``"main"``.
-
-        Parameters
-        ----------
-        history : Sequence[Observation]
-            As :meth:`propose` was handed it.
-        k : int
-            How many proposals :meth:`propose` settled on, at least one.
-
-        Returns
-        -------
-        list of (numpy.ndarray, str)
-            As :meth:`propose` returns them.
+        default these are the points of ``ask(history, k)``, each sourced
+        ``"main"``. ``history`` is as :meth:`propose` was handed it, and ``k``,
+        at least one, is the count it settled on.
         """
         return [(params, "main") for params in self.ask(history, k)]
 
@@ -154,16 +118,11 @@ class Learner:
 class ParameterSpaceLearner(Learner):
     """A learner that searches a :class:`~labscript_optimization.space.ParameterSpace`.
 
-    Fixes how one is built: ``space`` first and ``rng`` second, positionally,
-    then the learner's own knobs as keyword arguments with defaults. Every
-    learner named in a configuration is built as ``cls(space, rng, **options)``
-    with the options matched by name against the signature.
-
-    Nothing else is shared. A learner keeps its own state. Where a run
-    begins is not part of it: the session proposes the space's configured
-    start itself, at the first position of the run, and a learner meets it
-    in the history like any other record -- from the very first call, where
-    it is the pending record at position 0.
+    Built as ``cls(space, rng, **options)``: ``space`` and ``rng`` positionally,
+    then the learner's own knobs as keyword arguments with defaults, matched by
+    name against the signature. The session proposes the space's configured
+    start itself, so a learner meets it in the history like any other record,
+    from the first call, as the pending record at position 0.
     """
 
     def __init__(self, space: ParameterSpace, rng: np.random.Generator):

@@ -1,34 +1,30 @@
 """Differential evolution, in ask/tell form.
 
-The algorithm is written out here rather than called from scipy, whose
-optimizers are callback-driven and want to own the loop, while a lab optimizer
-has to hand out a point now and receive its cost hours later, possibly out of
-order.
+The algorithm is written here rather than called from scipy, whose optimizers
+are callback-driven and want to own the loop, while a lab optimizer hands out a
+point now and receives its cost hours later, possibly out of order.
 
-This is textbook generational differential evolution -- scipy's deferred
-updating. A whole population is proposed at once and none of its trials is
-judged until the generation is complete, so the incumbent a trial competes
-against is the one it was bred from. The barrier that keeps it so is the one
+This is textbook generational differential evolution, scipy's deferred updating:
+a whole population is proposed at once and no trial is judged until the
+generation is complete, so the incumbent a trial competes against is the one it
+was bred from. The barrier is the one
 :meth:`~labscript_optimization.learners.base.Learner.propose` holds for every
-learner declaring a generation: nothing is proposed while any shot of the run
-is pending, read off the history like everything else.
+learner declaring a generation.
 
-The population is not carried between calls. It is rebuilt by walking the
-history, where a proposal's position is its role: the first ``population_size``
-proposals found the population, one to a slot, and every block of
-``population_size`` after them is a generation of trials, again one to a slot.
-A slot's member is the best usable result that slot has produced, so a cost
-arriving after the generation that would have used it still competes for its
-own slot and disturbs no other -- which is what textbook differential
-evolution would have done with it had it arrived in time.
+The population is not carried between calls but rebuilt by walking the history,
+where a proposal's position is its role: the first ``population_size``
+proposals found the population, one to a slot, and each later block of
+``population_size`` is a generation of trials, again one to a slot. A slot's
+member is the best usable result that slot has produced, so a cost arriving
+after its generation still competes for its own slot and disturbs no other.
 
-As the Gaussian process's explorer it is asked for a point or two at a time
-over its own shots alone, with no barrier: asynchronous differential
-evolution. Its generation, and the budget that generation asks for, apply
-only when it is the learner selected.
+As the Gaussian process's explorer it is asked for a point or two at a time over
+its own shots alone, with no barrier: asynchronous differential evolution. Its
+generation, and the budget that asks for, apply only when it is the selected
+learner.
 """
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -37,38 +33,37 @@ from ..observations import Observation
 from ..space import ParameterSpace
 from .base import ParameterSpaceLearner
 
-#: The mutation strategies, and how many other population members each one
-#: draws on. The counts are read by ``DifferentialEvolutionLearner._mutant``
-#: and by the population guard, so neither can drift from the other.
+#: The mutation strategies, each with how many other population members it draws
+#: on. The mutation and the check on ``population_size`` both read the counts.
 STRATEGIES = {"best1": 2, "best2": 4, "rand1": 3, "rand2": 5}
 
 
 class DifferentialEvolutionLearner(ParameterSpaceLearner):
     """Evolve a population of parameter vectors, a generation at a time.
 
-    Args:
-        space: The parameter space to search.
-        rng: Source of randomness.
-        population_size: How many members the population holds, which is the
-            literature's NP given directly, and so also how many proposals a
-            generation carries. How few will do depends on the strategy: see
-            :data:`STRATEGIES`, which sets the floor this refuses below. That
-            floor is a long way under a population that searches well: around
-            eight members is where one stops converging prematurely, and a
-            budget over a thousand shots is worth sixteen. Both numbers are
-            read off a sweep over four analytic test functions at two to eight
-            parameters.
-            Rules of thumb scaling it with the parameter count are for
-            choosing a number, not the shape of the setting.
-        evolution_strategy: Which mutation to use, one of :data:`STRATEGIES`.
-        mutation_scale: ``(low, high)`` bounds on the differential weight,
-            which is drawn once per ``ask`` call and shared by every trial it
-            makes: once per generation when this learner is selected, and once
-            per trial or two as the Gaussian process's explorer, the variant
-            known as dither.
-        cross_over_probability: Chance that a given coordinate comes from the
-            mutant rather than the incumbent.
-        trust_region: Restrict sampling to this distance around the best member.
+    Parameters
+    ----------
+    space : ParameterSpace
+        The parameter space to search.
+    rng : numpy.random.Generator
+        Source of randomness.
+    population_size : int
+        Members in the population (the literature's NP), and so proposals per
+        generation. :data:`STRATEGIES` sets the floor this refuses below. About
+        eight members suit the budgets a lab usually runs, and sixteen suit
+        budgets past a thousand shots.
+    evolution_strategy : str
+        The mutation, one of :data:`STRATEGIES`.
+    mutation_scale : (float, float)
+        ``(low, high)`` bounds on the differential weight, drawn once per
+        ``ask`` call and shared by every trial it makes: once per generation
+        when this learner is selected, once per trial or two as the Gaussian
+        process's explorer, the variant known as dither.
+    cross_over_probability : float
+        Chance that a given coordinate comes from the mutant rather than the
+        incumbent.
+    trust_region : float or sequence of float or None
+        Restrict sampling to this distance around the best member.
     """
 
     def __init__(
@@ -87,7 +82,7 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         )
         self.population_size = knobs.integer("population_size", population_size)
         # A mutation draws distinct members from the population minus the slot
-        # it is replacing, so it needs one member more than it draws on.
+        # it replaces, so it needs one member more than it draws on.
         draws = STRATEGIES[evolution_strategy]
         if self.population_size < draws + 1:
             raise ValueError(
@@ -116,21 +111,13 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
 
     @property
     def generation(self) -> int:
-        """One whole population.
-
-        A generation is judged as a whole, so its members go out together and
-        nothing is proposed until all of them have been answered for.
-        """
+        """One whole population, judged as a whole: its members go out together."""
         return self.population_size
 
     def _replay(self, history: Sequence[Observation]):
-        """The population as the history so far leaves it.
+        """The members' parameters and costs per slot, ``nan`` where vacant.
 
-        Returns the members' parameters and costs, one row and one cost per
-        slot, with ``nan`` for a slot that is vacant. A slot is vacant until
-        one of its own proposals comes back with a usable cost: its founder
-        may have been dropped or measured nothing, and no other slot's result
-        stands in for it.
+        A slot is vacant until one of its own proposals has a usable cost.
         """
         params = np.full((self.population_size, self.space.num_params), np.nan)
         costs = np.full(self.population_size, np.nan)
@@ -138,15 +125,15 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
             if not record.usable:
                 continue
             slot = position % self.population_size
-            # Selection keeps the better of the incumbent and the trial, which
-            # over a slot's whole run is the cheapest usable result it has had.
+            # Selection keeps the better of incumbent and trial: over a slot's
+            # run, its cheapest usable result.
             if np.isnan(costs[slot]) or record.cost < costs[slot]:
                 params[slot] = record.params
                 costs[slot] = record.cost
         return params, costs
 
     def _sample_new_member(self, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
-        """Draw a point for a slot that has nothing to evolve."""
+        """A founder's point: near the best member once one has a cost, else uniform."""
         if np.isnan(costs).all():
             return self.space.uniform(self.rng, 1)[0]
         best = params[int(np.nanargmin(costs))]
@@ -155,7 +142,6 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
     def _mutant(
         self, slot: int, params: np.ndarray, costs: np.ndarray, scale: float
     ) -> np.ndarray:
-        """The mutant for ``slot``, which the strategy builds from other members."""
         occupied = np.flatnonzero(~np.isnan(costs))
         best = params[int(np.nanargmin(costs))]
         others = occupied[occupied != slot]
@@ -175,19 +161,20 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
     def _trial(
         self, slot: int, params: np.ndarray, costs: np.ndarray, scale: float
     ) -> np.ndarray:
-        """Breed a point for ``slot``: its mutant crossed over with its member."""
+        """A point for ``slot``: its mutant crossed over with its member."""
         draws = STRATEGIES[self.evolution_strategy]
         if int((~np.isnan(costs)).sum()) < draws + 1:
-            # Too few slots hold a member for the mutation to draw distinct
-            # ones from around this slot, so there is no population to breed
-            # from and the point is drawn the way a founder is.
+            # Too few members to draw distinct ones around this slot, so the
+            # point is drawn as a founder's is.
             return self._sample_new_member(params, costs)
 
         mutant = self._mutant(slot, params, costs, scale)
 
-        crossovers = self.rng.random(self.space.num_params) < self.cross_over_probability
-        # At least one coordinate must come from the mutant, or the trial would
-        # be a copy of the incumbent and the generation would stall.
+        crossovers = (
+            self.rng.random(self.space.num_params) < self.cross_over_probability
+        )
+        # At least one coordinate comes from the mutant, or the trial would copy
+        # the incumbent and the generation would stall.
         crossovers[self.rng.integers(self.space.num_params)] = True
         trial = np.where(crossovers, mutant, params[slot])
 
@@ -200,27 +187,20 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         return np.where(outside, fallback, trial)
 
     def ask(self, history: Sequence[Observation], k: int) -> np.ndarray:
-        """The next ``k`` proposals, each for the slot its position names.
+        """The next ``k`` proposals as a ``(k, num_params)`` array, without the barrier.
 
-        The algorithm without the barrier, as a ``(k, num_params)`` array: what
-        :meth:`~labscript_optimization.learners.base.Learner.propose` sends a
-        generation out with, and what a caller holding no barrier asks for at
-        any history length and any ``k``.
+        Each is for the slot its position names.
         """
         params, costs = self._replay(history)
-        # One differential weight per call: per generation when selected, as
-        # textbook differential evolution and scipy draw it, and per trial or
-        # two as the Gaussian process's explorer, the variant known as dither.
+        # One differential weight per call, shared by every trial it makes.
         scale = self.rng.uniform(*self.mutation_scale)
         proposals = np.empty((k, self.space.num_params))
         for i in range(k):
             slot = (len(history) + i) % self.population_size
             if np.isnan(costs[slot]):
-                # An empty slot has no incumbent to cross over with, so its
-                # proposal is drawn founder-style. That is the whole of the
-                # founding generation, where every slot is empty, and later on
-                # a slot whose founder produced no cost, which stays empty
-                # until one of its trials lands.
+                # An empty slot has no incumbent to cross over with, so it is
+                # drawn as a founder is: the whole founding generation, and
+                # later a slot whose founder produced no cost.
                 proposals[i] = self._sample_new_member(params, costs)
             else:
                 proposals[i] = self._trial(slot, params, costs, scale)
