@@ -242,3 +242,16 @@ that work around another module's behaviour, traced to it.
 | 4.3 | `benchmarks/` (`de_pipeline.py` 692 lines, README, four result CSVs) | a developer sweep that informed the DE decisions; nothing runs it since its smoke test went | Keep as a tool, or remove it: Ian decides |
 | 4.4 | Branch `LinkCheck` (`3d95d7d`, on origin) | every commit in `Development`; Ian said "keep LinkCheck for now"; CODEX.md keeps it with the suite-wide LinkCheck effort | Delete under cb8ef42 once Ian releases it, or rename `spielman_retired/LinkCheck` |
 | 4.5 | Compatibility leftovers | none: no upstream, and no old interface kept for a caller (M-LOOP's old names are step 1 #1) | Nothing |
+
+## Step 5: documents, TODOs and commented-out code
+
+`git grep -n -E 'TODO|FIXME|XXX'` over `CodeHealth` finds one, in the docs'
+`conf.py`; a search for commented-out code (`# def`, `# return`, `# x = ` and
+the like) in `labscript_optimization/` finds none.
+
+| # | Item | Proposal |
+| --- | --- | --- |
+| 5.1 | `docs/source/conf.py:141`: `# TODO` with `# desktop-app` and `# spinapi/pynivision/etc`, inherited from the suite's shared `conf.py`, for intersphinx targets this package never links to | Delete the three comment lines |
+| 5.2 | `issues/docs_findings.md`: two open items, publishing to PyPI and pinning the `lyse` extra's versions | Delete the file. Pinning is the suite's item 15 (dependency floors); PyPI goes to the docs' "Possible improvements" if Ian still wants it |
+| 5.3 | `issues/lyse_class_routine.md`, the class-routine spec (361 lines), a planning document | Delete it once the docs carry what a reader needs; check that against the docs' window, troubleshooting and API pages first |
+| 5.4 | `benchmarks/README.md` | Goes or stays with `benchmarks/` (step 4.3) |
