@@ -16,50 +16,40 @@
     holding the cost; optional ``maximize`` (default false) makes larger costs
     better; ``groups`` selects which groups take part.
 
-A parameter in a group that is not listed in ``groups`` is left out entirely;
-one with ``enable = false`` in a group that is listed is carried but not
-searched, and gets no mapping, so its runmanager global keeps whatever value it
-already holds. A name listed there that no table defines is refused, because it
-is a misspelling of a group that would otherwise be left out without a word.
+A parameter in a group not listed in ``groups`` is left out entirely. One with
+``enable = false`` in a listed group is carried but not searched and gets no
+mapping, so its runmanager global keeps the value it already holds. A listed
+name that no table defines is refused as a misspelled group. A parameter name
+and a global name are each unique across the listed groups.
 
-Every key must be one this package knows: a spelling it does not is refused
-rather than accepted and ignored, so a stale file has to be cut down to the
-keys named here before it will load.
+Every key must be one this package knows; an unknown one is refused.
 
-``[GENERAL]`` carries the session's own settings -- ``learner``, which runs;
-``num_buffered_runs``, how deep the queue is; ``max_num_runs`` and
-``max_num_runs_without_better_params``, what stops the run; and ``seed`` -- and
-a learner's knobs are written in ``[LEARNER.<name>]``, the table of the learner
-that takes them. A named table is held to that learner's constructor: every key
-in it must be a knob that learner takes, and every value must be of the kind
-that knob takes. The Gaussian process runs an explorer beside itself, so two
-learners run whenever it is the one selected, and a knob both take is written
-twice, once in each table, and each gets its own value.
-
-The keys of every named table are checked, but its values only when its
-learner is built: a table written for a learner no session builds has its
-keys checked and its values not, which is what lets one file carry the
-settings for several learners and switch between them.
-
-A parameter name and a global name are each unique across the active groups:
-both are looked up by name when a proposal is turned into runmanager globals,
-so a repeat would quietly give one value to two places.
+``[GENERAL]`` carries the session's own settings: ``learner``,
+``num_buffered_runs``, ``max_num_runs``, ``max_num_runs_without_better_params``
+and ``seed``. A learner's knobs are written in ``[LEARNER.<name>]``, the table of
+the learner that takes them: every key must be a knob that learner takes, and
+every value of the kind that knob takes. The Gaussian process runs an explorer
+beside itself, so a knob both take is written in each table, and each gets its
+own value. The keys of every named table are checked, but its values only when
+its learner is built, so one file can carry the settings of several learners.
 
 The Configuration page of the documentation describes every key.
 """
 
 import inspect
 import tomllib
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Sequence
+from os import PathLike
+from typing import Any
 
 import numpy as np
 
 from . import knobs
 from .space import Parameter, ParameterSpace
 
-#: The tables a configuration file carries. Anything else at the top level is
-#: a misspelling, and every setting written under it would go unread.
+#: The tables a file carries; anything else is a misspelling whose settings
+#: would go unread.
 TOP_LEVEL_TABLES = frozenset(
     {
         "ANALYSIS",
@@ -73,10 +63,8 @@ TOP_LEVEL_TABLES = frozenset(
 #: The settings ``[ANALYSIS]`` carries.
 ANALYSIS_KEYS = frozenset({"cost_key", "groups", "maximize"})
 
-#: The whole of what ``[GENERAL]`` carries: the session's own settings and
-#: nothing else. Each is the name of a :class:`Config` field and is handed over
-#: under that name, so the two lists cannot drift apart. A learner's knobs are
-#: not here; they are written in that learner's own table.
+#: What ``[GENERAL]`` carries, each a :class:`Config` field handed over by name.
+#: A learner's knobs are not here; they go in that learner's own table.
 GENERAL_KEYS = frozenset(
     {
         "learner",
@@ -87,23 +75,18 @@ GENERAL_KEYS = frozenset(
     }
 )
 
-#: The whole-number settings of :class:`Config`, the smallest value each one
-#: accepts, and why that is the floor. Most of these floors stand between a
-#: file and a session that dies without saying anything: it refills empty for
-#: as long as it is asked to, counts no starvation, and leaves no stop reason,
-#: because ``check_stop`` is reached only from ``record`` and nothing is ever
-#: recorded to reach it with.
+#: The whole-number settings of :class:`Config`, each with its smallest value
+#: and why. Below most floors a session ends without saying why: nothing is
+#: recorded, and ``check_stop`` is reached only from ``record``.
 INTEGER_SETTINGS = {
     "num_buffered_runs": (
         1,
-        "a learner topping up a queue asked to hold none of the session's "
-        "shots never proposes one",
+        "a queue asked to hold none of the session's shots never gets a proposal",
     ),
-    "seed": (0, "numpy's generator is seeded from a non-negative integer"),
+    "seed": (0, "numpy seeds its generator from a non-negative integer"),
     "max_num_runs": (
         1,
-        "a budget of no runs is a session that never starts rather than one "
-        "that stops, and nothing is ever submitted to stop it",
+        "a budget of no runs is a session that never starts, not one that stops",
     ),
     "max_num_runs_without_better_params": (
         1,
@@ -123,15 +106,13 @@ OPTIONAL_INTEGER_SETTINGS = frozenset(
 #: The keys one ``[PARAMETERS.<group>.<name>]`` table carries.
 PARAMETER_KEYS = frozenset({"enable", "global_name", "max", "min", "start"})
 
-#: Of those, the ones a parameter table must carry: bounds are what a search
-#: has to have.
+#: Of those, the ones a parameter table must carry: a search needs bounds.
 PARAMETER_REQUIRED = frozenset({"max", "min"})
 
 #: The keys one ``[RUNMANAGER_GLOBALS.<group>.<name>]`` table carries.
 GLOBAL_KEYS = frozenset({"args", "enable", "expr"})
 
-#: Of those, the one a globals table must carry: ``expr`` is optional, the
-#: parameters it is given are not.
+#: Of those, the one a globals table must carry; ``expr`` is optional.
 GLOBAL_REQUIRED = frozenset({"args"})
 
 
@@ -139,32 +120,30 @@ GLOBAL_REQUIRED = frozenset({"args"})
 class GlobalMapping:
     """One runmanager global, and how to compute it from the parameters.
 
-    Args:
-        name: The runmanager global to set.
-        expr: Source of a lambda taking ``args`` in order, evaluated in the
-            namespace runmanager evaluates globals in, or ``None`` to pass the
-            single argument through unchanged.
-        args: Names of the parameters feeding this global.
+    Parameters
+    ----------
+    name : str
+        The runmanager global to set.
+    expr : str or None
+        Source of a lambda taking ``args`` in order, evaluated in the namespace
+        runmanager evaluates globals in; ``None`` passes the single argument
+        through unchanged.
+    args : tuple of str
+        Names of the parameters feeding this global.
     """
 
     name: str
     expr: str | None
     args: tuple[str, ...]
     #: ``expr`` as a callable, or ``None`` when the single argument passes
-    #: through unchanged. Not an init field: the only way to get one is through
-    #: the checking in ``__post_init__``.
+    #: through unchanged. Not an init field: it exists only through the checks
+    #: in ``__post_init__``.
     function: Callable[..., Any] | None = field(
         init=False, repr=False, compare=False, default=None
     )
 
     def __post_init__(self) -> None:
-        """Build ``expr``'s callable now, so a bad one raises here.
-
-        Left until a proposal needs it, a mistyped lambda would first be found
-        mid-session, out through the worker's error path. The arguments are
-        held to the same moment: a callable that cannot take the ones it is
-        configured with fails in exactly that place otherwise.
-        """
+        """Build ``expr``'s callable now, so a bad one fails here, not mid-session."""
         if self.expr is None:
             if len(self.args) != 1:
                 raise ValueError(
@@ -174,15 +153,15 @@ class GlobalMapping:
                     f"name one parameter."
                 )
             return
-        # The namespace runmanager evaluates its globals in, built the same
-        # way, so an expr sees the names a global does. Imported here, so a
-        # file without an expr loads neither matplotlib nor runmanager.
+        # The namespace runmanager evaluates globals in, so an expr sees the
+        # same names. Imported here, so a file without an expr loads neither
+        # matplotlib nor runmanager.
         namespace = {}
         exec("from pylab import *", namespace, namespace)
         exec("from runmanager.functions import *", namespace, namespace)
         try:
-            # The expression comes from the lab's own configuration file,
-            # which is as trusted as the analysis routines themselves.
+            # The lab's own configuration file is as trusted as its analysis
+            # routines.
             function = eval(self.expr, namespace)  # noqa: S307
         except Exception as error:
             raise ValueError(
@@ -197,8 +176,8 @@ class GlobalMapping:
         try:
             signature = inspect.signature(function)
         except (TypeError, ValueError):
-            # Some callables do not expose one. Refusing on a signature that
-            # cannot be read would reject a mapping that works.
+            # Some callables expose no signature; refusing one would reject a
+            # mapping that works.
             signature = None
         if signature is not None:
             try:
@@ -237,40 +216,27 @@ class Config:
     #: The learner that runs, a key of
     #: :data:`~labscript_optimization.learners.LEARNERS`.
     learner: str = "gaussian_process"
-    #: One table of knobs per learner, by learner name. A knob is written in
-    #: the table of the learner that takes it and reaches no other, which is
-    #: what lets the Gaussian process and its explorer be given different
-    #: values of the same knob.
+    #: One table of knobs per learner, by learner name. A knob reaches only the
+    #: learner whose table holds it, so the Gaussian process and its explorer can
+    #: take different values of the same knob.
     learner_options: dict[str, dict[str, Any]] = field(default_factory=dict)
-    #: How many of this session's shots to keep in runmanager's queue. This is
-    #: the hint every learner is handed. One of the shots in flight is always the
-    #: one BLACS is running, so at two one is waiting whenever BLACS asks for
-    #: the next. Every learner declaring no generation keeps exactly this many
-    #: in flight, and so would propose nothing at zero. A learner declaring a
-    #: generation sets its own depth from that declaration, and a file writing
-    #: this beside one is refused rather than left with two settings for the
-    #: same number.
+    #: Shots of this session to keep in runmanager's queue, and the hint every
+    #: learner is handed. One in flight is the one BLACS is running, so at 2 one
+    #: is waiting. A generational learner sets its own depth; a file also
+    #: writing this is refused.
     num_buffered_runs: int = 2
     #: The run budget, or ``None`` for no limit.
     max_num_runs: int | None = None
     #: Stop after this many completed shots without a better cost. Every
-    #: completed shot counts, including one whose cost was not usable: it is
-    #: still a shot spent, and counting only the usable ones would let a
-    #: session whose detector has died run forever on the limit meant to
-    #: stop it.
+    #: completed shot counts, one with an unusable cost included, so a dead
+    #: detector still ends the run.
     max_num_runs_without_better_params: int | None = None
     #: Seed of the random number generator the learners draw from, or ``None``
     #: to seed it from system entropy.
     seed: int | None = None
 
     def __post_init__(self) -> None:
-        """Hold every field to what it is allowed to be.
-
-        This is the one authority for them, so a :class:`Config` written out
-        in a script or a test is checked exactly as one parsed from a file:
-        :func:`from_dict` hands over what the file said, and this decides
-        whether it can be run.
-        """
+        """Check every field, so a Config built in code is held to what a file is."""
         for key, (floor, why) in INTEGER_SETTINGS.items():
             value = getattr(self, key)
             if value is None and key in OPTIONAL_INTEGER_SETTINGS:
@@ -294,9 +260,8 @@ class Config:
         if repeated:
             raise ValueError(
                 f"{', '.join(repr(n) for n in repeated)} names more than one "
-                f"runmanager global. Each global is set once per shot, so the "
-                f"last mapping written would be the only one that took effect; "
-                f"the globals set are {names}"
+                f"runmanager global; each is set once per shot. "
+                f"The globals set are {names}"
             )
 
     @property
@@ -308,34 +273,20 @@ class Config:
     def globals_for(self, params: Sequence[float]) -> dict[str, Any]:
         """The runmanager globals that realize one parameter vector.
 
-        Each parameter reaches its mappings as a Python ``float``, and a numpy
-        scalar an ``expr`` returns is converted, so a global's value -- the
-        parameter itself, or what an ``expr`` builds from several -- holds no
-        numpy scalar however the vector arrived.
-        runmanager writes a submitted value into its global's expression as
-        the value's ``repr``, and a numpy scalar's repr names numpy:
-        ``np.float64(0.25)`` would be what the operator reads in runmanager
-        and what the shot file stores.
+        Values hold no numpy scalars: runmanager writes each one's ``repr``, and
+        a numpy scalar's names numpy, as in ``np.float64(0.25)``.
         """
         values = {p.name: float(v) for p, v in zip(self.space.parameters, params)}
         return {g.name: g.evaluate(values) for g in self.globals}
 
 
 def present(table: dict, keys: Iterable[str]) -> dict[str, Any]:
-    """The ``keys`` this table actually carries, exactly as they were written.
-
-    A key the file leaves out is left out of the result, so :class:`Config`
-    supplies it from the field's own default. No default is written here: each
-    one lives on the dataclass and nowhere else, so none can drift. Nothing is
-    coerced either: what a setting may be is
-    :meth:`Config.__post_init__`'s to say, and a value converted on the way
-    past would reach it as something nobody wrote.
-    """
+    """The ``keys`` the table carries, as written; the rest take Config's defaults."""
     return {key: table[key] for key in keys if key in table}
 
 
 def require_present(table: dict, keys: frozenset[str], where: str) -> None:
-    """Fail on a required key the table leaves out, in the voice a typo gets."""
+    """Raise for a required key the table leaves out."""
     missing = sorted(keys - set(table))
     if missing:
         raise ValueError(
@@ -345,19 +296,10 @@ def require_present(table: dict, keys: frozenset[str], where: str) -> None:
 
 
 def require_tables(holder: Any, where: str, shape: str) -> dict:
-    """Fail on a value written where this package expects a table.
-
-    ``[PARAMETERS.<group>.<name>]`` is three levels deep, and the ordinary slip
-    in a hand-edited file is to write it two: the group left out, so a
-    parameter's own settings sit where its group's parameters belong. What the
-    checking below then reads as a parameter table is a number, and what it
-    reads as a key is a setting -- so it fails on a type rather than on the
-    file, and the message names neither.
-
-    A list is refused for the same reason and reads worse: it is iterable, so
-    the spelling check goes through it and blames its first element for being a
-    key the table does not accept.
-    """
+    """Return ``holder`` if it is a table of tables, else raise naming ``where``."""
+    # The usual slip is leaving out the group, so a parameter's own settings sit
+    # where its group's parameters belong and a later check fails on a type. A
+    # list is refused too, or the key check would blame its first element.
     if not isinstance(holder, dict):
         raise ValueError(
             f"{where} is written as {holder!r}, and {shape} expects a table."
@@ -366,33 +308,22 @@ def require_tables(holder: Any, where: str, shape: str) -> dict:
     if wrong:
         named = ", ".join(repr(key) for key in wrong)
         raise ValueError(
-            f"{where} gives {named} a value where {shape} expects a table, so "
-            f"this is one level short of where it belongs. Write the table "
-            f"it goes under: only the innermost table of {shape} carries "
-            f"settings."
+            f"{where} gives {named} a value where {shape} expects a table. "
+            f"This is one level short: only the innermost table of {shape} "
+            f"carries settings, so write the table each goes under."
         )
     return holder
 
 
 def check_keys(raw: dict) -> None:
-    """Fail on a key this package does not know, and on a required one left out.
-
-    Accepting a key and ignoring it is how a lab comes to believe a setting is
-    in force when it is not, so a stale file is stopped at the door instead.
-
-    Parameter and global tables are checked whether or not their group is
-    listed in ``groups``, so a typo in a switched-off group does not wait for
-    the day somebody lists it. In a group that is not listed, keys, required
-    keys and types are checked, and nothing more: bounds, ``args`` and ``expr``
-    are checked only once the group is listed, in :func:`from_dict`. Their
-    depth is checked before their keys are, because a table written one level
-    short puts settings where entries belong and every check after that reads
-    the wrong thing; see :func:`require_tables`.
-    """
+    """Raise for an unknown key, a missing required one, or a wrongly typed value."""
     knobs.reject_unknown(raw, TOP_LEVEL_TABLES, "the top level of the configuration")
     require_tables(raw.get("LEARNER", {}), "[LEARNER]", "[LEARNER.<name>]")
     knobs.reject_unknown(raw.get("ANALYSIS", {}), ANALYSIS_KEYS, "[ANALYSIS]")
     knobs.reject_unknown(raw.get("GENERAL", {}), GENERAL_KEYS, "[GENERAL]")
+    # Parameter and global tables are checked for every group, listed or not, so
+    # a typo in a switched-off group does not wait for the day it is listed.
+    # Bounds, args and expr wait for from_dict, and only for listed groups.
     for table, allowed, required in (
         ("PARAMETERS", PARAMETER_KEYS, PARAMETER_REQUIRED),
         ("RUNMANAGER_GLOBALS", GLOBAL_KEYS, GLOBAL_REQUIRED),
@@ -414,23 +345,12 @@ def check_keys(raw: dict) -> None:
                         knobs.number(f"{where} {key}", entry[key])
                 if "global_name" in entry:
                     knobs.string(f"{where} global_name", entry["global_name"])
-    # [LEARNER.<name>] is left to learners.validate_options, which is the only
-    # thing that knows one learner's keys: the table names its learner, so that
-    # learner's constructor is the schema for it.
+    # [LEARNER.<name>] is checked by learners.validate_options, which knows each
+    # learner's keys.
 
 
 def loads(text: str) -> Config:
-    """Parse a configuration from TOML text.
-
-    Parameters
-    ----------
-    text : str
-        The contents of a configuration file.
-
-    Returns
-    -------
-    Config
-        The configuration, checked as :func:`from_dict` checks it.
+    """Parse a configuration from TOML text, checked as :func:`from_dict` checks it.
 
     Raises
     ------
@@ -442,18 +362,8 @@ def loads(text: str) -> Config:
     return from_dict(tomllib.loads(text))
 
 
-def load(path) -> Config:
-    """Read a configuration from a TOML file.
-
-    Parameters
-    ----------
-    path : str or os.PathLike
-        The file to read.
-
-    Returns
-    -------
-    Config
-        The configuration, checked as :func:`from_dict` checks it.
+def load(path: str | PathLike) -> Config:
+    """Read a configuration from a TOML file, checked as :func:`from_dict` checks it.
 
     Raises
     ------
@@ -464,23 +374,21 @@ def load(path) -> Config:
     ModuleNotFoundError
         Without labscript-utils, which the ``lyse`` extra installs.
     """
-    # Imported here, because the suite is the lyse extra and loads and
-    # from_dict need none of it.
+    # Imported here: labscript-utils is the lyse extra, and loads and from_dict
+    # need none of it.
     from labscript_profile.toml_config import load_toml_file
 
     return from_dict(load_toml_file(path))
 
 
 def from_dict(raw: dict) -> Config:
-    """Build a :class:`Config` from already-parsed TOML.
+    """Build a :class:`Config` from already-parsed TOML, checked as strictly as a file.
 
-    ``raw`` is the whole file as nested dictionaries, checked as strictly as
-    one read from disk.
-
-    Every complaint about the file is a :class:`ValueError`, a missing setting
-    as much as a contradictory one, because ``KeyError`` reprs its argument and
-    a written-out sentence raised as one reaches the reader in quotes with its
-    own quotes escaped.
+    Raises
+    ------
+    ValueError
+        For every complaint about the file, a missing setting included: a
+        ``KeyError`` would show its sentence in quotes.
     """
     check_keys(raw)
 
@@ -493,11 +401,8 @@ def from_dict(raw: dict) -> Config:
             "and globals take part. A group not listed is switched off."
         )
     active_groups = knobs.array("ANALYSIS.groups", analysis["groups"])
-    # A group is defined by the tables written under it, so a name listed with
-    # no table is a misspelling rather than a group with nothing in it -- and
-    # left to load, it takes part as nothing, while the group it was meant to
-    # name stays switched off with its globals never set. The converse, a
-    # group defined and not listed, is how a group is switched off.
+    # A group exists through the tables written under it, so a listed name with
+    # none is a misspelling; a defined group that is not listed is switched off.
     defined = sorted(
         {*raw.get("PARAMETERS", {}), *raw.get("RUNMANAGER_GLOBALS", {})}
     )
@@ -506,9 +411,7 @@ def from_dict(raw: dict) -> Config:
         raise ValueError(
             f"ANALYSIS.groups lists {', '.join(repr(g) for g in undefined)}, "
             f"which no [PARAMETERS.<group>] or [RUNMANAGER_GLOBALS.<group>] "
-            f"table defines. A group takes part only through the tables "
-            f"written under it, so a name with none is a misspelling. The "
-            f"groups this file defines are {defined}."
+            f"table defines. The groups this file defines are {defined}."
         )
 
     parameters: list[Parameter] = []
@@ -516,7 +419,6 @@ def from_dict(raw: dict) -> Config:
 
     for group, entries in raw.get("PARAMETERS", {}).items():
         if group not in active_groups:
-            # A group nobody switched on is not part of this session at all.
             continue
         for name, entry in entries.items():
             enabled = entry.get("enable", True)
@@ -529,8 +431,8 @@ def from_dict(raw: dict) -> Config:
                     enable=enabled,
                 )
             )
-            # A parameter that is switched off keeps whatever value runmanager
-            # already holds, so it gets no mapping and is never set.
+            # A switched-off parameter gets no mapping, so its global keeps
+            # runmanager's value.
             if enabled and "global_name" in entry:
                 mappings.append(
                     GlobalMapping(name=entry["global_name"], expr=None, args=(name,))
@@ -538,11 +440,10 @@ def from_dict(raw: dict) -> Config:
 
     for group, entries in raw.get("RUNMANAGER_GLOBALS", {}).items():
         if group not in active_groups:
-            # A group nobody switched on is not part of this session at all.
             continue
         for name, entry in entries.items():
-            # A switched-off global is simply not set, so there is nothing to
-            # carry: unlike a parameter, it has no bounds anybody looks at.
+            # A switched-off global is not set; unlike a parameter, it has no
+            # bounds to carry.
             if not entry.get("enable", True):
                 continue
             mappings.append(
@@ -559,8 +460,7 @@ def from_dict(raw: dict) -> Config:
             f"PARAMETERS defines {sorted(raw.get('PARAMETERS', {}))}"
         )
 
-    # Only searched parameters take part: a switched-off one is deliberately
-    # left unmapped, and nothing may depend on it.
+    # A switched-off parameter is unmapped on purpose, so nothing may depend on it.
     known = {p.name for p in parameters if p.enable}
     for mapping in mappings:
         for arg in mapping.args:
@@ -589,15 +489,14 @@ def from_dict(raw: dict) -> Config:
                 f"which runmanager's globals cannot see: {mapping.expr!r}"
             ) from error
         except Exception:
-            # Failing at this one point says nothing about the rest of the
-            # range, so any other error is left for the first submission.
+            # One failing point says nothing about the rest of the range.
             pass
 
     if "cost_key" not in analysis:
         raise ValueError("ANALYSIS.cost_key is required: [routine_name, result_name]")
-    # A bare string is a sequence of its own characters, so the list check is
-    # what stops ``cost_key = "rc"`` passing for a pair of one-letter names.
-    # What that pair may hold is Config's to say.
+    # A bare string is a sequence of characters, so the list check stops
+    # ``cost_key = "rc"`` passing as a pair. What the pair holds is Config's to
+    # say.
     knobs.array("ANALYSIS.cost_key", analysis["cost_key"])
     cost_key = tuple(analysis["cost_key"])
 
@@ -617,21 +516,18 @@ def from_dict(raw: dict) -> Config:
         learner_options=learner_options,
         **settings,
     )
-    # Learner constructors are the authoritative schema for their named
-    # tables. Import lazily so importing this module alone stays lightweight.
+    # Imported here so importing this module alone stays light. The learners'
+    # constructors are the schema for their named tables.
     from .learners import build
 
-    # Build the learner and ask it how many it proposes at a time, a fact about
-    # the object rather than its class. Construction fits nothing, and this one
-    # is discarded: a session builds its own from the same configuration.
+    # Built to ask how many it proposes at a time, a fact about the object. It
+    # fits nothing and is discarded: a session builds its own.
     learner = build(config)
     if "num_buffered_runs" in general and learner.generation is not None:
         raise ValueError(
             f"num_buffered_runs is not accepted with learner "
-            f"{config.learner!r}, which proposes one whole generation of "
-            f"{learner.generation} at a time and waits for all of it. Its "
-            f"queue depth is therefore that generation, and a second setting "
-            f"for the same number is one that can disagree with it: delete "
-            f"num_buffered_runs."
+            f"{config.learner!r}, which proposes a whole generation of "
+            f"{learner.generation} at a time and sets the queue depth to it. "
+            f"Delete num_buffered_runs."
         )
     return config

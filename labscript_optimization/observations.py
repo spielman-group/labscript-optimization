@@ -1,23 +1,20 @@
 """The proposal record, and the history helpers learners share.
 
-An :class:`Observation` is one proposal and what became of it: the parameters
-that were requested, what proposed them, the state that proposal is in, and
-the cost if one has come back. Learners are handed every proposal a session
-has made, in the order it made them, so a position spent on a shot that is
-still running or on one that will never report is visible to them as a
-position spent.
+An :class:`Observation` is one proposal and what became of it. Learners are
+handed every proposal a session has made, in order, so a position spent on a
+shot that is still running or will never report is visible to them as spent.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import numpy as np
 
 #: Submitted, and a cost may still arrive.
 PENDING = "pending"
 
-#: No cost will ever arrive. The shot was canceled, deleted, refused, or is
-#: behind a row only an operator can clear.
+#: No cost will arrive: the shot was canceled, deleted, refused, or is behind a
+#: row only an operator can clear.
 DROPPED = "dropped"
 
 #: The shot ran and its cost is in the record, whether or not it is usable.
@@ -28,32 +25,33 @@ COMPLETE = "complete"
 class Observation:
     """One proposal, and what became of it.
 
-    Args:
-        shot_id: The identifier runmanager minted for this shot's queue row,
-            written into the shot file as an attribute and read back by the
-            routine. Unique within a session, and the key costs are matched to
-            proposals by. ``None`` on a proposal not yet submitted, which a
-            learner meets in one place: the configured start, in the history
-            a session hands it on the call that places the start.
-        params: The parameter vector that was requested, in real units, in
-            :class:`~labscript_optimization.space.ParameterSpace` order.
-        cost: The measured cost, or ``None`` while there is none. Lower is
-            better; a maximized quantity has already had its sign flipped by
-            the time it gets here.
-        uncer: Standard error on ``cost``, or ``None`` when the configuration
-            names no uncertainty column.
-        bad: True when the shot ran but its cost is not usable.
-        state: :data:`PENDING`, :data:`DROPPED` or :data:`COMPLETE`. The two
-            without a cost are one thing to a learner -- a position spent that
-            has produced nothing -- and two to the session, which counts the
-            shots a run has lost, so the record keeps them apart rather than
-            leaving the difference to be guessed from a missing cost.
-        source: What proposed this shot, recorded by the session when it
-            submitted it and never changed after: the source the learner
-            returned beside the proposal, or the session's own name for the
-            configured start. It is what the routine writes onto the shot as
-            its ``phase``. ``None`` for a record made outside a session, where
-            nothing recorded one.
+    Parameters
+    ----------
+    shot_id : str or None
+        The identifier runmanager minted for this shot's queue row. Unique in a
+        session; costs are matched to proposals by it. ``None`` on a proposal not
+        yet submitted: the configured start, in the history handed to the
+        learner that places it.
+    params : numpy.ndarray
+        The parameter vector requested, in real units, in
+        :class:`~labscript_optimization.space.ParameterSpace` order.
+    cost : float or None
+        The measured cost, or ``None`` while there is none. Lower is better; a
+        maximized quantity has already had its sign flipped.
+    uncer : float, optional
+        Standard error on ``cost``; ``None`` when the configuration names no
+        uncertainty column.
+    bad : bool
+        The shot ran but its cost is not usable.
+    state : str
+        :data:`PENDING`, :data:`DROPPED` or :data:`COMPLETE`. A learner treats
+        the two without a cost alike, but the session counts the shots a run has
+        lost, so the record keeps them apart.
+    source : str, optional
+        What proposed this shot, as recorded by the session at submission: the
+        source the learner returned beside the proposal, or the session's own
+        name for the configured start. The routine writes it onto the shot as
+        its ``phase``. ``None`` for a record made outside a session.
     """
 
     shot_id: str | None
@@ -68,9 +66,7 @@ class Observation:
     def usable(self) -> bool:
         """Whether this observation can inform a fit.
 
-        Only a completed shot has a cost to offer. A non-finite cost is
-        excluded along with a bad one: it carries no gradient information and
-        would poison any statistic over the cost range.
+        Only a completed shot with a finite cost that is not flagged bad can.
         """
         if self.state != COMPLETE or self.bad:
             return False
@@ -85,7 +81,7 @@ def usable(history: Sequence[Observation]) -> list[Observation]:
 def params_array(history: Sequence[Observation]) -> np.ndarray:
     """Parameters of ``history`` as an ``(n, num_params)`` array.
 
-    An empty history has no parameter count to report, so it gives ``(0, 0)``.
+    An empty history gives an empty array of shape ``(0,)``.
     """
     return np.array([o.params for o in history], dtype=float)
 
@@ -96,12 +92,7 @@ def costs_array(history: Sequence[Observation]) -> np.ndarray:
 
 
 def uncers_array(history: Sequence[Observation]) -> np.ndarray | None:
-    """Uncertainties of ``history``, or ``None`` if no observation has one.
-
-    An observation without one gets a zero, so a mixed history claims some of
-    its costs were measured exactly; see
-    :class:`~labscript_optimization.learners.gaussian_process.GaussianProcessLearner`.
-    """
+    """Uncertainties of ``history``, zero where missing; ``None`` if none has one."""
     if not any(o.uncer is not None for o in history):
         return None
     return np.array([0.0 if o.uncer is None else o.uncer for o in history], dtype=float)

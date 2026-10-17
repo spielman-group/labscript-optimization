@@ -87,7 +87,8 @@ class ParameterSpace:
                 f"{', '.join(repr(n) for n in started)} "
                 f"{'has' if len(started) == 1 else 'have'} one; "
                 f"{', '.join(repr(n) for n in unstarted)} "
-                f"{'does' if len(unstarted) == 1 else 'do'} not."
+                f"{'does' if len(unstarted) == 1 else 'do'} not. "
+                f"Give the rest a start, or delete the ones that have it."
             )
         self.minimum = np.array([p.minimum for p in self.parameters], dtype=float)
         self.maximum = np.array([p.maximum for p in self.parameters], dtype=float)
@@ -175,11 +176,7 @@ class ParameterSpace:
     def bounds_near(
         self, center: np.ndarray, region: np.ndarray | None
     ) -> tuple[np.ndarray, np.ndarray]:
-        """The bounds within ``region`` of ``center``, kept inside the space.
-
-        ``region`` is an absolute distance per parameter, as
-        :meth:`absolute_trust_region` returns it; ``None`` gives the whole space.
-        """
+        """Bounds within ``region`` of ``center``; ``None`` gives the whole space."""
         if region is None:
             return self.minimum, self.maximum
         return (
