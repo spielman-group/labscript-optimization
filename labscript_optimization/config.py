@@ -319,6 +319,9 @@ def check_keys(raw: dict) -> None:
     """Raise for an unknown key, a missing required one, or a wrongly typed value."""
     knobs.reject_unknown(raw, TOP_LEVEL_TABLES, "the top level of the configuration")
     require_tables(raw.get("LEARNER", {}), "[LEARNER]", "[LEARNER.<name>]")
+    for name in ("ANALYSIS", "GENERAL"):
+        if not isinstance(raw.get(name, {}), dict):
+            raise ValueError(f"[{name}] must be a table, not {raw[name]!r}.")
     knobs.reject_unknown(raw.get("ANALYSIS", {}), ANALYSIS_KEYS, "[ANALYSIS]")
     knobs.reject_unknown(raw.get("GENERAL", {}), GENERAL_KEYS, "[GENERAL]")
     # Parameter and global tables are checked for every group, listed or not, so
