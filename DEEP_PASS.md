@@ -7,27 +7,24 @@ each entry. It is deleted when the pass is done.
 
 ## Ian's decisions (relayed by the coordinator)
 
-His words: "There are so few mloop users so that we should no longer keep the
-portabilty code, so I agree with the agent on items 1 and 2 (BUT the changes
-needed to port an existing config should go in the docs so users know what to
-do.) 6: why is this a question? These are core functionlaity of the tool! Of
-course I use them! 7. keep 8. drop. 9. let it through. 10. agree. 11. agree. 12
-agree 13 agree. Anything I didn't note I agree with."
-
-- Contract: the two ParameterSpace helper tests go; the window test is renamed
-  after its eight behaviours. Done (7f76243, d26131f).
-- Step 1: #1 and #2 dropped, with the porting steps in UPGRADING.md; #3 kept;
-  #4, #5 and #10 dropped; #6 and #7 kept; #8 dropped; #9's filter removed;
-  #11 and #12 kept; #13 docs made to match the code. Done.
-- Step 2.2: every row as proposed, except A's sort, which stays here (3.1). B,
-  G and H done here; E done by lyse (a72da38, `Routine.folder`) and used here;
-  labscript-agents deletes its copies (B, C, D).
-- Steps 2.1 to 4: J, K, M, 3.1, 3.2, 3.4 and 4.1 as proposed, done; 3.3 the
-  labscript-file check kept; 4.4 LinkCheck deleted (tip 3d95d7d). 4.3
-  (`benchmarks/`) open with Ian.
-- Step 5: 5.1 done; 5.2 and 5.3 done (what readers need moved into the docs).
-  Whether PyPI goes to "Possible improvements" is open with Ian; 5.4 follows
-  4.3.
+- Step 1, his words: "There are so few mloop users so that we should no longer
+  keep the portabilty code, so I agree with the agent on items 1 and 2 (BUT the
+  changes needed to port an existing config should go in the docs so users know
+  what to do.) 6: why is this a question? These are core functionlaity of the
+  tool! Of course I use them! 7. keep 8. drop. 9. let it through. 10. agree. 11.
+  agree. 12 agree 13 agree." Done (7f76243, d26131f, f3482be).
+- Step 2.2: "regarding shared code, points A-I. I approve every row as
+  suggested." Done: B, G, H here; E by lyse (a72da38, `Routine.folder`) and
+  used here; labscript-agents deleted its copies (8f4a2ee and after).
+- Steps 2.1 to 4: "J -M : agree 3.1: agree 3.2 : agree 3.3 : agree (keep) 3.4
+  agree 4.1: agree 4.3 : drop 4.4 delete". Done; `benchmarks/` removed
+  (3c32227) and `LinkCheck` deleted, locally and on origin (tip 3d95d7d).
+- Step 5: "5.1: agree 5.2 delete 5.3: agree 5.4: agree". Done; PyPI is kept
+  nowhere.
+- The contract: "agree with 'dropping the two ParameterSpace helper tests...'".
+  Done.
+- Step 6: one module first (`space.py`, 489eb40), then the rest, with one
+  review.
 
 ## The contract
 
