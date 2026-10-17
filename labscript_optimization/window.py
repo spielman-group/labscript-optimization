@@ -25,6 +25,8 @@ from qtutils.qt import QtGui, QtWidgets
 
 
 class WindowController:
+    """The optimizer window: its buttons queue commands, and the worker updates it."""
+
     def __init__(self, ui, command_queue, host, port, config_path):
         self.command_queue = command_queue
         self.ui = ui
@@ -143,6 +145,7 @@ class WindowController:
 
     @inmain_decorator(wait_for_return=False)
     def update(self, status, computing, observations, gaussian_process, maximize):
+        """Show a session's status, with its observations as (source, cost) pairs."""
         stopped = status.get("stopped")
         # An empty status is a session still opening.
         opening = not status

@@ -16,9 +16,9 @@ into lyse's dataframe, as lyse results under the routine's
 proposed, so the best cost, where the search has got to, and what proposed
 each shot are columns of it.
 
-lyse runs a multishot routine once per drained batch of singleshot analyses
-rather than once per shot, and names that batch's files in ``paths``. Every
-one of them is a run the session spent, so every one of them is handed over.
+lyse runs a multishot routine once per drained batch of singleshot analyses,
+not once per shot, and names that batch's files in ``paths``. Every one is a
+run the session spent, so all are handed over.
 """
 
 import queue
@@ -33,25 +33,22 @@ from .runmanager_interface import RunmanagerInterface
 from .window import WindowController
 from .worker import Worker
 
-#: The keys written onto a shot, and so the columns the session produces.
-#: They say what proposed the shot and where the search has got to.
+#: The keys written onto a shot, and so the columns the session produces. They
+#: say what proposed the shot, and where the search has got to.
 #:
-#: ``phase`` is the shot's own: the source the session recorded when it
-#: proposed that shot, which the worker's verdict on the shot carries. It is
-#: not the phase of whatever was proposed most recently, which is another shot
-#: whenever more than one is in flight. The other two come from the session's
-#: status, whose remaining keys are its bookkeeping, one answer for the whole
-#: run that would be repeated onto every shot of it; the window shows all of
-#: it.
+#: ``phase`` is the shot's own, the source recorded when it was proposed, not
+#: that of the latest proposal. The other two come from the session's status,
+#: whose remaining keys are one answer for the whole run, shown in the window
+#: and not repeated onto every shot.
 SHOT_RESULTS = ("phase", "best_cost", "best_params")
 
 #: What the best columns are saved as before there is a best; a shot's
 #: ``phase`` always has a value.
 #:
-#: lyse fixes a column's dtype from the first value saved, so each stand in has
+#: lyse fixes a column's dtype from the first value saved, so each stand-in has
 #: the type of the value that replaces it: an empty list for the parameter
-#: vector, NaN for the cost. A configuration with no enabled parameters is
-#: refused, so ``best_params`` is never empty.
+#: vector, NaN for the cost. A real ``best_params`` is never empty, since a
+#: configuration with no enabled parameters is refused.
 NO_VALUE_YET = {
     "best_cost": float("nan"),
     "best_params": [],
@@ -61,17 +58,15 @@ NO_VALUE_YET = {
 def extract(shots, config):
     """Read the shot ids and costs of ``shots``, rows of lyse's dataframe.
 
-    lyse reads the identifier runmanager wrote into the file as a column, and
-    it is empty for one of runmanager's default shots, which go to BLACS
-    already compiled and so never have an id written into them. An id that is
-    there does not make the shot the session's -- runmanager mints one for
-    every row it compiles, a user's own shots included -- and which ids belong
-    to the session is the session's own answer. A shot with an id is read
-    whether or not its cost is usable: it has run and lyse has analyzed it, so
-    withholding it would leave its id awaited until a reconcile quietly dropped
-    it, understating the runs spent. The sign flip for ``maximize`` happens
-    here, on the way in, so everything downstream minimizes; the session puts
-    it back in the best cost it reports.
+    A shot with no ``shot_id`` is skipped, as runmanager's default shots, which
+    reach BLACS already compiled, have none. An id does not make a shot the
+    session's, since runmanager mints one for every row it compiles, a user's
+    own included; which ids belong to the session is the session's answer. A
+    shot with an id is read whether or not its cost is usable: it has run and
+    been analyzed, and withholding it would leave its id awaited until a
+    reconcile dropped it, understating the runs spent. The sign flip for
+    ``maximize`` happens here, on the way in, so everything downstream
+    minimizes; the session puts it back in the best cost it reports.
 
     Parameters
     ----------
@@ -90,10 +85,9 @@ def extract(shots, config):
         and ``cost`` is NaN when it is missing. ``uncer`` is ``None`` when the
         uncertainty is missing or not finite.
     """
-    # A column at a time off the frame rather than a row at a time: pandas
-    # resolves a key shallower than the column MultiIndex, whose padding levels
-    # are empty, against a frame's columns, where against a row the same key
-    # names a sub-Series. A column the frame does not have is None throughout.
+    # Read a column at a time: against a frame's columns pandas resolves a key
+    # shallower than the MultiIndex, but against a row it names a sub-Series. A
+    # column the frame lacks is None throughout.
     keys = "filepath", "shot_id", config.cost_key, config.uncertainty_key
     columns = [shots[k] if k in shots else [None] * len(shots) for k in keys]
     filepaths, observations = [], []
@@ -180,9 +174,9 @@ class OptimizationRoutine(lyse.Routine):
         # An empty pass, from Run multishot with nothing analyzed, reads nothing.
         shots = []
         if self.paths:
-            # Columns sorted, because lyse keeps them in the order they were
-            # added and pandas warns about lexsort depth when an unsorted
-            # MultiIndex is read by a key shallower than it, as extract reads it.
+            # lyse keeps columns in the order added, and pandas warns about
+            # lexsort depth when an unsorted MultiIndex is read by a key
+            # shallower than it, as extract does.
             shots = self.data(where={"filepath": self.paths}).sort_index(axis=1)
         filepaths, observations = extract(shots, self.worker.config)
         self.worker.hand_over(filepaths, observations, self.save_status)
@@ -190,9 +184,9 @@ class OptimizationRoutine(lyse.Routine):
     def save_status(self, filepath, status) -> None:
         """Save :data:`SHOT_RESULTS` of ``status`` into a shot's row of lyse's data.
 
-        Each key becomes ``df[(group, key)]``, saved with ``save_to_h5=False``,
-        so the shot file is not opened: writing it as well would take its h5
-        lock once per shot, inline in lyse. A value of ``None`` is saved as its
+        Each key becomes ``df[(group, key)]``, saved with ``save_to_h5=False``
+        so the shot file is not opened: writing it too would take its h5 lock
+        once per shot, inline in lyse. A ``None`` is saved as its
         :data:`NO_VALUE_YET`. A shot whose file is gone is reported to the
         routine's Output dock and passed over.
 
@@ -219,7 +213,7 @@ class OptimizationRoutine(lyse.Routine):
             run.save_result(name, reported, save_to_h5=False)
 
     def close(self):
-        """Ask the session to stop and stop watching runmanager.
+        """Stop the session and stop watching runmanager.
 
         Called when lyse removes or restarts the routine.
         """

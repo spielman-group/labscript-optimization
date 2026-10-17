@@ -111,7 +111,7 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
 
     @property
     def generation(self) -> int:
-        """One whole population, judged as a whole: its members go out together."""
+        """One whole population, judged as a whole, so its members go out together."""
         return self.population_size
 
     def _replay(self, history: Sequence[Observation]):

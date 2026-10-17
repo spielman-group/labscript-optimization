@@ -2,8 +2,9 @@
 
 The lyse routine hands over the shots lyse has analyzed and returns within
 :data:`REPLY_TIMEOUT`, so the fitting and the runmanager traffic happen here,
-on a thread of the routine's own. The thread is purely reactive: it proposes
-only in response to a request or a window command.
+on a thread of the routine's own. A reply that comes later is saved by the next
+hand-over. The thread is purely reactive: it proposes only in response to a
+request or a window command.
 """
 
 import queue
@@ -20,12 +21,7 @@ REPLY_TIMEOUT = 2.0
 
 
 def _set_runmanager_values(session, original, best):
-    """Set runmanager's values to the session's best, or to the originals.
-
-    A failure is one line of output and leaves the session as it was. A global
-    the originals name that is in no active group any more is skipped, and
-    named in one line, while the rest are restored.
-    """
+    """Set runmanager's values to the session's best, or restore the originals."""
     # A click queued behind a Reset can find nothing yet to set.
     if session.best is None if best else not original:
         return
@@ -53,18 +49,12 @@ def _set_runmanager_values(session, original, best):
 class Worker:
     """The optimization session, on a thread of its own.
 
-    Parameters
-    ----------
-    load : Callable
-        Returns the session configuration and the text of the file it was read
-        from. Called at every Reset, the opening included; a file that does not
-        load raises an ``OSError`` or ``ValueError``.
-    window : WindowController
-        The view the thread updates after each request.
-    command_queue : queue.Queue
-        Where the window puts its commands, and the thread takes its requests.
-    interface_factory : Callable
-        What a configuration is turned into a runmanager interface by.
+    ``load`` returns the configuration and the text of its file, and is called
+    at every Reset, the opening included; a file that does not load raises
+    ``OSError`` or ``ValueError``. ``window`` is the view the thread updates
+    after each request. ``command_queue`` carries the window's commands and the
+    thread's requests, and ``interface_factory`` turns a configuration into a
+    runmanager interface.
     """
 
     def __init__(
@@ -85,24 +75,7 @@ class Worker:
         self.command_queue.put(("reset", None, None))
 
     def hand_over(self, filepaths, observations, save):
-        """Hand the session one pass's observations, and save what has come back.
-
-        Waits up to :data:`REPLY_TIMEOUT` for this pass's reply. ``save(filepath,
-        status)`` is called for each shot the session took, in this pass or in
-        an earlier one whose reply has arrived since; ``status`` carries that
-        shot's own ``phase``. The session taking a cost is what says the shot
-        is one it proposed, since runmanager mints a shot id for every queue
-        row it compiles.
-
-        Raises
-        ------
-        RuntimeError
-            If the session thread has stopped, so that nothing will answer.
-        Exception
-            What handling a request raised, or what failed in the work after an
-            earlier reply. runmanager not answering is not raised: it pauses
-            the session.
-        """
+        """Hand over one pass's observations and save the shots the session took."""
         reply = Future()
         command = "observe" if observations else "shot"
         self.command_queue.put((command, reply, tuple(observations)))
@@ -113,6 +86,8 @@ class Worker:
             filepaths, reply = entry
             recorded, status = reply.result()
             for filepath, source in zip(filepaths, recorded):
+                # A source comes back only for a shot the session proposed and had
+                # not yet recorded; runmanager mints an id for every row it compiles.
                 if source is not None:
                     save(filepath, status | {"phase": source})
         if not self.failures.empty():
