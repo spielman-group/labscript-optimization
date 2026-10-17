@@ -24,7 +24,11 @@ each entry. It is deleted when the pass is done.
 - The contract: "agree with 'dropping the two ParameterSpace helper tests...'".
   Done.
 - Step 6: one module first (`space.py`, 489eb40), then the rest, with one
-  review.
+  review. Public surface NumPy, internal code one line. Done: bf8a3d2,
+  26d70fd, bceaf36, and 1dcf8f3 for the review's 13 false sentences and
+  convention breaks. Code unchanged (docstring-stripped ASTs identical) apart
+  from the `config.check_keys` fix (c2e1b5d), `collections.abc` imports and four
+  annotations; behaviour checks 759, 37,597 and 4,015 cases, no mismatch.
 
 ## The contract
 
