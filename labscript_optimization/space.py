@@ -1,15 +1,13 @@
-"""The parameter space a learner searches.
+"""The parameter space a learner searches: enabled parameters and their bounds.
 
-Holds the enabled parameters and their bounds, and nothing about runmanager:
-which global carries which parameter is the configuration's business rather
-than this module's. Scaling to the unit cube lives here rather than in a
-learner so that every learner sees bounds the same way; it is a linear map onto
-the boundaries, not a fit to the data, so it does not change as observations
-arrive.
+Scaling to the unit cube is a fixed linear map onto the bounds, not a fit to
+the data, so every learner sees the bounds the same way. Which runmanager
+global carries which parameter is the configuration's business, not this
+module's.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import numpy as np
 
@@ -20,13 +18,17 @@ from . import knobs
 class Parameter:
     """One optimized quantity.
 
-    Args:
-        name: The key this parameter has in the configuration.
-        minimum: Lower bound, in real units.
-        maximum: Upper bound, in real units.
-        start: Preferred first value, or ``None`` to start from a random draw.
-        enable: False drops the parameter from the search, start included. Its
-            runmanager global is not set, so it keeps the value runmanager holds.
+    Parameters
+    ----------
+    name : str
+        The key this parameter has in the configuration.
+    minimum, maximum : float
+        Bounds, in real units.
+    start : float, optional
+        Preferred first value; ``None`` starts from a random draw.
+    enable : bool
+        ``False`` drops the parameter from the search, start included. Its
+        runmanager global is not set, so it keeps the value runmanager holds.
     """
 
     name: str
@@ -56,45 +58,36 @@ class Parameter:
 class ParameterSpace:
     """The enabled parameters, in a fixed order, with their bounds.
 
-    Each carries a name of its own: the names are how a parameter vector is
-    read back out as values, so they identify the dimensions.
+    Raises ``ValueError`` for an empty space, for a repeated name and for a
+    ``start`` on only some of the parameters.
     """
 
     def __init__(self, parameters: Sequence[Parameter]):
         self.parameters = tuple(p for p in parameters if p.enable)
         if not self.parameters:
             raise ValueError("no enabled parameters to optimize")
-        # A name is how a proposal's coordinates are read back out, so two
-        # dimensions answering to one name is a malformed space whatever built
-        # it: the second silently takes the first's value everywhere the
-        # parameters are looked up by name.
+        # A proposal is read back by name, so a repeated name would silently
+        # take the first dimension's value.
         names = [p.name for p in self.parameters]
         repeated = sorted({name for name in names if names.count(name) > 1})
         if repeated:
             raise ValueError(
                 f"{', '.join(repr(n) for n in repeated)} names more than one "
-                f"enabled parameter. Each searched parameter needs a name of "
-                f"its own; the names given are {names}"
+                f"enabled parameter; each needs a name of its own. "
+                f"The names given are {names}"
             )
-        # A start is the whole space's or it is nobody's: it is proposed as
-        # one point over every parameter, so there is nothing to do with one
-        # written for some of them. Refused rather than honored for those and
-        # drawn for the rest, because a file that names a start has a reason
-        # for it and a draw is not that reason -- and refused rather than
-        # dropped, because a start on three parameters of five dropped for
-        # all five opens the run on a uniform draw with nothing said.
+        # A start is proposed as one point over every parameter. A partial one
+        # is refused, not dropped, which would open the run on a draw unannounced.
         started = [p.name for p in self.parameters if p.start is not None]
         unstarted = [p.name for p in self.parameters if p.start is None]
         if started and unstarted:
             raise ValueError(
-                f"a start is one point over every searched parameter, so it "
-                f"is written on all of them or on none. "
+                f"a start is one point over every searched parameter, so it is "
+                f"written on all of them or on none. "
                 f"{', '.join(repr(n) for n in started)} "
                 f"{'has' if len(started) == 1 else 'have'} one; "
                 f"{', '.join(repr(n) for n in unstarted)} "
-                f"{'does' if len(unstarted) == 1 else 'do'} not. Give the "
-                f"rest a start, or delete the ones that have it and let the "
-                f"run open on a draw."
+                f"{'does' if len(unstarted) == 1 else 'do'} not."
             )
         self.minimum = np.array([p.minimum for p in self.parameters], dtype=float)
         self.maximum = np.array([p.maximum for p in self.parameters], dtype=float)
@@ -104,14 +97,9 @@ class ParameterSpace:
     def num_params(self) -> int:
         return len(self.parameters)
 
-
     @property
     def start(self) -> np.ndarray | None:
-        """Where a run opens, or ``None`` where no parameter carries a start.
-
-        All or nothing, because the constructor refuses anything between, so
-        this answers a point or it answers that there is none.
-        """
+        """The point a run opens at, or ``None`` if no parameter has a start."""
         if any(p.start is None for p in self.parameters):
             return None
         return np.array([p.start for p in self.parameters], dtype=float)
@@ -137,22 +125,23 @@ class ParameterSpace:
     ) -> np.ndarray:
         """``k`` points drawn uniformly from the space.
 
-        A ``center`` and a ``region`` confine the draw to that trust region as
-        :meth:`bounds_near` clips it; neither covers the whole space.
+        With a ``center``, the draw is confined to ``region`` around it, as
+        :meth:`bounds_near` clips it. Without one, ``region`` is ignored.
         """
         low, high = self.minimum, self.maximum
         if center is not None:
             low, high = self.bounds_near(center, region)
         return rng.uniform(low, high, size=(k, self.num_params))
 
-    def absolute_trust_region(self, trust_region) -> np.ndarray | None:
-        """Resolve a trust region onto an absolute per-parameter distance.
+    def absolute_trust_region(
+        self, trust_region: float | Sequence[float] | np.ndarray | None
+    ) -> np.ndarray | None:
+        """Resolve a trust region to an absolute distance per parameter.
 
-        A number in (0, 1) is read as a fraction of each parameter's range; a
-        sequence of numbers is read as absolute distances already. ``None``
-        means the learner may travel anywhere. Anything else is refused rather
-        than converted: a quoted ``"0.1"`` is a string that ``float`` would
-        read as a number nobody wrote.
+        A number in (0, 1) is a fraction of each parameter's range; a sequence
+        of numbers is absolute distances, one per parameter. ``None`` means no
+        limit and is returned as ``None``. Anything else, including a quoted
+        ``"0.1"``, raises ``ValueError``.
         """
         if trust_region is None:
             return None
@@ -172,9 +161,8 @@ class ParameterSpace:
                 )
         else:
             raise ValueError(
-                f"trust_region must be written as a number in (0, 1), a "
-                f"fraction of each parameter's range, or as a list of numbers, "
-                f"one distance per parameter, not {trust_region!r}."
+                f"trust_region must be a number in (0, 1) or a list of numbers, "
+                f"one distance per parameter, not {trust_region!r}"
             )
         if not np.all(region > 0):
             raise ValueError(f"every trust_region value must be positive: {region}")
@@ -189,9 +177,8 @@ class ParameterSpace:
     ) -> tuple[np.ndarray, np.ndarray]:
         """The bounds within ``region`` of ``center``, kept inside the space.
 
-        ``region`` is an absolute per-parameter distance, as
-        :meth:`absolute_trust_region` returns it; ``None`` gives back the whole
-        space, so a learner free to travel anywhere takes the same path.
+        ``region`` is an absolute distance per parameter, as
+        :meth:`absolute_trust_region` returns it; ``None`` gives the whole space.
         """
         if region is None:
             return self.minimum, self.maximum
