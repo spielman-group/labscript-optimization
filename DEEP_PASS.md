@@ -184,3 +184,27 @@ Lines are non-blank lines, comments and docstrings included, at 3d633bc.
 | 11 | A GP expr whose lambda cannot take its `args` is refused at load (by its signature) | `config.py` `GlobalMapping.__post_init__` | ~16 | 472ffd7 | none found | a lab with a wrong-arity expr | Keep or drop: without it the first submission fails with a TypeError and the run ends |
 | 12 | A hand-over finding the session thread dead says so and drops what it waits for | `worker.py` `hand_over` | ~8 | 260d472 | a code-quality review's finding, whose fixes Ian approved | only after a bug kills the thread | Keep (cheap) or drop |
 | 13 | `directed_random` with `trust_region` unset searches the whole space, as a random learner, though the docs say a trust region is always a region | `learners/random.py` `ask`; `space.py` `absolute_trust_region` returns None | ~3 | 472ffd7 | none found | a lab's table | Make the docs and code agree: refuse `None` here, or document it |
+
+## Step 2: duplication
+
+### 2.2 Shared with labscript-agents (draft, with labscript-agents' session)
+
+Both packages are new-style lyse routines (`OptimizationRoutine`,
+`AgentRoutine`, on `lyse.Routine` in `lyse/routine.py`). labscript-agents'
+`routine.py`, `worker.py` and `window.py` began as copies of this package's;
+an AST comparison of the two `CodeHealth` branches (agents at its tip,
+optimization at 921639d) finds these names identical in both:
+`SHOT_RESULTS`, `NO_VALUE_YET`, `analyzed`, `extract`, `save_status`,
+`REPLY_TIMEOUT`, `Worker.hand_over`, `Worker.quit`. For each item: should it
+exist, and where its one copy lives.
+
+| # | Item | Copies | Should it exist? | One copy, where |
+| --- | --- | --- | --- | --- |
+| A | `analyzed(paths)`: the rows for a pass's files | both `routine.py`, identical | Yes, but it is `lyse.Routine.data(where={'filepath': paths})` plus a column sort | Use `self.data(...)`; the sort, if still needed, in `lyse.Routine.data` (lyse's owner) |
+| B | `save_status`, `SHOT_RESULTS`, `NO_VALUE_YET`, `RESULTS_GROUP`: write values onto a shot's lyse row, from another thread's reply, with typed stand-ins | both `routine.py`, identical; agents' copy names the optimizer's columns (`best_cost`, `best_params`) | The mechanism yes; agents' optimizer column names likely not | The write: `lyse.Routine` already has `get_run` and `group`, so a `save_results(filepath, values)` there (lyse); each package keeps only its own column names |
+| C | `extract(shots, config)`: shot ids and costs from rows, `maximize`'s sign, bad costs | both `routine.py`, identical | In this package; does labscript-agents use costs at all? | labscript-optimization only, unless agents needs it |
+| D | `Worker.hand_over`, `REPLY_TIMEOUT`, `Worker.quit`: hand a pass's rows to a thread, wait a bounded time, save late replies on a later pass | both `worker.py`, identical | Yes: lyse saves results only inside `run()`, so every routine with a thread of its own needs it | `lyse.Routine` (lyse), as a base-class facility; each package keeps its own command loop |
+| E | The routine folder: `config_path` read relative to `Path(inspect.getfile(type(self))).parent` | both `routine.py` | Yes | `lyse.Routine` already holds it as the private `_folder`; make it public there (lyse) and use it |
+| F | The runmanager light: a `RunmanagerClient()` built only for its address, and `LinkIndicator('runmanager', host, port)` | both `routine.py` / `window.py` | Yes | labscript-utils' `LinkIndicator` is already the one copy; the few lines of wiring stay, or move to `lyse.Routine` if a third routine needs them |
+| G | Reading the routine's TOML: `tomllib` (optimization) and `labscript_profile.toml_config.load_toml_file` (agents) | one each | Yes | One way, labscript-utils' loader if it does the job |
+| H | `RunmanagerInterface.shot_status`: a pass-through of `RunmanagerClient.shot_status` | both `runmanager_interface.py` | No: callers can use the client | Removed in both; each calls the client |
