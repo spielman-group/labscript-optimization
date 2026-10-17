@@ -462,8 +462,11 @@ def load(path) -> Config:
     ValueError
         For a file that is not valid TOML or is refused, as :func:`loads`.
     """
-    with open(path, "rb") as f:
-        return from_dict(tomllib.load(f))
+    # Imported here, because the suite is the lyse extra and loads and
+    # from_dict need none of it.
+    from labscript_profile.toml_config import load_toml_file
+
+    return from_dict(load_toml_file(path))
 
 
 def from_dict(raw: dict) -> Config:

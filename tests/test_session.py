@@ -191,7 +191,7 @@ def test_a_cost_arriving_after_a_shot_was_given_up_on_is_still_taken(
     session.record('shot-1', 3.0, None, False)
     status = session.status()
     assert (status['completed'], status['dropped'], status['blocked']) == (2, 0, 0)
-    assert status['best_shot_id'] == 'shot-0'
+    assert status['best_cost'] == 2.0
 
 
 def test_status_counts_every_shot_by_what_became_of_it(runmanager):
@@ -206,7 +206,7 @@ def test_status_counts_every_shot_by_what_became_of_it(runmanager):
     assert (status['submitted'], status['completed'], status['awaiting']) == (4, 1, 1)
     # A shot behind a row only an operator can clear is dropped as well.
     assert (status['dropped'], status['blocked']) == (2, 1)
-    assert (status['best_cost'], status['best_shot_id']) == (2.0, 'shot-0')
+    assert status['best_cost'] == 2.0
     assert status['stopped'] is None
 
 
@@ -215,8 +215,8 @@ def test_status_counts_every_shot_by_what_became_of_it(runmanager):
     [
         # The routine flips a maximized cost once on the way in, so the session
         # minimizes: these are measurements of 3.0 and 7.0.
-        (True, (-3.0, -7.0), (7.0, 'shot-1')),
-        (False, (3.0, 7.0), (3.0, 'shot-0')),
+        (True, (-3.0, -7.0), 7.0),
+        (False, (3.0, 7.0), 3.0),
     ],
 )
 def test_the_best_cost_is_reported_in_the_labs_own_sign(
@@ -228,7 +228,7 @@ def test_the_best_cost_is_reported_in_the_labs_own_sign(
         session.record(shot_id, cost, None, False)
 
     status = session.status()
-    assert (status['best_cost'], status['best_shot_id']) == best
+    assert status['best_cost'] == best
 
 
 def test_a_session_stops_at_the_run_budget_and_stays_stopped(runmanager):

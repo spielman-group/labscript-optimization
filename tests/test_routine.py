@@ -7,6 +7,7 @@ for every shot runmanager compiled and empty for one of its default shots.
 
 import itertools
 import warnings
+from types import SimpleNamespace
 
 try:
     # The lock lyse puts over h5py refuses to be imported once h5py has been,
@@ -130,8 +131,20 @@ def test_a_shot_carrying_no_identifier_is_not_the_sessions_to_read(shot):
     assert extract(shots, config_for()) == ([], [])
 
 
+@pytest.fixture
+def routine():
+    """A routine built without its window, worker or runmanager, as lyse
+    allocates one before its ``__init__``.
+    """
+    routine = routine_module.OptimizationRoutine.__new__(
+        routine_module.OptimizationRoutine
+    )
+    routine.path = routine.paths = None
+    return routine
+
+
 def test_a_pass_reads_its_own_files_whatever_order_lyse_keeps_its_columns_in(
-    shot, monkeypatch
+    shot, routine, monkeypatch
 ):
     """lyse keeps its columns in the order they were added, and pandas warns
     about lexsort depth when an unsorted MultiIndex is read by a shallower key,
@@ -147,13 +160,20 @@ def test_a_pass_reads_its_own_files_whatever_order_lyse_keeps_its_columns_in(
     monkeypatch.setattr(
         routine_module.lyse,
         'data',
-        lambda where: lyse_rows[lyse_rows['filepath'].isin(where['filepath'])],
+        lambda filepath=None, where=None: lyse_rows[
+            lyse_rows['filepath'].isin(where['filepath'])
+        ],
     )
-    paths = [rows[0]['filepath'], rows[1]['filepath']]
+    handed = []
+    routine.worker = SimpleNamespace(
+        config=config_for(), hand_over=lambda *args: handed.append(args)
+    )
+    routine.paths = [rows[0]['filepath'], rows[1]['filepath']]
     with warnings.catch_warnings():
         warnings.simplefilter('error', pd.errors.PerformanceWarning)
-        filepaths, observations = extract(routine_module.analyzed(paths), config_for())
-    assert filepaths == paths
+        routine.run()
+    [(filepaths, observations, _)] = handed
+    assert filepaths == routine.paths
     assert [o[:2] for o in observations] == [('row-0', -1.0), ('row-1', -2.0)]
 
 
@@ -191,7 +211,7 @@ def results(monkeypatch):
 
 
 def test_the_status_is_written_onto_the_shot_as_lyse_results_and_not_into_its_file(
-    shot, results
+    shot, routine, results
 ):
     """The lab reads it as ``df[('labscript_optimization', 'best_cost')]``
     alongside the shot it belongs to. The dataframe is where it is read:
@@ -199,44 +219,32 @@ def test_the_status_is_written_onto_the_shot_as_lyse_results_and_not_into_its_fi
     session took, inline in lyse.
     """
     row = shot()
-    routine_module.save_status(
+    routine.save_status(
         row['filepath'],
-        status(phase='warmup', best_cost=7.0, best_params=[0.25], best_shot_id='row-3'),
+        status(phase='warmup', best_cost=7.0, best_params=[0.25]),
     )
     assert results(row) == {
         'phase': 'warmup',
         'best_cost': 7.0,
         'best_params': [0.25],
-        'best_shot_id': 'row-3',
-        'stopped': '',
     }
     with h5py.File(row['filepath'], 'r') as f:
         assert 'results' not in f
 
 
-@pytest.mark.parametrize(
-    'key, empty, reported',
-    [
-        ('stopped', '', 'reached max_num_runs (400)'),
-        ('best_shot_id', '', '701dd468d82d4fc5b523ef69c0b2aaf2'),
-        ('best_params', [], [0.25, 1.5]),
-    ],
-)
 def test_the_shot_that_first_has_a_value_can_be_written_into_its_column(
-    shot, results, key, empty, reported
+    shot, routine, results
 ):
-    """A run reaches its budget, or spends its first shots on costs the fits
-    cannot use, and then has an answer. The stand-in written while there was
-    nothing to report fixes the column's type, and decides whether the shot
-    that finally has something can be recorded at all.
+    """A run spends its first shots on costs the fits cannot use, and then has
+    an answer. The stand-in written while there was nothing to report fixes the
+    column's type, and decides whether the shot that finally has something can
+    be recorded at all.
 
     The statuses are saved through lyse as it saves them: the shot files are
     turned into rows, ``lyse.Run.save_result`` records each value, and
     ``FileBox.update_row`` sets it with ``dataframe.at``, which is spelled out
     here because ``update_row`` is welded to the Qt model. lyse recovers from
-    the ``ValueError`` a list raises by widening the column to ``object``, but
-    not from the ``TypeError`` a string into a float column raises, which is
-    the crash.
+    the ``ValueError`` a list raises by widening the column to ``object``.
     """
     from lyse.dataframe_utilities import get_dataframe_from_shots
 
@@ -245,8 +253,8 @@ def test_the_shot_that_first_has_a_value_can_be_written_into_its_column(
     depth = dataframe.columns.nlevels
     for row_number, row in enumerate(rows):
         # The last shot is the first with an answer.
-        answer = {key: reported} if row_number == 3 else {}
-        routine_module.save_status(row['filepath'], status(**answer))
+        answer = {'best_params': [0.25, 1.5]} if row_number == 3 else {}
+        routine.save_status(row['filepath'], status(**answer))
         for name, value in results(row).items():
             column = ('labscript_optimization', name) + ('',) * (depth - 2)
             try:
@@ -257,5 +265,5 @@ def test_the_shot_that_first_has_a_value_can_be_written_into_its_column(
                 else:
                     dataframe[column] = dataframe[column].astype('object')
                 dataframe.at[row_number, column] = value
-    saved = list(dataframe[('labscript_optimization', key)])
-    assert saved == [empty] * 3 + [reported]
+    saved = list(dataframe[('labscript_optimization', 'best_params')])
+    assert saved == [[]] * 3 + [[0.25, 1.5]]

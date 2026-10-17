@@ -8,7 +8,7 @@ written into the shot file: that is what a cost is matched to a proposal by.
 """
 
 from numbers import Real
-from typing import Iterable, Sequence
+from typing import Sequence
 
 import numpy as np
 
@@ -30,6 +30,9 @@ class RunmanagerInterface:
             client = RunmanagerClient()
         self.config = config
         self.client = client
+        # What the session asks about its shots, as the client answers it: see
+        # ``RunmanagerClient.shot_status`` for the record.
+        self.shot_status = client.shot_status
         self.labscript_file = None
         # The runmanager sequence this session's shots go into, once the first
         # submission has started it. Its index tells it apart from another
@@ -195,28 +198,3 @@ class RunmanagerInterface:
             raw=raw,
             skip_missing=skip_missing,
         )
-
-    def shot_status(self, shot_ids: Iterable[str]) -> dict[str, dict | None]:
-        """What runmanager says about each of these shots, as it says it.
-
-        Parameters
-        ----------
-        shot_ids : iterable of str
-            The shots to ask about.
-
-        Returns
-        -------
-        dict
-            One entry per id asked about: runmanager's record of the shot, or
-            ``None`` for an id it has not held since it started. The record
-            holds ``shot_id``, ``sequence_id``, ``sequence_index``,
-            ``run_number``, ``path``, the states ``compile``, ``queue``,
-            ``blacs`` and ``lyse``, ``pending``, ``since`` and ``message``.
-            ``compile``, ``blacs`` and ``lyse`` are ``None`` for a stage the
-            shot left before reaching. ``pending`` is whether the shot may
-            still complete in BLACS, and says nothing of lyse.
-        """
-        shot_ids = list(shot_ids)
-        if not shot_ids:
-            return {}
-        return self.client.shot_status(shot_ids)

@@ -7,7 +7,7 @@ The lyse routine
 ----------------
 
 .. automodule:: labscript_optimization.routine
-    :members: OptimizationRoutine, extract, save_status, RESULTS_GROUP, SHOT_RESULTS, NO_VALUE_YET
+    :members: OptimizationRoutine, extract, SHOT_RESULTS, NO_VALUE_YET
     :undoc-members:
     :show-inheritance:
 

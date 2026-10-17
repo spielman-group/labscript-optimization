@@ -138,9 +138,6 @@ intersphinx_mapping = {
         'pyqt5-modified-objects.inv',
     )  # from https://github.com/MSLNZ/msl-qt/blob/master/docs/create_pyqt_objects.py
     # under MIT License
-    # TODO
-    # desktop-app
-    # spinapi/pynivision/etc
 }
 
 # list of all labscript suite components that have docs

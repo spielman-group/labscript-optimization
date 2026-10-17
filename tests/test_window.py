@@ -22,7 +22,25 @@ from labscript_optimization import window as window_module
 from labscript_optimization.window import WindowController
 
 
-def test_window_shows_progress_and_controls(qt_application, monkeypatch, tmp_path):
+def test_window_shows_the_session_and_its_controls_follow_it_and_send_commands(
+    qt_application, monkeypatch, tmp_path
+):
+    """The window:
+
+    1. shows the phase line for each state of the session;
+    2. shows the counts;
+    3. enables Start, Set best values and Restore original values by the
+       session's state and by whether the runmanager light answers;
+    4. sends Start with whether Start from runmanager values is ticked, and the
+       other buttons' commands;
+    5. shows the start the session will use in the parameter table's Start
+       column;
+    6. plots each usable cost at the position of its shot, in a series for what
+       proposed it, with a line along the best so far;
+    7. opens the configuration file from the edit button and from the text's
+       right-click menu;
+    8. tells the worker of the light's first answer and of each change.
+    """
     commands = Queue()
     ui = UiLoader().load(str(Path(window_module.__file__).with_suffix('.ui')))
     config_file = tmp_path / "config.toml"

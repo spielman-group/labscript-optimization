@@ -84,7 +84,7 @@ The session's own settings. A learner's knobs do not go here; they go in ``[LEAR
       - unset
       - Seeds the random number generator the learners draw from. Unset, it is seeded from system entropy. A run under ``gaussian_process`` is not reproducible from its seed, because which slots a batch's points take depends on how long each fit takes.
 
-When a limit is reached the session stops proposing and records the reason in the ``stopped`` result. Shots already in runmanager's queue still run, and their costs are still recorded.
+When a limit is reached the session stops proposing and shows the reason in the window, after ``Ended:``. Shots already in runmanager's queue still run, and their costs are still recorded.
 
 .. _configuration-parameters:
 

@@ -119,7 +119,7 @@ The plot shows each usable cost against the position of its shot among the sessi
 Closing the window
 ------------------
 
-Closing the window hides it and leaves the session running. To show it again, right-click the routine in lyse's Multishot routines box and choose "show windows for selected routines". Removing or restarting the routine ends the session. Shots it has queued stay in runmanager's queue.
+Closing the window hides it and leaves the session running, and it stays hidden while shots arrive. To show it again, right-click the routine in lyse's Multishot routines box and choose "show windows for selected routines". Removing or restarting the routine ends the session. Shots it has queued stay in runmanager's queue. The routine does not wait for the session thread, which may be inside a request to runmanager, and lyse ends the routine's process two seconds after asking it to quit, so the shutdown may never finish. Nothing depends on it: the queued shots run as ordinary shots.
 
 When the opening fails
 ----------------------

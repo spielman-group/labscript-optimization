@@ -387,7 +387,6 @@ class Session:
             "starved": self.starved,
             "best_cost": best_cost,
             "best_params": None if best is None else best.params.tolist(),
-            "best_shot_id": None if best is None else best.shot_id,
             "start": None if self.start_point is None else self.start_point.tolist(),
             "paused": self.paused,
             "pause_reason": self.pause_reason,

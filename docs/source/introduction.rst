@@ -28,6 +28,8 @@ The session thread
 
 lyse runs a multishot routine inline, so a slow one delays every shot behind it. The routine therefore does no fitting and no runmanager traffic. It hands the observations to the session thread and waits at most two seconds for the reply, which the thread sends before it talks to runmanager again. A reply that arrives later is saved onto its shots at the next pass.
 
+The session is touched by the session thread alone. The routine reads the shots and saves their status columns on lyse's analysis thread, inside its ``run()``. After each request the session thread hands the window a snapshot of the status, which the window applies on the GUI thread. The runmanager light asks runmanager on a thread of its own, and a Gaussian process computes its batches on a background thread that tells the session thread when one is done.
+
 lyse runs the routine once per batch of analyzed shots, not once per shot, and names every shot of the batch in the routine's ``paths``. The routine hands over all of them.
 
 Learners

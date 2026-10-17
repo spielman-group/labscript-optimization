@@ -50,6 +50,9 @@ class FakeClient:
         self.written.append((globals, raw, skip_missing))
         return self.missing if skip_missing else []
 
+    def shot_status(self, shot_ids):
+        return dict.fromkeys(shot_ids)
+
     def submit_shots(self, entries, sequence=None, sequence_index=None):
         """Starts a sequence for each submission that names none."""
         self.sequences.append((sequence, sequence_index))
