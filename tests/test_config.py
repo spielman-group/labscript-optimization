@@ -220,34 +220,6 @@ def test_a_setting_below_its_floor_is_refused_and_the_floor_itself_loads(
 # setting in one table and nothing in another. The wording is not held.
 
 
-@pytest.mark.parametrize(
-    'knob, tables',
-    [
-        ('cost_has_noise = true', ['[LEARNER.gaussian_process]']),
-        (
-            'trust_region = 0.05',
-            [
-                '[LEARNER.directed_random]',
-                '[LEARNER.differential_evolution]',
-                '[LEARNER.gaussian_process]',
-            ],
-        ),
-    ],
-    ids=['a knob one learner takes', 'the knob three learners take'],
-)
-def test_a_learner_knob_in_the_general_table_is_refused_naming_where_it_goes(
-    knob, tables
-):
-    """[GENERAL] is read once for a session that may run two learners, so a knob
-    there cannot say which one it meant."""
-    with pytest.raises(ValueError) as raised:
-        config_module.loads(MINIMAL + f'[GENERAL]\n{knob}\n')
-    message = str(raised.value)
-    assert knob.split(' =')[0] in message
-    for table in tables:
-        assert table in message
-
-
 UNKNOWN = {
     'ANALYSIS': (
         MINIMAL.replace('groups', 'ignore_bad = true\ngroups'),
@@ -296,39 +268,6 @@ def test_a_key_nothing_reads_is_refused_naming_it_and_its_table(text, key, where
     message = str(raised.value)
     assert key in message
     assert where in message
-
-
-def test_the_mloop_tables_are_refused_naming_their_replacements():
-    with pytest.raises(ValueError) as raised:
-        config_module.loads(
-            MINIMAL.replace('[PARAMETERS.', '[MLOOP_PARAMS.')
-            + '[MLOOP]\nlearner = "random"\n'
-        )
-    message = str(raised.value)
-    for name in ('[MLOOP]', '[GENERAL]', '[MLOOP_PARAMS]', '[PARAMETERS]'):
-        assert name in message
-
-
-@pytest.mark.parametrize(
-    'where, old, new',
-    [
-        ('[GENERAL]', 'trainer', 'explorer'),
-        ('[GENERAL]', 'num_training_runs', 'warmup_observations'),
-        ('[GENERAL]', 'num_runs_between_trainer_runs', 'explore_runs'),
-        ('[GENERAL]', 'refit_interval', 'batch_size'),
-        ('[GENERAL]', 'generation_size', 'batch_size'),
-        ('[GENERAL]', 'minimum_observations', 'warmup_observations'),
-        ('[LEARNER.gaussian_process]', 'generation_size', 'batch_size'),
-    ],
-)
-def test_a_replaced_setting_is_refused_naming_what_replaces_it(where, old, new):
-    """Not aliased: an old key read as its replacement would mean something
-    else, a period between explorer shots read as a count of them."""
-    with pytest.raises(ValueError) as raised:
-        config_module.loads(MINIMAL + f'{where}\n{old} = 4\n')
-    message = str(raised.value)
-    for part in (where, old, new):
-        assert part in message
 
 
 REFUSED = {

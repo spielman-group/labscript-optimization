@@ -194,7 +194,7 @@ Takes no knobs. A table written for it must be empty.
     * - ``trust_region``
       - number or list
       - 0.05
-      - How far a draw lands from its center, in the form described above: the largest distance of a uniform draw, or the width of a Gaussian one. It is always a region, so to search the whole space set ``explore_fraction`` to 1, or use the ``random`` learner.
+      - How far a draw lands from its center, in the form described above: the largest distance of a uniform draw, or the width of a Gaussian one. A file always gives a region, because TOML has no unset value and a key left out takes this default, so to search the whole space from a file set ``explore_fraction`` to 1, or use the ``random`` learner. A learner built in Python with ``trust_region=None`` searches the whole space.
     * - ``trust_range``
       - ordered pair in [0, 1]
       - ``[0.1, 0.25]``
@@ -290,7 +290,7 @@ Takes no knobs. A table written for it must be empty.
     * - ``length_scale_bounds``
       - pair of numbers, ``[low, high]``
       - ``[1e-2, 1e2]``
-      - The bounds on each parameter's length scale, in units of the unit cube the parameters are scaled onto. Both numbers must be positive, with ``low`` below ``high``. When a fit leaves length scales at an end of the bounds, a warning names the parameters, and is repeated only when that set changes.
+      - The bounds on each parameter's length scale, in units of the unit cube the parameters are scaled onto. Both numbers must be positive, with ``low`` below ``high``. When a refit leaves a length scale at an end of the bounds, scikit-learn's own warning appears in the routine's Output dock, at each refit that does.
     * - ``noise_level_bounds``
       - pair of numbers, ``[low, high]``
       - ``[1e-5, 1e1]``
@@ -302,10 +302,9 @@ How a file is checked
 The whole file is checked when it loads, and the first problem stops the load with a message that names the setting.
 
 * A key that its table does not know is refused, with the keys the table accepts. This covers the top-level tables, ``[ANALYSIS]``, ``[GENERAL]``, each parameter and global table, and each ``[LEARNER.<name>]`` table, which is held to its learner's constructor. A ``[LEARNER.<name>]`` table for a learner that does not exist is refused, as is a ``learner`` of that name.
-* A learner's knob written in ``[GENERAL]`` is refused, naming the ``[LEARNER.<name>]`` tables it can go in. ``[GENERAL]`` is read once for the session, and a session can run two learners, so a knob there could not tell them apart.
 * A required key that a table leaves out is refused. ``min`` and ``max`` are required in a parameter table, and ``args`` in a globals table.
 * A table written one level short, such as ``[PARAMETERS.<name>]`` with the settings under it, is refused, because only the innermost table carries settings.
-* The names this package replaced are refused with their replacements named: the tables ``[MLOOP]`` and ``[MLOOP_PARAMS]``, and six old Gaussian process settings. :doc:`migrating` has the mapping. Any other setting the package no longer has is refused as an unknown key.
+* M-LOOP's old table and setting names, and a learner's knob written in ``[GENERAL]``, are refused as unknown keys like any other. :doc:`migrating` says what each became and where each goes.
 * Values are held to their kind and never converted. A boolean is written ``true`` or ``false`` unquoted, and a list in brackets.
 * ``num_buffered_runs`` beside ``differential_evolution``, and a ``max_num_runs`` below two generations of it, are refused.
 * A parameter that is searched and reaches no global, a global whose ``args`` name a parameter that is not searched, and a repeated parameter or global name are refused.

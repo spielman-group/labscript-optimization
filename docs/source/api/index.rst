@@ -39,12 +39,12 @@ Learners
 --------
 
 .. automodule:: labscript_optimization.learners
-    :members: LEARNERS, build, knobs_by_learner, validate_options
+    :members: LEARNERS, build, validate_options
     :undoc-members:
     :show-inheritance:
 
 .. automodule:: labscript_optimization.learners.base
-    :members: Learner, ParameterSpaceLearner, InsufficientData
+    :members: Learner, ParameterSpaceLearner
     :undoc-members:
     :show-inheritance:
 
@@ -59,6 +59,6 @@ Learners
     :show-inheritance:
 
 .. automodule:: labscript_optimization.learners.gaussian_process
-    :members: GaussianProcessLearner, GaussianProcess, WARMUP_SOURCE, BATCH_SOURCE, EXPLORE_SOURCE, LENGTH_SCALE_AT_BOUND
+    :members: GaussianProcessLearner, GaussianProcess, WARMUP_SOURCE, BATCH_SOURCE, EXPLORE_SOURCE
     :undoc-members:
     :show-inheritance:

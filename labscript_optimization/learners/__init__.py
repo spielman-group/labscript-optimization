@@ -5,7 +5,7 @@ import inspect
 import numpy as np
 
 from .. import knobs
-from .base import InsufficientData, Learner, ParameterSpaceLearner
+from .base import Learner, ParameterSpaceLearner
 from .differential_evolution import DifferentialEvolutionLearner
 from .gaussian_process import EXPLORERS, GaussianProcessLearner
 from .random import DirectedRandomLearner, RandomLearner
@@ -14,12 +14,10 @@ __all__ = [
     "DifferentialEvolutionLearner",
     "DirectedRandomLearner",
     "GaussianProcessLearner",
-    "InsufficientData",
     "Learner",
     "ParameterSpaceLearner",
     "RandomLearner",
     "build",
-    "knobs_by_learner",
     "validate_options",
 ]
 
@@ -49,20 +47,12 @@ def _constructor_parameters(name: str):
         raise ValueError(
             f"unknown learner {name!r}; choose one of {sorted(LEARNERS)}"
         ) from None
-    accepted = inspect.signature(cls).parameters
-    if any(p.kind is p.VAR_KEYWORD for p in accepted.values()):
-        raise TypeError(
-            f"learner {name!r} collects its knobs in **kwargs, which names "
-            f"none of them, so its table has no schema: every key written in "
-            f"it would be refused and the learner built from its defaults "
-            f"alone; spell the knobs out"
-        )
-    return accepted
+    return inspect.signature(cls).parameters
 
 
-def _option_names(name: str) -> set[str]:
+def _option_names(name: str) -> frozenset[str]:
     """The configuration options accepted by one named learner."""
-    return set(_constructor_parameters(name)) - {"space", "rng"}
+    return frozenset(_constructor_parameters(name)) - {"space", "rng"}
 
 
 def _explorer_name(config) -> str | None:
@@ -85,20 +75,6 @@ def _explorer_name(config) -> str | None:
     return knobs.choice("explorer", named, EXPLORERS)
 
 
-def knobs_by_learner() -> dict[str, tuple[str, ...]]:
-    """Every knob any learner takes, and the learners that take it.
-
-    A configuration reads this to tell a knob written in the wrong table from a
-    spelling nothing here knows: the two want different messages, and only the
-    constructors can say which is which.
-    """
-    taken_by: dict[str, list[str]] = {}
-    for name in LEARNERS:
-        for key in _option_names(name):
-            taken_by.setdefault(key, []).append(name)
-    return {key: tuple(names) for key, names in taken_by.items()}
-
-
 def validate_options(config) -> None:
     """Hold a configuration to the learners it names.
 
@@ -107,12 +83,6 @@ def validate_options(config) -> None:
     at ``build()`` -- which is worker configure, with the session already
     starting. A ``[LEARNER.<name>]`` table has one constructor that defines
     its keys, so anything else in it is a knob that learner ignores.
-
-    The learners that will be built -- the selected one and its explorer --
-    are read for their signatures whether or not a table names them, because
-    a learner collecting its knobs in ``**kwargs`` leaves its table without a
-    schema: every key written in it would be refused, and the learner built
-    from its defaults alone.
 
     Everything here is answered by a name and a table, before any learner
     exists. What only a learner can answer is checked in :func:`build`.
@@ -127,35 +97,15 @@ def validate_options(config) -> None:
     ValueError
         If the learner or its explorer is not one of those available, or a
         table holds a key its learner does not take.
-    TypeError
-        If a learner collects its knobs in ``**kwargs``, so that its table has
-        no schema.
     """
     if config.learner not in LEARNERS:
         raise ValueError(
             f"unknown learner {config.learner!r}; choose one of {sorted(LEARNERS)}"
         )
-    built = [config.learner]
-    explorer = _explorer_name(config)
-    if explorer is not None:
-        built.append(explorer)
-    for name in dict.fromkeys([*built, *config.learner_options]):
-        accepted = _option_names(name)
-        unknown = sorted(set(config.learner_options.get(name, {})) - accepted)
-        if unknown:
-            # A learner may take no knobs at all, and then "it accepts:"
-            # trails off into nothing, which reads as a message that failed to
-            # finish rather than as the answer it is.
-            takes = (
-                f"It accepts: {', '.join(sorted(accepted))}."
-                if accepted
-                else "That learner takes no knobs at all, so its table holds "
-                "nothing and is as well left out."
-            )
-            raise ValueError(
-                f"[LEARNER.{name}] does not accept "
-                f"{', '.join(repr(key) for key in unknown)}. {takes}"
-            )
+    # Refuses an explorer that is not one of EXPLORERS.
+    _explorer_name(config)
+    for name, table in config.learner_options.items():
+        knobs.reject_unknown(table, _option_names(name), f"[LEARNER.{name}]")
 
 
 def build(config, rng: np.random.Generator | None = None):

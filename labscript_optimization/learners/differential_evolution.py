@@ -96,15 +96,6 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
                 f"other members, so it needs a population of at least "
                 f"{draws + 1}; population_size is {self.population_size}"
             )
-        if knobs.is_number(mutation_scale):
-            # One number is the natural way to ask for a fixed weight, and the
-            # range that asks for it is that number at both ends.
-            raise ValueError(
-                f"mutation_scale is the range the differential weight is drawn "
-                f"from, [low, high], not one weight: for a fixed weight of "
-                f"{float(mutation_scale)!r}, write "
-                f"[{float(mutation_scale)!r}, {float(mutation_scale)!r}]."
-            )
         self.mutation_scale = knobs.pair("mutation_scale", mutation_scale)
         if not 0 <= self.mutation_scale[0] <= self.mutation_scale[1]:
             raise ValueError(

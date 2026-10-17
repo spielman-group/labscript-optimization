@@ -1,4 +1,4 @@
-"""What a learner's knob may be written as.
+"""What a setting may be written as, and which keys a table may carry.
 
 A learner's constructor is the schema for its ``[LEARNER.<name>]`` table, and
 its keyword arguments arrive exactly as the file wrote them. So each knob is
@@ -8,11 +8,12 @@ converted: ``bool("false")`` is true, ``int(8.9)`` is 8 and ``float("0.1")``
 is 0.1, so a conversion hands the learner a setting nobody wrote, and in TOML
 each of those is one pair of quotes or one decimal point away.
 
-The refusals speak as :class:`~labscript_optimization.config.Config` does for
-``[GENERAL]``, so a file hears one voice whichever table it got wrong. They
-live here rather than in :mod:`~labscript_optimization.config` because
+The configuration's own settings are held to the same checks, so a file hears
+one voice whichever table it got wrong. They live here rather than in
+:mod:`~labscript_optimization.config` because
 :mod:`~labscript_optimization.space` resolves ``trust_region`` and cannot
-import that module, which imports it.
+import that module, which imports it, and because the learners use them while
+that module imports the learners only when it builds one.
 """
 
 import numbers
@@ -45,6 +46,20 @@ def is_numbers(value) -> bool:
     )
 
 
+def reject_unknown(table: dict, allowed: frozenset[str], where: str) -> None:
+    """Fail on any key of ``table`` that nothing in this package reads.
+
+    The message names the table as well as the key, because the same spelling
+    can be a setting in one table and meaningless in another.
+    """
+    unknown = sorted(set(table) - allowed)
+    if unknown:
+        raise ValueError(
+            f"{where} does not accept {', '.join(repr(k) for k in unknown)}. "
+            f"It accepts: {', '.join(sorted(allowed)) or 'nothing'}."
+        )
+
+
 def boolean(name: str, value) -> bool:
     """``value`` if it is a boolean, else a refusal naming ``name``."""
     if not isinstance(value, bool):
@@ -63,6 +78,28 @@ def integer(name: str, value) -> int:
     if isinstance(value, bool) or not isinstance(value, numbers.Integral):
         raise ValueError(f"{name} must be written as a whole number, got {value!r}.")
     return int(value)
+
+
+def string(name: str, value) -> str:
+    """``value`` if it is a string, else a refusal naming ``name``."""
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{name} must be written as a string in quotes, not {value!r}."
+        )
+    return value
+
+
+def array(name: str, value) -> list:
+    """``value`` if it is a list, else a refusal naming ``name``.
+
+    A bare string is a sequence of its own characters, so a check that only
+    iterates would take ``"G"`` for a list of one group.
+    """
+    if not isinstance(value, list):
+        raise ValueError(
+            f"{name} must be written as a list in [brackets], not {value!r}."
+        )
+    return value
 
 
 def number(name: str, value) -> float:

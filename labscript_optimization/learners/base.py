@@ -157,9 +157,7 @@ class ParameterSpaceLearner(Learner):
     Fixes how one is built: ``space`` first and ``rng`` second, positionally,
     then the learner's own knobs as keyword arguments with defaults. Every
     learner named in a configuration is built as ``cls(space, rng, **options)``
-    with the options matched by name against the signature -- so the two
-    spelled the other way round searches the wrong thing, and knobs collected
-    in ``**kwargs`` are matched by nothing.
+    with the options matched by name against the signature.
 
     Nothing else is shared. A learner keeps its own state. Where a run
     begins is not part of it: the session proposes the space's configured
@@ -169,33 +167,5 @@ class ParameterSpaceLearner(Learner):
     """
 
     def __init__(self, space: ParameterSpace, rng: np.random.Generator):
-        if not isinstance(space, ParameterSpace) or not isinstance(
-            rng, np.random.Generator
-        ):
-            raise TypeError(
-                f"a learner takes a ParameterSpace and a Generator, in that "
-                f"order; got {type(space).__name__} and {type(rng).__name__}"
-            )
-        cls = type(self)
-        if (
-            cls.propose is Learner.propose
-            and cls.acquire is Learner.acquire
-            and not hasattr(self, "ask")
-        ):
-            raise TypeError(
-                f"{cls.__name__} cannot propose: it has no ask method and "
-                f"overrides neither acquire nor propose."
-            )
         self.space = space
         self.rng = rng
-
-
-class InsufficientData(RuntimeError):
-    """A learner's search cannot propose from the history it has been given.
-
-    Raised rather than quietly proposing on some other basis, so that a caller
-    given a proposal knows which learner made it. Nothing here catches it: the
-    Gaussian process's model raises it from ``ask`` short of its warmup, and
-    the learner running it hands warmup to its explorer and never asks the
-    model until warmup is over, so a session does not reach it.
-    """

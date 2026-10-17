@@ -8,7 +8,6 @@ can ask for the points it needs at any history length.
 """
 
 import threading
-import warnings
 
 import numpy as np
 import pytest
@@ -63,7 +62,8 @@ def test_proposals_have_the_requested_shape_and_stay_in_bounds(space, rng, k, se
         proposed = learner.propose(history, k)
         proposals = np.array([params for params, _ in proposed])
         assert proposals.shape == (wanted, space.num_params), type(learner).__name__
-        assert space.contains(proposals).all(), type(learner).__name__
+        inside = (proposals >= space.minimum) & (proposals <= space.maximum)
+        assert inside.all(), type(learner).__name__
         assert {source for _, source in proposed} == {'main'}, type(learner).__name__
 
 
@@ -234,7 +234,8 @@ def test_every_strategy_runs_at_its_smallest_population_and_refuses_less(
     history = run_loop(learner, space, sphere, batches=8, k=2, rng=rng)
     # Long past the founding generation, so mutation did the bulk of the proposing.
     assert len(history) > 2 * smallest
-    assert space.contains(np.array([o.params for o in history])).all()
+    visited = np.array([o.params for o in history])
+    assert ((visited >= space.minimum) & (visited <= space.maximum)).all()
 
 
 def walk_space():
@@ -372,34 +373,6 @@ def test_a_gaussian_process_batch_does_not_repeat_itself(space, rng):
     assert np.linalg.norm(proposals[5] - proposals[1]) > 1e-3
 
 
-def flat_in_y_history(space, count):
-    """Observations of a cost that varies in x alone, so the fit finds no
-    structure along y and leaves its length scale at the upper bound."""
-    points = space.uniform(np.random.default_rng(5), count)
-    return [observe(i, p, float((p[0] - 1.3) ** 2)) for i, p in enumerate(points)]
-
-
-def test_a_length_scale_at_a_bound_is_reported_when_the_set_of_them_changes(
-    space, rng
-):
-    """Once when a parameter reaches a bound, once when it leaves, and not at
-    every refit in between."""
-    from sklearn.exceptions import ConvergenceWarning
-
-    model = GaussianProcessLearner(space, rng).model
-
-    with warnings.catch_warnings(record=True) as first:
-        model.fit(flat_in_y_history(space, 12))
-    assert [w for w in first if 'y at the upper end' in str(w.message)]
-
-    with warnings.catch_warnings(record=True) as again:
-        model.fit(flat_in_y_history(space, 13))
-    assert not [w for w in again if 'length_scale' in str(w.message)]
-
-    with pytest.warns(ConvergenceWarning, match='inside length_scale_bounds'):
-        model.fit(gaussian_process_history(space, 5))
-
-
 def test_gaussian_process_uses_per_point_uncertainties(space, rng):
     """A noisy point is trusted less than an exact one, and a batch can still
     be proposed from points that carry one."""
@@ -414,7 +387,8 @@ def test_gaussian_process_uses_per_point_uncertainties(space, rng):
 
     probe = np.array([0.0, 0.0])
     assert loose.predict(probe)[1][0] > tight.predict(probe)[1][0]
-    assert space.contains(loose.ask(noisy, 3)).all()
+    proposed = loose.ask(noisy, 3)
+    assert ((proposed >= space.minimum) & (proposed <= space.maximum)).all()
 
 
 @pytest.mark.parametrize(
@@ -438,7 +412,8 @@ def test_a_history_with_only_some_uncertainties_is_refused_without_noise(
         observe('b', space.maximum, 2.0, uncer=uncertainties[1]),
     ]
     if fits:
-        assert space.contains(model.ask(history, 1)).all()
+        proposed = model.ask(history, 1)
+        assert ((proposed >= space.minimum) & (proposed <= space.maximum)).all()
     else:
         with pytest.raises(ValueError, match='cost_has_noise'):
             model.ask(history, 1)

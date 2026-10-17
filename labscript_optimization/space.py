@@ -120,16 +120,6 @@ class ParameterSpace:
         """``x`` moved inside the bounds."""
         return np.clip(x, self.minimum, self.maximum)
 
-    def contains(self, x: np.ndarray) -> np.ndarray:
-        """Whether each row of ``x`` is within bounds, one answer per row.
-
-        An array even for a single point, so reduce it with ``.all()``: numpy
-        allows a truth test only on a size-one array, and the bare form works
-        until the day a second row arrives.
-        """
-        x = np.atleast_2d(x)
-        return np.all((x >= self.minimum) & (x <= self.maximum), axis=-1)
-
     def scale(self, x: np.ndarray) -> np.ndarray:
         """Map real units onto the unit cube."""
         return (np.asarray(x, dtype=float) - self.minimum) / self.extent

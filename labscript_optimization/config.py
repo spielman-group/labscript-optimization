@@ -32,10 +32,9 @@ keys named here before it will load.
 a learner's knobs are written in ``[LEARNER.<name>]``, the table of the learner
 that takes them. A named table is held to that learner's constructor: every key
 in it must be a knob that learner takes, and every value must be of the kind
-that knob takes, and a knob found in ``[GENERAL]`` is refused with the tables
-it belongs in named. The Gaussian process runs an explorer beside itself, so
-two learners run whenever it is the one selected, and a knob both take is
-written twice, once in each table, and each gets its own value.
+that knob takes. The Gaussian process runs an explorer beside itself, so two
+learners run whenever it is the one selected, and a knob both take is written
+twice, once in each table, and each gets its own value.
 
 The keys of every named table are checked, but its values only when its
 learner is built: a table written for a learner no session builds has its
@@ -70,30 +69,6 @@ TOP_LEVEL_TABLES = frozenset(
         "RUNMANAGER_GLOBALS",
     }
 )
-
-#: The tables this package used to name after M-LOOP, and what each is called
-#: now. It replaces M-LOOP rather than running it, so a table named after M-LOOP
-#: names a tool nothing here answers to. They are kept here to be
-#: refused by name: aliased to their replacements instead, an old file would go
-#: on loading and a lab would go on typing the name of a tool it is not
-#: running.
-RENAMED_TABLES = {"MLOOP": "GENERAL", "MLOOP_PARAMS": "PARAMETERS"}
-
-#: Settings of an older file that the Gaussian process's own knobs replace,
-#: and the knob of ``[LEARNER.gaussian_process]`` replacing each. They are
-#: refused by name, in ``[GENERAL]`` or in that table, rather than aliased: an
-#: old file would go on loading with its settings read as something they do
-#: not say. ``num_runs_between_trainer_runs`` is a period between one
-#: explorer shot and the next, for one, where ``explore_runs`` is the least
-#: number of explorer shots in each batch cycle.
-RENAMED_KEYS = {
-    "trainer": "explorer",
-    "num_training_runs": "warmup_observations",
-    "num_runs_between_trainer_runs": "explore_runs",
-    "refit_interval": "batch_size",
-    "generation_size": "batch_size",
-    "minimum_observations": "warmup_observations",
-}
 
 #: The settings ``[ANALYSIS]`` carries.
 ANALYSIS_KEYS = frozenset({"cost_key", "groups", "maximize"})
@@ -300,24 +275,12 @@ class Config:
             value = getattr(self, key)
             if value is None and key in OPTIONAL_INTEGER_SETTINGS:
                 continue
-            # ``isinstance(True, int)`` is True, so bool is excluded by name:
-            # a bare integer check reads ``true`` as a budget of one run.
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise ValueError(
-                    f"{key} must be written as a whole number, got {value!r}."
-                )
+            knobs.integer(key, value)
             if value < floor:
                 raise ValueError(f"{key} must be at least {floor}, got {value}: {why}.")
 
-        if not isinstance(self.maximize, bool):
-            raise ValueError(
-                f"maximize must be written as true or false, unquoted, not "
-                f"{self.maximize!r}."
-            )
-        if not isinstance(self.learner, str):
-            raise ValueError(
-                f"learner must be written as a string, got {self.learner!r}."
-            )
+        knobs.boolean("maximize", self.maximize)
+        knobs.string("learner", self.learner)
 
         named = all(isinstance(key, str) for key in self.cost_key)
         if len(self.cost_key) != 2 or not named:
@@ -371,20 +334,6 @@ def present(table: dict, keys: Iterable[str]) -> dict[str, Any]:
     return {key: table[key] for key in keys if key in table}
 
 
-def reject_unknown(table: dict, allowed: frozenset[str], where: str) -> None:
-    """Fail on any key of ``table`` that nothing in this package reads.
-
-    The message names the table as well as the key, because the same spelling
-    can be a setting in one table and meaningless in another.
-    """
-    unknown = sorted(set(table) - allowed)
-    if unknown:
-        raise ValueError(
-            f"{where} does not accept {', '.join(repr(k) for k in unknown)}. "
-            f"It accepts: {', '.join(sorted(allowed))}."
-        )
-
-
 def require_present(table: dict, keys: frozenset[str], where: str) -> None:
     """Fail on a required key the table leaves out, in the voice a typo gets."""
     missing = sorted(keys - set(table))
@@ -393,22 +342,6 @@ def require_present(table: dict, keys: frozenset[str], where: str) -> None:
             f"{where} is missing {', '.join(repr(k) for k in missing)}. "
             f"It requires: {', '.join(sorted(keys))}."
         )
-
-
-def require_type(value: Any, kind: type, where: str) -> Any:
-    """Fail on a setting of the wrong type, which no spelling check catches.
-
-    A quoted boolean is truthy and a bare string is a sequence of its own
-    characters, so either goes through and acts as something nobody wrote.
-    """
-    if not isinstance(value, kind):
-        written = {
-            bool: "true or false, unquoted",
-            list: "a list in [brackets]",
-            str: "a string in quotes",
-        }[kind]
-        raise ValueError(f"{where} must be written as {written}, not {value!r}.")
-    return value
 
 
 def require_tables(holder: Any, where: str, shape: str) -> dict:
@@ -441,48 +374,11 @@ def require_tables(holder: Any, where: str, shape: str) -> dict:
     return holder
 
 
-def reject_misplaced_knobs(general: dict) -> None:
-    """Fail on a learner's knob written in ``[GENERAL]``, naming where it goes.
-
-    ``[GENERAL]`` is read once for the whole session, and a session runs two
-    learners whenever the one it names runs an explorer. A knob written here
-    would reach both of them with no way to tell them apart, so a trust region
-    wide enough to explore with and one tight enough to refine with cannot both
-    be asked for; and it would be dropped in silence for every learner whose
-    constructor does not take it.
-
-    Which keys those are is read from the constructors, so a learner that gains
-    a knob moves that knob's message with it.
-    """
-    # Lazily, so importing this module alone stays lightweight.
-    from .learners import knobs_by_learner
-
-    taken_by = knobs_by_learner()
-    misplaced = [key for key in sorted(general) if key in taken_by]
-    if misplaced:
-        written = []
-        for key in misplaced:
-            tables = [f"[LEARNER.{name}]" for name in taken_by[key]]
-            last = tables.pop()
-            joined = f"{', '.join(tables)} or {last}" if tables else last
-            written.append(f"{key!r} in {joined}")
-        where = "; ".join(written)
-        raise ValueError(
-            f"[GENERAL] carries the session's own settings and no learner's "
-            f"knobs, so write {where}. A knob here reaches a learner and its "
-            f"explorer alike, with no way to give them different values, and "
-            f"goes unread by any learner that does not take it."
-        )
-
-
 def check_keys(raw: dict) -> None:
     """Fail on a key this package does not know, and on a required one left out.
 
     Accepting a key and ignoring it is how a lab comes to believe a setting is
-    in force when it is not, so a stale file is stopped at the door instead. A
-    learner knob written in ``[GENERAL]`` is refused by that rule and gets its
-    own message, naming the tables it could have been written in: it is a real
-    knob in the wrong place, not a spelling nothing here knows.
+    in force when it is not, so a stale file is stopped at the door instead.
 
     Parameter and global tables are checked whether or not their group is
     listed in ``groups``, so a typo in a switched-off group does not wait for
@@ -492,50 +388,11 @@ def check_keys(raw: dict) -> None:
     depth is checked before their keys are, because a table written one level
     short puts settings where entries belong and every check after that reads
     the wrong thing; see :func:`require_tables`.
-
-    A table this package has renamed is refused ahead of both, naming its
-    replacement, because the spelling check would call it a typo and leave the
-    reader to guess which of the tables it lists was meant. So is a setting in
-    :data:`RENAMED_KEYS`, wherever it was accepted, and every one a file
-    carries is named at once.
     """
-    renamed = [
-        f"[{table}] is now [{RENAMED_TABLES[table]}]"
-        for table in sorted(raw)
-        if table in RENAMED_TABLES
-    ]
-    if renamed:
-        raise ValueError(
-            f"the configuration no longer names its tables after M-LOOP, "
-            f"which this package replaces: "
-            f"{'; '.join(renamed)}. Rename the table; nothing is read under "
-            f"the old name."
-        )
-    reject_unknown(raw, TOP_LEVEL_TABLES, "the top level of the configuration")
+    knobs.reject_unknown(raw, TOP_LEVEL_TABLES, "the top level of the configuration")
     require_tables(raw.get("LEARNER", {}), "[LEARNER]", "[LEARNER.<name>]")
-    reject_unknown(raw.get("ANALYSIS", {}), ANALYSIS_KEYS, "[ANALYSIS]")
-    replaced = [
-        f"{key} in {where} is replaced by {RENAMED_KEYS[key]} in "
-        f"[LEARNER.gaussian_process]"
-        for where, table in (
-            ("[GENERAL]", raw.get("GENERAL", {})),
-            (
-                "[LEARNER.gaussian_process]",
-                raw.get("LEARNER", {}).get("gaussian_process", {}),
-            ),
-        )
-        for key in sorted(table)
-        if key in RENAMED_KEYS
-    ]
-    if replaced:
-        raise ValueError(
-            f"{'; '.join(replaced)}. The Gaussian process runs its warmup and "
-            f"its explorer itself, so what replaces each is a knob of its own "
-            f"table, and nothing is read under an old name; UPGRADING.md says "
-            f"what each one became."
-        )
-    reject_misplaced_knobs(raw.get("GENERAL", {}))
-    reject_unknown(raw.get("GENERAL", {}), GENERAL_KEYS, "[GENERAL]")
+    knobs.reject_unknown(raw.get("ANALYSIS", {}), ANALYSIS_KEYS, "[ANALYSIS]")
+    knobs.reject_unknown(raw.get("GENERAL", {}), GENERAL_KEYS, "[GENERAL]")
     for table, allowed, required in (
         ("PARAMETERS", PARAMETER_KEYS, PARAMETER_REQUIRED),
         ("RUNMANAGER_GLOBALS", GLOBAL_KEYS, GLOBAL_REQUIRED),
@@ -546,17 +403,17 @@ def check_keys(raw: dict) -> None:
             require_tables(entries, f"[{table}.{group}]", shape)
             for name, entry in entries.items():
                 where = f"[{table}.{group}.{name}]"
-                reject_unknown(entry, allowed, where)
+                knobs.reject_unknown(entry, allowed, where)
                 require_present(entry, required, where)
                 if "args" in entry:
-                    require_type(entry["args"], list, f"{where} args")
+                    knobs.array(f"{where} args", entry["args"])
                 if "enable" in entry:
-                    require_type(entry["enable"], bool, f"{where} enable")
+                    knobs.boolean(f"{where} enable", entry["enable"])
                 for key in ("min", "max", "start"):
                     if key in entry:
                         knobs.number(f"{where} {key}", entry[key])
                 if "global_name" in entry:
-                    require_type(entry["global_name"], str, f"{where} global_name")
+                    knobs.string(f"{where} global_name", entry["global_name"])
     # [LEARNER.<name>] is left to learners.validate_options, which is the only
     # thing that knows one learner's keys: the table names its learner, so that
     # learner's constructor is the schema for it.
@@ -630,7 +487,7 @@ def from_dict(raw: dict) -> Config:
             "ANALYSIS.groups is required: the list of groups whose parameters "
             "and globals take part. A group not listed is switched off."
         )
-    active_groups = require_type(analysis["groups"], list, "ANALYSIS.groups")
+    active_groups = knobs.array("ANALYSIS.groups", analysis["groups"])
     # A group is defined by the tables written under it, so a name listed with
     # no table is a misspelling rather than a group with nothing in it -- and
     # left to load, it takes part as nothing, while the group it was meant to
@@ -736,7 +593,7 @@ def from_dict(raw: dict) -> Config:
     # A bare string is a sequence of its own characters, so the list check is
     # what stops ``cost_key = "rc"`` passing for a pair of one-letter names.
     # What that pair may hold is Config's to say.
-    require_type(analysis["cost_key"], list, "ANALYSIS.cost_key")
+    knobs.array("ANALYSIS.cost_key", analysis["cost_key"])
     cost_key = tuple(analysis["cost_key"])
 
     learner_options = {

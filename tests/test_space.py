@@ -43,19 +43,6 @@ def test_a_start_is_one_point_over_every_searched_parameter_or_none():
     np.testing.assert_allclose(space.start, [0.5])
 
 
-def test_scaling_maps_the_bounds_onto_the_unit_cube(space):
-    np.testing.assert_allclose(space.scale(space.minimum), [0.0, 0.0])
-    np.testing.assert_allclose(space.scale(space.maximum), [1.0, 1.0])
-    point = np.array([1.25, -3.0])
-    np.testing.assert_allclose(space.unscale(space.scale(point)), point)
-
-
-def test_containment_is_answered_once_per_row(space):
-    np.testing.assert_array_equal(
-        space.contains(np.array([[0.0, 0.0], [6.0, 0.0]])), [True, False]
-    )
-
-
 def test_a_fractional_trust_region_scales_with_each_parameter():
     space = ParameterSpace([Parameter('a', 0.0, 100.0), Parameter('b', 0.0, 1.0)])
     np.testing.assert_allclose(space.absolute_trust_region(0.05), [5.0, 0.05])

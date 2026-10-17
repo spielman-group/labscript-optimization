@@ -65,7 +65,8 @@ the routine saves into lyse's dataframe, its window, and how it fails.
 ## 2. Rename the two M-LOOP tables, and cut the settings that no longer exist
 
 Do the renames first. The rest of this document names the new tables, and an
-old name is **refused** before any other complaint about the file is reached.
+old name is **refused** as an unknown table before any other complaint about
+the file is reached.
 
 | Rename | To |
 | --- | --- |
@@ -83,7 +84,9 @@ told about both at once.
 Then the keys. A key this package does not know is also **refused**, naming the
 key, the table it was found in, and what that table accepts. A setting that is
 accepted and then quietly ignored is how a lab comes to believe an option is in
-force when it is not, so loading stops rather than carrying on.
+force when it is not, so loading stops rather than carrying on. The refusal
+does not say what replaced an old name: the tables in this step and the next
+do.
 
 Delete these from your configuration:
 
@@ -100,7 +103,8 @@ Delete these from your configuration:
 | whole table | `[COMPILATION]` | Its only key was `mock`, which selected a dry-run interface that has been removed. |
 
 And rename these, each into `[LEARNER.gaussian_process]`, the table of the
-Gaussian process, which runs its warmup and its explorer itself:
+Gaussian process, which runs its warmup and its explorer itself. An old name is
+refused as an unknown key, wherever it is written:
 
 | Table | Rename | To |
 | --- | --- | --- |
@@ -114,10 +118,10 @@ Gaussian process, which runs its warmup and its explorer itself:
 
 The last four appear only in a file already written for this package; an
 analysislib-mloop file carries none of them. The last six are each
-**refused** naming the key that replaces it and the table it goes in, and none
-is read as its replacement: `explore_runs`, for one, is the least number of
-explorer shots in each batch cycle, where `num_runs_between_trainer_runs` was
-a period between one of them and the next. *What changed in the algorithms*, below, says what
+**refused** as an unknown key, and none is read as its replacement:
+`explore_runs`, for one, is the least number of explorer shots in each batch
+cycle, where `num_runs_between_trainer_runs` was a period between one of them
+and the next. *What changed in the algorithms*, below, says what
 each knob does.
 
 `generation_size` set two things at once: how often the Gaussian process
@@ -161,9 +165,9 @@ not searched, so it is not a coordinate of that point and needs no `start`.
 
 `[GENERAL]` carries the session's own settings and nothing else. A learner's
 knobs are written in `[LEARNER.<name>]`, the table of the learner that takes
-them, and a knob found in `[GENERAL]` is **refused**, with the table it belongs
-in named. Nothing is preserved: there is no shared table of learner knobs any
-more.
+them, and a knob found in `[GENERAL]` is **refused** like any other unknown
+key, so the table below says where each one goes. Nothing is preserved: there
+is no shared table of learner knobs any more.
 
 | Move out of `[GENERAL]` | Into |
 | --- | --- |
