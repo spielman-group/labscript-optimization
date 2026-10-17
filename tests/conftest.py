@@ -72,6 +72,8 @@ class FakeRunmanager:
         self.blocked: set[str] = set()
         self.finished: dict[str, str] = {}
         self.labscript_changed = False
+        # It is the interface's client too, which the session asks for records.
+        self.client = self
 
     def check_unchanged(self):
         if self.labscript_changed:

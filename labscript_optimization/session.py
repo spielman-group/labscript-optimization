@@ -35,7 +35,8 @@ class Session:
     def __init__(self, config, interface, learner=None):
         self.config = config
         # The session itself calls only check_unchanged(), submit(proposals) and
-        # shot_status(shot_ids); the worker checks readiness before each Start.
+        # client.shot_status(shot_ids); the worker checks readiness before each
+        # Start.
         self.interface = interface
         # A learner answers propose(history, hint) with (params, source) pairs
         # and carries generation. None builds the configured one.
@@ -155,7 +156,7 @@ class Session:
         awaiting = self.awaiting
         if not awaiting:
             return []
-        answers = self.interface.shot_status(awaiting)
+        answers = self.interface.client.shot_status(awaiting)
         gone = []
         # A shot is kept while it may still complete in BLACS, or lyse has its file
         # or will be given it. Any other shot goes at once; a cost that turns up

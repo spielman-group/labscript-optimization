@@ -25,9 +25,6 @@ class RunmanagerInterface:
             client = RunmanagerClient()
         self.config = config
         self.client = client
-        # The session asks the client directly; see
-        # ``RunmanagerClient.shot_status`` for the record.
-        self.shot_status = client.shot_status
         self.labscript_file = None
         # The runmanager sequence this session's shots join once the first
         # submission starts it. The index tells it from another sequence started
