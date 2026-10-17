@@ -134,8 +134,8 @@ class OptimizationRoutine(lyse.Routine):
     interface_factory = RunmanagerInterface
 
     def _load_config(self):
-        text = self._config_file.read_text(encoding="utf-8")
-        return config_module.loads(text), text
+        config = config_module.load(self._config_file)
+        return config, self._config_file.read_text(encoding="utf-8")
 
     def __init__(self):
         if self.config_path is None:
