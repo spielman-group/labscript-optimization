@@ -187,24 +187,25 @@ Lines are non-blank lines, comments and docstrings included, at 3d633bc.
 
 ## Step 2: duplication
 
-### 2.2 Shared with labscript-agents (draft, with labscript-agents' session)
+### 2.2 Shared with labscript-agents
 
 Both packages are new-style lyse routines (`OptimizationRoutine`,
 `AgentRoutine`, on `lyse.Routine` in `lyse/routine.py`). labscript-agents'
 `routine.py`, `worker.py` and `window.py` began as copies of this package's;
-an AST comparison of the two `CodeHealth` branches (agents at its tip,
-optimization at 921639d) finds these names identical in both:
-`SHOT_RESULTS`, `NO_VALUE_YET`, `analyzed`, `extract`, `save_status`,
-`REPLY_TIMEOUT`, `Worker.hand_over`, `Worker.quit`. For each item: should it
-exist, and where its one copy lives.
+an AST comparison of the two `CodeHealth` branches finds these names identical
+in both: `SHOT_RESULTS`, `NO_VALUE_YET`, `analyzed`, `extract`, `save_status`,
+`REPLY_TIMEOUT`, `Worker.hand_over`, `Worker.quit`. Agreed with
+labscript-agents' session, which answered for its side: labscript-agents writes
+nothing to lyse, uses no costs, and does no slow work in `run()`.
 
 | # | Item | Copies | Should it exist? | One copy, where |
 | --- | --- | --- | --- | --- |
-| A | `analyzed(paths)`: the rows for a pass's files | both `routine.py`, identical | Yes, but it is `lyse.Routine.data(where={'filepath': paths})` plus a column sort | Use `self.data(...)`; the sort, if still needed, in `lyse.Routine.data` (lyse's owner) |
-| B | `save_status`, `SHOT_RESULTS`, `NO_VALUE_YET`, `RESULTS_GROUP`: write values onto a shot's lyse row, from another thread's reply, with typed stand-ins | both `routine.py`, identical; agents' copy names the optimizer's columns (`best_cost`, `best_params`) | The mechanism yes; agents' optimizer column names likely not | The write: `lyse.Routine` already has `get_run` and `group`, so a `save_results(filepath, values)` there (lyse); each package keeps only its own column names |
-| C | `extract(shots, config)`: shot ids and costs from rows, `maximize`'s sign, bad costs | both `routine.py`, identical | In this package; does labscript-agents use costs at all? | labscript-optimization only, unless agents needs it |
-| D | `Worker.hand_over`, `REPLY_TIMEOUT`, `Worker.quit`: hand a pass's rows to a thread, wait a bounded time, save late replies on a later pass | both `worker.py`, identical | Yes: lyse saves results only inside `run()`, so every routine with a thread of its own needs it | `lyse.Routine` (lyse), as a base-class facility; each package keeps its own command loop |
-| E | The routine folder: `config_path` read relative to `Path(inspect.getfile(type(self))).parent` | both `routine.py` | Yes | `lyse.Routine` already holds it as the private `_folder`; make it public there (lyse) and use it |
-| F | The runmanager light: a `RunmanagerClient()` built only for its address, and `LinkIndicator('runmanager', host, port)` | both `routine.py` / `window.py` | Yes | labscript-utils' `LinkIndicator` is already the one copy; the few lines of wiring stay, or move to `lyse.Routine` if a third routine needs them |
-| G | Reading the routine's TOML: `tomllib` (optimization) and `labscript_profile.toml_config.load_toml_file` (agents) | one each | Yes | One way, labscript-utils' loader if it does the job |
-| H | `RunmanagerInterface.shot_status`: a pass-through of `RunmanagerClient.shot_status` | both `runmanager_interface.py` | No: callers can use the client | Removed in both; each calls the client |
+| A | `analyzed(paths)`: the rows of a pass's files | both, identical | Yes, but it is `lyse.Routine.data(where={'filepath': paths})` plus a column sort | Both call `self.data(...)`; the sort, if still needed, moves into `lyse.Routine.data` (lyse's owner) |
+| B | `save_status`, `SHOT_RESULTS`, `NO_VALUE_YET`, `RESULTS_GROUP`: the optimizer's status columns | both, identical | In labscript-optimization only; agents' are unused copies | labscript-optimization, writing through `lyse.Routine.get_run` and `group` rather than `lyse.Run` and `set_group`; labscript-agents deletes its copies |
+| C | `extract(shots, config)`: shot ids and costs, `maximize`'s sign, bad costs | both, identical | In labscript-optimization only | labscript-optimization; labscript-agents deletes its copy |
+| D | `Worker` with `hand_over`, `REPLY_TIMEOUT`, `quit`: a thread whose late replies are saved on a later pass | both, identical; agents' `worker.py` is unused | Yes, for labscript-optimization, whose `run()` hands slow work to a thread | labscript-optimization's `worker.py`; labscript-agents deletes its copy. A `lyse.Routine` facility only once a second routine needs it |
+| E | The routine folder: `Path(inspect.getfile(type(self))).parent` | both `routine.py` | Yes | `lyse.Routine` holds it as the private `_folder`; make it public there (lyse's owner) and both use it |
+| F | The runmanager light: `RunmanagerClient()` for its address, `LinkIndicator('runmanager', host, port)` | both | Yes | labscript-utils' `LinkIndicator` is already the one copy; the few lines of wiring stay in each |
+| G | Reading the routine's TOML: `tomllib` here, `labscript_profile.toml_config.load_toml_file` in agents | one each | Yes | `load_toml_file` in both (labscript-utils' step-2 entry 11 moved agents to it) |
+| H | `RunmanagerInterface.shot_status` | both | Here a bare pass-through of the client's; agents' skips the request for no ids and backs a tool | Here: dropped, the session calling the client through the interface's `client`; agents keeps its own |
+| I | "This shot is ours; take it once": the session's `proposals`/`results` here, agents' `_engaged`/`_reported`/`take_unreported` | one each | Yes | Each keeps its own: a few lines, and each package needs its own records of the shots anyway (Ian decides) |
