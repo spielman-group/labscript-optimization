@@ -220,10 +220,8 @@ class GaussianProcess:
             else knobs.integer("warmup_observations", warmup_observations)
         )
         if self.warmup_observations < 1:
-            # A fit needs something to fit to. At zero the guard in ``fit``
-            # passes on an empty history, and the refusal a file gets is
-            # scikit-learn's, from inside a scaler, naming neither this
-            # setting nor the learner.
+            # A fit needs something to fit to; at zero the refusal a file gets
+            # is scikit-learn's, naming neither this setting nor the learner.
             raise ValueError(
                 f"warmup_observations is how many usable observations the "
                 f"Gaussian process gathers before it will fit, so it must be "
@@ -310,7 +308,7 @@ class GaussianProcess:
         return scaler, regressor.kernel_
 
     def fit(self, history: Sequence[Observation]) -> None:
-        """Fit the regressor to ``history``, unless too little of it is usable.
+        """Fit the regressor to ``history``, which holds the warmup at least.
 
         The hyperparameters are fitted to the usable observations in hand and
         kept for as long as those are the observations handed over, which
@@ -319,8 +317,8 @@ class GaussianProcess:
         from sklearn.gaussian_process import GaussianProcessRegressor
 
         seen = usable(history)
-        if len(seen) < self.warmup_observations:
-            return
+        # The learner asks the model only once the warmup is in hand.
+        assert len(seen) >= self.warmup_observations
 
         # Keyed on which observations they were fitted to and not how many: a
         # cost arriving late lands in proposal order, in the middle, so two

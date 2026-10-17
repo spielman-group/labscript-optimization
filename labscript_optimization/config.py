@@ -461,6 +461,8 @@ def load(path) -> Config:
         If the file cannot be opened.
     ValueError
         For a file that is not valid TOML or is refused, as :func:`loads`.
+    ModuleNotFoundError
+        Without labscript-utils, which the ``lyse`` extra installs.
     """
     # Imported here, because the suite is the lyse extra and loads and
     # from_dict need none of it.

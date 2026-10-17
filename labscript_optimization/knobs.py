@@ -12,8 +12,7 @@ The configuration's own settings are held to the same checks, so a file hears
 one voice whichever table it got wrong. They live here rather than in
 :mod:`~labscript_optimization.config` because
 :mod:`~labscript_optimization.space` resolves ``trust_region`` and cannot
-import that module, which imports it, and because the learners use them while
-that module imports the learners only when it builds one.
+import that module, which imports it.
 """
 
 import numbers

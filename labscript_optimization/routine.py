@@ -21,7 +21,6 @@ rather than once per shot, and names that batch's files in ``paths``. Every
 one of them is a run the session spent, so every one of them is handed over.
 """
 
-import inspect
 import queue
 import sys
 from pathlib import Path
@@ -46,21 +45,14 @@ from .worker import Worker
 #: it.
 SHOT_RESULTS = ("phase", "best_cost", "best_params")
 
-#: What each of :data:`SHOT_RESULTS` is saved as while the session has
-#: nothing to report for it.
+#: What the best columns are saved as before there is a best; a shot's
+#: ``phase`` always has a value.
 #:
-#: lyse gives a dataframe column one dtype, and the shots already saved fix
-#: it: a stand in of a different type than the value it holds a place for
-#: types the column against that value, and the shot that finally has one
-#: cannot be written into it. So each empty here carries the type of the value
-#: that replaces it -- ``""`` for the string, an empty list for the parameter
-#: vector, NaN only for the float that NaN is the empty of. lyse reads a shot
-#: with no identifier back as ``""`` for the same reason.
-#:
-#: None of these collide with a value the session reports: a configuration
-#: with no enabled parameters is refused, so ``best_params`` is never empty.
+#: lyse fixes a column's dtype from the first value saved, so each stand in has
+#: the type of the value that replaces it: an empty list for the parameter
+#: vector, NaN for the cost. A configuration with no enabled parameters is
+#: refused, so ``best_params`` is never empty.
 NO_VALUE_YET = {
-    "phase": "",
     "best_cost": float("nan"),
     "best_params": [],
 }
@@ -157,9 +149,7 @@ class OptimizationRoutine(lyse.Routine):
                 f"{type(self).__name__} must set config_path to its TOML "
                 f"configuration file."
             )
-        # The folder of the lab's subclass, whatever the working directory is.
-        folder = Path(inspect.getfile(type(self))).parent
-        self._config_file = folder / self.config_path
+        self._config_file = self.folder / self.config_path
 
         from runmanager.client import RunmanagerClient
 
@@ -198,13 +188,13 @@ class OptimizationRoutine(lyse.Routine):
         self.worker.hand_over(filepaths, observations, self.save_status)
 
     def save_status(self, filepath, status) -> None:
-        """Save :data:`SHOT_RESULTS` of ``status`` into one shot's row of lyse's dataframe.
+        """Save :data:`SHOT_RESULTS` of ``status`` into a shot's row of lyse's data.
 
         Each key becomes ``df[(group, key)]``, saved with ``save_to_h5=False``,
         so the shot file is not opened: writing it as well would take its h5
         lock once per shot, inline in lyse. A value of ``None`` is saved as its
-        :data:`NO_VALUE_YET`. A shot whose file is gone is reported to lyse's
-        output and passed over.
+        :data:`NO_VALUE_YET`. A shot whose file is gone is reported to the
+        routine's Output dock and passed over.
 
         Parameters
         ----------

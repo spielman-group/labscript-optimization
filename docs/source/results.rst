@@ -48,8 +48,6 @@ When the session has nothing to report for a key, the shot is saved with an empt
       - ``NaN``
     * - ``best_params``
       - an empty list
-    * - ``phase``
-      - an empty string
 
 The best columns are empty until a shot has a usable cost.
 
