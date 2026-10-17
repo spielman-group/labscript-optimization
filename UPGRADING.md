@@ -96,8 +96,8 @@ Delete these from your configuration:
 | `[ANALYSIS]` | `analysislib_console_log_level`, `analysislib_file_log_level` | The plugin's own logging configuration. It has no logging of its own to configure. |
 | `[GENERAL]` | `session` | A label. Nothing read it but the status `optimize` returns, where it was one more key in the printed dictionary; it was never written onto a shot and never matched on. A shot is attributed by the id runmanager mints for its queue row, which lyse reads as the `shot_id` column. |
 | `[GENERAL]` | `no_delay` | The Gaussian process always behaves as M-LOOP's `no_delay = true`: while it computes a batch its explorer keeps the queue topped up, and each of its points goes out as soon as it is ready. |
-| `[GENERAL]` | `visualisations` | No plots and no GUI. Progress comes back as the routine's results. |
-| `[GENERAL]` | `console_log_level`, `console_log_string` | As above. |
+| `[GENERAL]` | `visualisations` | The routine's window always plots the costs and shows the run's state, and progress also comes back as the routine's results. There is nothing to switch on. |
+| `[GENERAL]` | `console_log_level`, `console_log_string` | As for the `[ANALYSIS]` log levels: it has no logging of its own to configure. |
 | `[LEARNER.random]`, `[LEARNER.directed_random]`, `[LEARNER.differential_evolution]` | `first_params` | Where a run begins is written on the parameters, as each one's `start` beside its own `min` and `max`, and the session proposes that point first and once, whichever learner is running. `first_params` was a second way to say the same thing, and only three of the four learners took it, so the file's answer to where a run starts depended on which learner had been chosen. As a bare vector it could not be checked against the parameter tables it stood for either: reorder them and it silently meant a different experiment, which is not an error but a different run. Write `start` on the parameters instead. |
 | `[GENERAL]`, `[LEARNER.differential_evolution]` | `restart_tolerance` | The population is not re-seeded when its costs converge. That decision was taken at a generation boundary from the costs resolved by then, so a cost arriving afterwards could change it and turn a block generated as trials into founders of a new epoch; and within a lab's budget it re-seeded populations that had converged to within a fraction of their initial spread but not to the minimum. `max_num_runs_without_better_params` is the stop to use instead. |
 | whole table | `[COMPILATION]` | Its only key was `mock`, which selected a dry-run interface that has been removed. |
@@ -196,9 +196,10 @@ trust_region = 0.2
 trust_region = 0.05
 ```
 
-A table written for a learner this file does not build goes unread, so the
-settings for several learners can sit side by side and be switched between by
-changing `[GENERAL] learner`.
+A table written for a learner this file does not build is still refused a key
+that learner does not take, but its values are checked only when that learner
+is built. So the settings for several learners can sit side by side and be
+switched between by changing `[GENERAL] learner`.
 
 ## 4. Remove the tag globals
 
