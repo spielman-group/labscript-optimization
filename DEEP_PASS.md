@@ -214,10 +214,10 @@ nothing to lyse, uses no costs, and does no slow work in `run()`.
 
 | # | Item | Copies | Proposal |
 | --- | --- | --- | --- |
-| J | Two sets of value checks: `knobs.py` (`boolean`, `integer`, `number`, `choice`, `pair`) for learner knobs, and `config.py`'s `require_type` plus `Config.__post_init__`'s own bool-is-not-an-int and integer checks for the session's settings | `knobs.py`, `config.py` | One set, `knobs.py`, used by `config.py` too; the librarian is asked whether the suite already has one |
+| J | Two sets of value checks: `knobs.py` (`boolean`, `integer`, `number`, `choice`, `pair`) for learner knobs, and `config.py`'s `require_type` plus `Config.__post_init__`'s own bool-is-not-an-int and integer checks for the session's settings | `knobs.py`, `config.py` | One set, `knobs.py`, used by `config.py` too. The librarian found nothing to extend: the suite's other config readers coerce values these refuse (`labscript_profile.toml_config.getboolean` takes a quoted `"false"`, runmanager's `_coerce_remote_boolean` takes 0 and 1) |
 | K | Two unknown-key refusals: `config.reject_unknown` and `learners.validate_options`' own message, with its "takes no knobs at all" variant | `config.py`, `learners/__init__.py` | `validate_options` calls `reject_unknown` |
 | L | Two repeated-name checks written the same way: repeated globals (`Config.__post_init__`) and repeated parameters (`ParameterSpace.__init__`) | `config.py`, `space.py` | Keep: two lines each, on different objects |
-| M | `in_background`: a daemon thread returning a `Future`, because `ThreadPoolExecutor` joins its threads at exit | `learners/gaussian_process.py` | Keep unless the librarian finds the suite already has one |
+| M | `in_background`: a daemon thread returning a `Future`, because `ThreadPoolExecutor` joins its threads at exit | `learners/gaussian_process.py` | Keep: the librarian found no other helper that returns a `Future` from a daemon thread (`qtutils.inthread` returns the thread) |
 
 ## Step 3: root causes
 
