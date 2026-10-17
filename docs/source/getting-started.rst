@@ -13,7 +13,7 @@ Install the package into the Python environment that lyse runs in, from a clone 
     git clone https://github.com/spielman-group/labscript-optimization
     pip install -e "./labscript-optimization[lyse]"
 
-The routine runs in a lyse worker process, so an installation anywhere else is one lyse cannot import. The package needs Python 3.11 or newer. The extra adds labscript-utils, lyse, runmanager, qtutils and pyqtgraph. The routine needs the Development branches of lyse and runmanager from the Spielman group's labscript suite.
+The routine runs in a lyse worker process, so an installation anywhere else is one lyse cannot import. The package needs Python 3.11 or newer. The extra adds lyse, runmanager, qtutils and pyqtgraph; labscript-utils is installed without it. The routine needs the Development branches of lyse and runmanager from the Spielman group's labscript suite.
 
 Write the cost routine
 ----------------------

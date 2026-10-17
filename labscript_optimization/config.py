@@ -44,6 +44,7 @@ from os import PathLike
 from typing import Any
 
 import numpy as np
+from labscript_profile.toml_config import load_toml_file
 
 from . import knobs
 from .space import Parameter, ParameterSpace
@@ -374,13 +375,7 @@ def load(path: str | PathLike) -> Config:
         If the file cannot be opened.
     ValueError
         For a file that is not valid TOML or is refused, as :func:`loads`.
-    ModuleNotFoundError
-        Without labscript-utils, which the ``lyse`` extra installs.
     """
-    # Imported here: labscript-utils is the lyse extra, and loads and from_dict
-    # need none of it.
-    from labscript_profile.toml_config import load_toml_file
-
     return from_dict(load_toml_file(path))
 
 
