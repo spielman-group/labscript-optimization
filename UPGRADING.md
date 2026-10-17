@@ -258,9 +258,7 @@ members in the other nine; counted by blocks of four functions, eight wins
 five of the seven and sixteen takes a block only at the largest budget. Four
 members, at two and at four parameters, improves by under a percent when
 given two and a half times the budget, which is what converging prematurely
-looks like. [`benchmarks/README.md`](https://github.com/spielman-group/labscript-optimization/blob/Development/benchmarks/README.md),
-under "What the sweep found", has the tables, the caveats, and the harness and
-rows behind them. Your landscape is not an analytic test function, so
+looks like. Your landscape is not an analytic test function, so
 treat the two numbers as a place to start.
 
 A budget has to cover two whole generations of that population, so

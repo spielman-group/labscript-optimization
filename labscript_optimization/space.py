@@ -24,7 +24,7 @@ class Parameter:
         The key this parameter has in the configuration.
     minimum, maximum : float
         Bounds, in real units.
-    start : float, optional
+    start : float or None
         Preferred first value; ``None`` starts from a random draw.
     enable : bool
         ``False`` drops the parameter from the search, start included. Its
