@@ -31,7 +31,7 @@ class Observation:
         The identifier runmanager minted for this shot's queue row. Unique in a
         session; costs are matched to proposals by it. ``None`` on a proposal not
         yet submitted: the configured start, in the history handed to the
-        learner that places it.
+        learner on the call that places it.
     params : numpy.ndarray
         The parameter vector requested, in real units, in
         :class:`~labscript_optimization.space.ParameterSpace` order.
@@ -39,14 +39,14 @@ class Observation:
         The measured cost, or ``None`` while there is none. Lower is better; a
         maximized quantity has already had its sign flipped.
     uncer : float, optional
-        Standard error on ``cost``; ``None`` when the configuration names no
-        uncertainty column.
+        Standard error on ``cost``; ``None`` when the shot's uncertainty is
+        missing or not finite.
     bad : bool
         The shot ran but its cost is not usable.
     state : str
-        :data:`PENDING`, :data:`DROPPED` or :data:`COMPLETE`. A learner treats
-        the two without a cost alike, but the session counts the shots a run has
-        lost, so the record keeps them apart.
+        :data:`PENDING`, :data:`DROPPED` or :data:`COMPLETE`. A pending shot
+        still holds a place in the queue and a dropped one does not; both stay in
+        the history as positions spent.
     source : str, optional
         What proposed this shot, as recorded by the session at submission: the
         source the learner returned beside the proposal, or the session's own

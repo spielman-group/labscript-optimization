@@ -7,8 +7,8 @@ Gaussian process runs unless told otherwise.
 
 Neither declares a generation, so both keep the hint's number of the run's shots
 in flight, each proposing as many as the hint leaves room for beside the
-history's pending records, whoever proposed them. They differ only in
-:meth:`RandomLearner.ask`.
+history's pending records, whoever proposed them. They differ in
+:meth:`RandomLearner.ask`, in ``history_scope`` and in the knobs the second takes.
 """
 
 from collections.abc import Sequence
@@ -22,15 +22,7 @@ from .base import ParameterSpaceLearner
 
 
 class RandomLearner(ParameterSpaceLearner):
-    """Uniform random draws from the whole space.
-
-    Parameters
-    ----------
-    space : ParameterSpace
-        The parameter space to search.
-    rng : numpy.random.Generator
-        Source of randomness.
-    """
+    """Uniform random draws from the whole space."""
 
     #: It draws without reading the history.
     history_scope = "none"
@@ -52,10 +44,6 @@ class DirectedRandomLearner(RandomLearner):
 
     Parameters
     ----------
-    space : ParameterSpace
-        The parameter space to search.
-    rng : numpy.random.Generator
-        Source of randomness.
     trust_region : float or sequence of float or None
         Largest distance from the center. A float in (0, 1) is a fraction of
         each parameter's range; a sequence is absolute distances. ``None``

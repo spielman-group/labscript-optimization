@@ -30,24 +30,15 @@ START_SOURCE = "start"
 
 
 class Session:
-    """Drives one optimization.
-
-    Parameters
-    ----------
-    config : labscript_optimization.config.Config
-        The session configuration.
-    interface : RunmanagerInterface
-        Anything with ``check_unchanged()``, ``submit(proposals)`` and
-        ``shot_status(shot_ids)``. Readiness is the worker's to check before
-        each start.
-    learner : Learner, optional
-        Answers ``propose(history, hint)`` with ``(params, source)`` pairs and
-        carries ``generation``. ``None`` builds the configured one.
-    """
+    """Drives one optimization."""
 
     def __init__(self, config, interface, learner=None):
         self.config = config
+        # The session itself calls only check_unchanged(), submit(proposals) and
+        # shot_status(shot_ids); the worker checks readiness before each Start.
         self.interface = interface
+        # A learner answers propose(history, hint) with (params, source) pairs
+        # and carries generation. None builds the configured one.
         self.learner = learners.build(config) if learner is None else learner
         # None opens the run on a draw. The worker replaces it when the first
         # Start asks for runmanager's values.
@@ -66,12 +57,9 @@ class Session:
 
     @property
     def history(self) -> list[Observation]:
-        """Every proposal, in the order made, with what became of it.
-
-        A proposal still waiting and one that will never report both stay in,
-        as a position spent without a usable cost: a learner that reads a role
-        off a position needs the positions that produced nothing.
-        """
+        """Every proposal, in the order made, with what became of it."""
+        # A waiting proposal and one that will never report stay in: a learner that
+        # reads a role off a position needs the positions that produced nothing.
         records = []
         for shot_id, params in self.proposals.items():
             source = self.sources[shot_id]
@@ -88,11 +76,9 @@ class Session:
 
     @property
     def awaiting(self) -> list[str]:
-        """The shots submitted that have neither reported a cost nor been dropped.
-
-        These are the history's pending records, so what the session waits for
-        and what a learner takes to be in flight are one answer.
-        """
+        """The shots submitted that have neither reported a cost nor been dropped."""
+        # The history's pending records, so what the session waits for is what a
+        # learner takes to be in flight.
         return [o.shot_id for o in self.history if o.state == PENDING]
 
     @property
@@ -101,12 +87,9 @@ class Session:
         return observations.best(self.history)
 
     def runs_since_best(self) -> int:
-        """How many completed shots came after the one holding the best cost.
-
-        Every completed shot counts, usable or not, and with no usable cost that
-        is all of them. The count is what ``max_num_runs_without_better_params``
-        limits.
-        """
+        """How many completed shots came after the one holding the best cost."""
+        # What max_num_runs_without_better_params limits: every completed shot
+        # counts, usable or not, and with no usable cost all of them do.
         completed = [o for o in self.history if o.state == COMPLETE]
         best = observations.best(completed)
         if best is None:
@@ -115,14 +98,9 @@ class Session:
         return len(completed) - 1 - position
 
     def stop(self, reason: str) -> None:
-        """Stop proposing, for ``reason``, unless the session has stopped already.
-
-        The first reason is kept: shots in flight still report after a stop, and
-        each report is checked against the limits, so a later reason would
-        replace the one that stopped the session. The worker stops a session
-        through here too, so an error after a stop is reported as an error
-        without becoming the reason.
-        """
+        """Stop proposing, for ``reason``, unless the session has stopped already."""
+        # The first reason is kept: shots in flight still report after a stop, and
+        # each report is checked against the limits again.
         if self.stopped is None:
             self.paused = False
             self.stopped = reason
@@ -138,11 +116,7 @@ class Session:
         return True
 
     def pause(self, reason: str | None = None) -> bool:
-        """Pause proposing; ``False`` if the session has stopped.
-
-        ``reason`` is what the window shows beside a pause that something other
-        than the user caused.
-        """
+        """Pause proposing, showing ``reason`` if any; ``False`` once stopped."""
         if self.stopped is not None:
             return False
         self.paused = True
@@ -164,17 +138,10 @@ class Session:
     def record(
         self, shot_id: str, cost: float, uncer: float | None, bad: bool
     ) -> str | None:
-        """Take the cost for one shot; return its source, or ``None`` if not taken.
-
-        The source is the one recorded when the shot was proposed, which the
-        routine writes onto the shot as its ``phase``.
-
-        A shot this session did not submit is ignored, so a user's own shots and
-        runmanager's defaults pass through harmlessly. So is a second cost for a
-        recorded shot: a row can run twice, by a retry or by BLACS re-running a
-        file that already held data, and an id names a proposal, not an
-        execution.
-        """
+        """Take the cost for one shot; return its source, or ``None`` if not taken."""
+        # A shot this session did not submit, such as a user's own, is ignored, and
+        # so is a second cost for one it did: a row can run twice, by a retry or a
+        # BLACS re-run, and an id names a proposal, not an execution.
         if shot_id not in self.proposals or shot_id in self.results:
             return None
         self.results[shot_id] = (float(cost), uncer, bool(bad))
@@ -184,22 +151,15 @@ class Session:
         return self.sources[shot_id]
 
     def reconcile(self) -> list[str]:
-        """Ask runmanager what became of the awaited shots, and give some up.
-
-        Returns the shots dropped by this call. A cost that turns up afterwards
-        is still taken, and the shot stops counting as dropped.
-
-        A shot is kept while it may still complete in BLACS and, once it has,
-        while lyse has the file or will be given it, because its cost is then
-        on its way. Any other shot goes at once: it will not compile, BLACS
-        refused it, lyse will not get it, runmanager no longer holds it, or it
-        is behind a queue row only an operator can clear.
-        """
+        """Ask runmanager what became of the awaited shots; return those given up."""
         awaiting = self.awaiting
         if not awaiting:
             return []
         answers = self.interface.shot_status(awaiting)
         gone = []
+        # A shot is kept while it may still complete in BLACS, or lyse has its file
+        # or will be given it. Any other shot goes at once; a cost that turns up
+        # later is still taken by record.
         for shot_id in awaiting:
             record = answers[shot_id]
             if record is not None and record["queue"] == QUEUE_BLOCKED:
@@ -220,34 +180,7 @@ class Session:
         return gone
 
     def refill(self) -> list[str]:
-        """Submit what the learner proposes, as far as the budget has room.
-
-        The learner is handed the history and ``num_buffered_runs`` as a hint,
-        and answers with what its method allows now, each proposal beside its
-        source. The session holds no barrier of its own: a learner declaring a
-        ``generation`` proposes a whole one when nothing of the last is
-        outstanding, and one declaring none tops the shots in flight up to the
-        hint. The first proposal of a run is its ``start_point``, if it has
-        one, under :data:`START_SOURCE`.
-
-        ``max_num_runs`` caps the whole run, not a batch, so what a learner
-        offers past the room left is cut from the end, and the last generation
-        is whatever that room holds. runmanager refusing to add to the run's
-        sequence stops the session with runmanager's reason; any other refusal
-        is raised.
-
-        Returns
-        -------
-        list of str
-            The shot ids submitted; empty once the session has stopped.
-
-        Raises
-        ------
-        TypeError
-            If a proposal comes back without a string source.
-        RuntimeError
-            If the interface does not answer with one shot id per proposal.
-        """
+        """Submit what the learner proposes within the budget; return the shot ids."""
         if self.paused or self.stopped:
             return []
         awaiting = len(self.awaiting)
@@ -258,9 +191,8 @@ class Session:
             and not self._resume_pending
         ):
             # Nothing of ours was queued, so BLACS ran a default shot of
-            # runmanager's: a shot the optimizer missed, which a larger
-            # num_buffered_runs prevents. A generation learner is not counted;
-            # its queue empties by design.
+            # runmanager's, which a larger num_buffered_runs prevents. A generation
+            # learner's queue empties by design, so it is not counted.
             self.starved += 1
         self._resume_pending = False
         room = None
@@ -281,6 +213,8 @@ class Session:
             history = [
                 Observation(None, start, None, state=PENDING, source=START_SOURCE)
             ]
+        # max_num_runs caps the whole run, not a batch, so what a learner offers
+        # past the room left is cut from the end.
         proposed = [
             *opening,
             *self.learner.propose(history, self.config.num_buffered_runs),
@@ -321,20 +255,14 @@ class Session:
         return shot_ids
 
     def status(self) -> dict:
-        """A snapshot for the routine to write back as lyse results.
-
-        ``None`` means the session has nothing to report for that key yet.
-        ``best_cost`` is in the units and sign of the lab's own cost column,
-        beside a ``best_params`` in real units: under ``maximize`` a
-        measurement of 7 is reported as 7. A shot's ``phase`` is not here, as it
-        belongs to the shot; :meth:`record` returns it.
-        """
+        """A snapshot for the routine to write back as lyse results."""
         best = self.best
         # The routine flips a maximized cost on the way in; this undoes it, so
         # the status is in the lab's own sign.
         best_cost = None if best is None else best.cost
         if best_cost is not None and self.config.maximize:
             best_cost = -best_cost
+        # None marks a key the session has nothing to report for yet.
         return {
             "submitted": len(self.proposals),
             "completed": len(self.results),

@@ -47,23 +47,19 @@ def _set_runmanager_values(session, original, best):
 
 
 class Worker:
-    """The optimization session, on a thread of its own.
-
-    ``load`` returns the configuration and the text of its file, and is called
-    at every Reset, the opening included; a file that does not load raises
-    ``OSError`` or ``ValueError``. ``window`` is the view the thread updates
-    after each request. ``command_queue`` carries the window's commands and the
-    thread's requests, and ``interface_factory`` turns a configuration into a
-    runmanager interface.
-    """
+    """The optimization session, on a thread of its own."""
 
     def __init__(
         self, load, window, command_queue, interface_factory=RunmanagerInterface
     ):
+        # Returns the configuration and the text of its file, and is called at
+        # every Reset, the opening included; a file that does not load raises
+        # OSError or ValueError.
         self.load = load
         # What a hand-over reads before the opening Reset has loaded the file.
         self.config = load()[0]
         self.window = window
+        # Carries the window's commands and the thread's own requests.
         self.command_queue = command_queue
         self.interface_factory = interface_factory
         # Hand-overs whose status has not been saved yet, oldest first.

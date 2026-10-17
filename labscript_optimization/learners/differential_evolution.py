@@ -20,8 +20,8 @@ after its generation still competes for its own slot and disturbs no other.
 
 As the Gaussian process's explorer it is asked for a point or two at a time over
 its own shots alone, with no barrier: asynchronous differential evolution. Its
-generation, and the budget that asks for, apply only when it is the selected
-learner.
+generation, and the budget that generation asks for, apply only when it is the
+selected learner.
 """
 
 from collections.abc import Sequence
@@ -43,10 +43,6 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
 
     Parameters
     ----------
-    space : ParameterSpace
-        The parameter space to search.
-    rng : numpy.random.Generator
-        Source of randomness.
     population_size : int
         Members in the population (the literature's NP), and so proposals per
         generation. :data:`STRATEGIES` sets the floor this refuses below. About
@@ -133,7 +129,7 @@ class DifferentialEvolutionLearner(ParameterSpaceLearner):
         return params, costs
 
     def _sample_new_member(self, params: np.ndarray, costs: np.ndarray) -> np.ndarray:
-        """A founder's point: near the best member once one has a cost, else uniform."""
+        """A founder's point: within ``trust_region`` of the best member, if any."""
         if np.isnan(costs).all():
             return self.space.uniform(self.rng, 1)[0]
         best = params[int(np.nanargmin(costs))]

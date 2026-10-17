@@ -19,8 +19,8 @@
 A parameter in a group not listed in ``groups`` is left out entirely. One with
 ``enable = false`` in a listed group is carried but not searched and gets no
 mapping, so its runmanager global keeps the value it already holds. A listed
-name that no table defines is refused as a misspelled group. A parameter name
-and a global name are each unique across the listed groups.
+name that no table defines is refused as a misspelled group. Among the enabled
+entries of the listed groups, a parameter name and a global name are each unique.
 
 Every key must be one this package knows; an unknown one is refused.
 
@@ -76,8 +76,8 @@ GENERAL_KEYS = frozenset(
 )
 
 #: The whole-number settings of :class:`Config`, each with its smallest value
-#: and why. Below most floors a session ends without saying why: nothing is
-#: recorded, and ``check_stop`` is reached only from ``record``.
+#: and why. Below the floor of ``max_num_runs``, or of ``num_buffered_runs`` with a
+#: learner that has no generation, a session idles with no stop reason.
 INTEGER_SETTINGS = {
     "num_buffered_runs": (
         1,
@@ -236,7 +236,7 @@ class Config:
     seed: int | None = None
 
     def __post_init__(self) -> None:
-        """Check every field, so a Config built in code is held to what a file is."""
+        """Check the settings' kinds and floors, the cost key and the global names."""
         for key, (floor, why) in INTEGER_SETTINGS.items():
             value = getattr(self, key)
             if value is None and key in OPTIONAL_INTEGER_SETTINGS:
@@ -324,9 +324,9 @@ def check_keys(raw: dict) -> None:
             raise ValueError(f"[{name}] must be a table, not {raw[name]!r}.")
     knobs.reject_unknown(raw.get("ANALYSIS", {}), ANALYSIS_KEYS, "[ANALYSIS]")
     knobs.reject_unknown(raw.get("GENERAL", {}), GENERAL_KEYS, "[GENERAL]")
-    # Parameter and global tables are checked for every group, listed or not, so
-    # a typo in a switched-off group does not wait for the day it is listed.
-    # Bounds, args and expr wait for from_dict, and only for listed groups.
+    # Every group's tables are checked for keys and kinds of value, listed or not,
+    # so a typo in a switched-off group does not wait for the day it is listed.
+    # What bounds, args and expr mean is checked in from_dict, for listed groups.
     for table, allowed, required in (
         ("PARAMETERS", PARAMETER_KEYS, PARAMETER_REQUIRED),
         ("RUNMANAGER_GLOBALS", GLOBAL_KEYS, GLOBAL_REQUIRED),

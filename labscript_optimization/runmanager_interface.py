@@ -3,8 +3,9 @@
 runmanager never stops: submitting appends to the running queue, with no queue
 to start, drain or wait on. A shot is complete when runmanager has sent it to
 lyse and lyse has analyzed it, which is the routine being handed its row. Each
-shot file carries the identifier runmanager minted for its queue row, by which
-a cost is matched to a proposal.
+shot file runmanager compiles from a queue row carries the identifier it minted
+for that row, by which a cost is matched to a proposal; its default shots, which
+reach BLACS already compiled, carry none.
 """
 
 from collections.abc import Sequence
@@ -14,18 +15,10 @@ import numpy as np
 
 
 class RunmanagerInterface:
-    """Submits proposals and reports what became of them.
-
-    Parameters
-    ----------
-    config : labscript_optimization.config.Config
-        The session configuration.
-    client : runmanager.client.RunmanagerClient, optional
-        ``None`` makes the default one. Injected so the session can be tested
-        without runmanager.
-    """
+    """Submits proposals and reports what became of them."""
 
     def __init__(self, config, client=None):
+        # A client can be injected, so the session can be tested without runmanager.
         if client is None:
             from runmanager.client import RunmanagerClient
 
@@ -43,33 +36,18 @@ class RunmanagerInterface:
         self.sequence_index = None
 
     def check_ready(self) -> dict[str, str] | None:
-        """Raise if runmanager cannot take a session's shots; called at each Start.
-
-        Nothing is pinned or kept here, so a Start refused after this call
-        leaves the interface as it was.
-
-        Returns
-        -------
-        dict of str to str, or None
-            Until :meth:`pin_labscript_file` has run, the raw Default expression
-            of each of the configuration's globals, as runmanager holds it now:
-            what the worker records and :meth:`set_values` restores. ``None``
-            after that.
-
-        Raises
-        ------
-        RuntimeError
-            If runmanager's globals do not evaluate, which would fail every
-            shot's compile, or, until a Start has gone, if runmanager has no
-            labscript file selected or a global the configuration sets is in no
-            active group.
-        """
+        """Raise if runmanager cannot take a session's shots; called at each Start."""
+        # Nothing is pinned or kept here, so a Start refused after this call leaves
+        # the interface as it was.
         if self.client.error_in_globals():
             raise RuntimeError(
                 "runmanager reports an error in its globals; fix it before "
                 "starting an optimization"
             )
 
+        # Until the first Start has pinned the file, also check it and the globals,
+        # and return the globals' raw Defaults as runmanager holds them now: what
+        # the worker records and set_values restores.
         if self.labscript_file is None:
             if not self.client.get_labscript_file():
                 raise RuntimeError(
@@ -87,11 +65,9 @@ class RunmanagerInterface:
         return None
 
     def pin_labscript_file(self) -> None:
-        """Pin the labscript file that :meth:`check_unchanged` compares against.
-
-        Only the first call pins it, so a Start that resumes the run does not
-        move it.
-        """
+        """Pin the labscript file that :meth:`check_unchanged` compares against."""
+        # Only the first call pins it, so a Start that resumes the run does not
+        # move it.
         if self.labscript_file is None:
             self.labscript_file = self.client.get_labscript_file()
 
@@ -106,14 +82,10 @@ class RunmanagerInterface:
             )
 
     def submit(self, proposals: Sequence[Sequence[float]]) -> list[str]:
-        """Queue one shot per proposal and return their shot ids, in order.
-
-        A run is one runmanager sequence: the first submission starts it and
-        every later one joins it. ``submit_shots`` checks every entry (that the
-        globals evaluate, that none has Scan? or JIT? ticked, and that each
-        makes exactly one shot) and the named sequence before queuing any, so a
-        refusal leaves nothing queued.
-        """
+        """Queue one shot per proposal and return their shot ids, in order."""
+        # A run is one runmanager sequence, started by the first submission.
+        # submit_shots checks every entry and the sequence before queuing any, so
+        # a refusal leaves nothing queued.
         entries = [self.config.globals_for(p) for p in proposals]
         descriptors = self.client.submit_shots(
             entries, sequence=self.sequence, sequence_index=self.sequence_index
@@ -123,21 +95,11 @@ class RunmanagerInterface:
         return [d["shot_id"] for d in descriptors]
 
     def get_start(self) -> np.ndarray:
-        """Read runmanager's values of the parameters as a parameter vector.
-
-        A parameter is read from the global its ``global_name`` ties it to
-        directly; a global an ``expr`` computes cannot be turned back into its
-        parameters.
-
-        Raises
-        ------
-        RuntimeError
-            If a parameter has no such global, or its global does not hold a
-            real number, or the number lies outside the parameter's bounds.
-        """
+        """Read runmanager's values of the parameters as a parameter vector."""
         values = self.client.get_values()
         start = []
         for parameter in self.config.space.parameters:
+            # A global an expr computes cannot be turned back into its parameters.
             direct = [
                 g.name
                 for g in self.config.globals
@@ -170,26 +132,10 @@ class RunmanagerInterface:
         raw: bool = False,
         skip_missing: bool = False,
     ) -> list[str]:
-        """Set runmanager's Default values without submitting a shot.
-
-        Parameters
-        ----------
-        values : sequence of float or dict of str to str
-            Without ``raw``, a parameter vector, whose globals are set to what
-            submitting it would leave in runmanager's window. With ``raw``, a
-            dict of global name to the Default expression to write as written.
-        raw : bool, optional
-            Whether ``values`` are expressions to write as they are.
-        skip_missing : bool, optional
-            Whether to write the globals in an active group and skip the rest,
-            rather than refuse them all.
-
-        Returns
-        -------
-        list of str
-            The names skipped for being in no active group; empty unless
-            ``skip_missing``.
-        """
+        """Set runmanager's Defaults, submitting no shot; return the names skipped."""
+        # Without raw, values is a parameter vector and its globals are set; with
+        # raw, a dict of global name to the Default expression to write as written.
+        # With skip_missing, a global in no active group is skipped, not refused.
         return self.client.set_values(
             values if raw else self.config.globals_for(values),
             raw=raw,

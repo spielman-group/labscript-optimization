@@ -71,10 +71,6 @@ def validate_options(config) -> None:
     ``[LEARNER.<name>]`` table holds only keys its learner takes. What only a
     built learner can answer is checked in :func:`build`.
 
-    Parameters
-    ----------
-    config : labscript_optimization.config.Config
-
     Raises
     ------
     ValueError

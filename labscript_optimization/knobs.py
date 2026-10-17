@@ -3,8 +3,10 @@
 A learner's constructor is the schema for its ``[LEARNER.<name>]`` table, so
 each knob is checked there, where a learner built in Python meets the same check
 as one built from a file. A wrong kind is refused, not converted: ``bool("false")``
-is true and ``int(8.9)`` is 8. Each check returns the value, as the kind it
-names, or raises ``ValueError`` naming the setting.
+is true and ``int(8.9)`` is 8. ``boolean``, ``integer``, ``string``, ``array``,
+``number``, ``choice`` and ``pair`` return the value, as the kind they name, or
+raise ``ValueError`` naming the setting. ``reject_unknown`` returns nothing, and
+``is_number`` and ``is_numbers`` answer with a bool.
 
 The configuration's own settings use the same checks. They live here because
 :mod:`~labscript_optimization.space` resolves ``trust_region`` and cannot import

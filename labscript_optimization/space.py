@@ -67,7 +67,7 @@ class ParameterSpace:
         if not self.parameters:
             raise ValueError("no enabled parameters to optimize")
         # A proposal is read back by name, so a repeated name would silently
-        # take the first dimension's value.
+        # take the later dimension's value.
         names = [p.name for p in self.parameters]
         repeated = sorted({name for name in names if names.count(name) > 1})
         if repeated:
@@ -96,6 +96,7 @@ class ParameterSpace:
 
     @property
     def num_params(self) -> int:
+        """The number of enabled parameters."""
         return len(self.parameters)
 
     @property

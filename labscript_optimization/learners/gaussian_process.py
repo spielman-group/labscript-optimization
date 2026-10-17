@@ -427,11 +427,6 @@ class GaussianProcessLearner(ParameterSpaceLearner):
 
     Parameters
     ----------
-    space : ParameterSpace
-        The parameter space to search.
-    rng : numpy.random.Generator
-        Source of randomness. The model draws on a generator spawned from it,
-        because it draws on a thread of its own.
     cost_has_noise : bool
         Add a white-noise term to the kernel. Leave this on for real data: off
         asserts the cost is measured exactly, and a history in which only some

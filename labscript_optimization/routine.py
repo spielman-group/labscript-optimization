@@ -213,7 +213,7 @@ class OptimizationRoutine(lyse.Routine):
             run.save_result(name, reported, save_to_h5=False)
 
     def close(self):
-        """Stop the session and stop watching runmanager.
+        """Stop watching runmanager and ask the session's thread to quit.
 
         Called when lyse removes or restarts the routine.
         """
