@@ -53,17 +53,17 @@ class FakeClient:
     def shot_status(self, shot_ids):
         return dict.fromkeys(shot_ids)
 
-    def submit_shots(self, entries, sequence=None, sequence_index=None):
+    def submit_shots(self, entries, sequence_id=None, sequence_index=None):
         """Starts a sequence for each submission that names none."""
-        self.sequences.append((sequence, sequence_index))
+        self.sequences.append((sequence_id, sequence_index))
         self.entries.extend(entries)
-        if sequence is None:
-            sequence = f'20260918T12000{len(self.sequences)}_expt'
+        if sequence_id is None:
+            sequence_id = f'20260918T12000{len(self.sequences)}_expt'
             sequence_index = len(self.sequences)
         return [
             {
                 'shot_id': f'id-{len(self.entries) - len(entries) + i}',
-                'sequence_id': sequence,
+                'sequence_id': sequence_id,
                 'sequence_index': sequence_index,
             }
             for i in range(len(entries))

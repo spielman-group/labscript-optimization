@@ -15,10 +15,9 @@ session awaits are the history's pending records.
 import numpy as np
 from runmanager.client import (
     BLACS_COMPLETED,
-    LYSE_SENT,
-    LYSE_WAITING,
     QUEUE_BLOCKED,
     SequenceRefused,
+    bound_for_lyse,
 )
 
 from . import learners, observations
@@ -170,10 +169,7 @@ class Session:
                 self.blocked.add(shot_id)
             elif record is not None and (
                 record["pending"]
-                or (
-                    record["blacs"] == BLACS_COMPLETED
-                    and record["lyse"] in (LYSE_WAITING, LYSE_SENT)
-                )
+                or (record["blacs"] == BLACS_COMPLETED and bound_for_lyse(record))
             ):
                 continue
             gone.append(shot_id)

@@ -85,7 +85,7 @@ class RunmanagerInterface:
         # a refusal leaves nothing queued.
         entries = [self.config.globals_for(p) for p in proposals]
         descriptors = self.client.submit_shots(
-            entries, sequence=self.sequence, sequence_index=self.sequence_index
+            entries, sequence_id=self.sequence, sequence_index=self.sequence_index
         )
         self.sequence = descriptors[0]["sequence_id"]
         self.sequence_index = descriptors[0]["sequence_index"]
