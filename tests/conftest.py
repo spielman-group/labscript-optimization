@@ -3,7 +3,7 @@ import os
 # Every unhandled exception in suite code otherwise spawns a tkinter window,
 # up to ten per process. A conftest is imported by pytest and by nothing else,
 # so a real run is untouched; setdefault leaves an explicit choice alone.
-os.environ.setdefault('LABSCRIPT_NO_ERROR_DIALOG', '1')
+os.environ.setdefault('LABSCRIPT_DISABLE_GRAPHICAL_EXCEPTHOOK', '1')
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from concurrent.futures import wait
