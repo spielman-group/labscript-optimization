@@ -28,8 +28,9 @@ hard import of tensorflow through every other learner.
 The routine needs the Development branches of lyse and runmanager from the
 Spielman group's labscript suite, which have class routines (`lyse.Routine`),
 `lyse.data(where=...)`, `save_result`'s `save_to_h5`, and `submit_shots`'s
-`sequence` and `sequence_index`. An older lyse or runmanager fails with Python's
-own error for the missing name or argument; the package checks no versions.
+`sequence_id` and `sequence_index`. An older lyse or runmanager fails with
+Python's own error for the missing name or argument; the package checks no
+versions.
 
 Your lyse analysis routine becomes a routine folder, named with a `.lyse`
 suffix, such as `optimization.lyse`, and added to lyse's multishot routines. It
