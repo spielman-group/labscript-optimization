@@ -8,7 +8,7 @@ version: 2
 build:
   os: ubuntu-22.04
   tools:
-    python: "3.11"
+    python: "3.13"
   jobs:
     # ensure full git repo is pulled so setuptools_scm gets versions correctly on install
     # https://docs.readthedocs.com/platform/stable/build-customization.html#unshallow-git-clone

@@ -19,7 +19,7 @@ Run those in the Python environment lyse itself runs in, the one holding the
 rest of your suite: the routine runs inside a lyse analysis subprocess, so an
 installation anywhere else is one lyse cannot import.
 
-It needs Python 3.11 or newer. The `lyse` extra adds what the routine needs from
+It needs Python 3.13 or newer. The `lyse` extra adds what the routine needs from
 the suite: `lyse`, `runmanager`, `qtutils` and `pyqtgraph`. The learners alone,
 without the extra, need numpy, scipy, scikit-learn and `labscript_utils`.
 There is no tensorflow: the neural-network learner is gone, and with it M-LOOP's

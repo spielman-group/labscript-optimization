@@ -25,7 +25,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3 :: Only",
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "labscript_utils>=3.4.2",
     "numpy>=1.25",
