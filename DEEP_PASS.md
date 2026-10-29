@@ -13,6 +13,14 @@ their `Development`:
 - runmanager `090fba0`: `submit_shots` takes `sequence_id`.
 - runmanager `eb28e07`: `runmanager.client.bound_for_lyse`.
 
+## Compatibility artifacts
+
+`CodeHealth` has none: no alias, old name, shim, legacy key or old-format
+fallback. An M-LOOP table or key is refused as unknown, and nothing is read
+under an old name. A single-number `uncer_bias` is not one: a cycle of one
+weight is a designed form (`204d6c8`), and an M-LOOP file never loads unchanged.
+The suite passes, 201 tests.
+
 ## Kept by decision
 
 Each of these could look like a candidate for removal, and was kept:

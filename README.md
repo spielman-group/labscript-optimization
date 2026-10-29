@@ -4,7 +4,7 @@
 
 **labscript-optimization** tunes the parameters of an experiment controlled by the [*labscript suite*](https://github.com/labscript-suite/labscript-suite) while it runs. A [**lyse**](https://github.com/labscript-suite/lyse) routine proposes shots, [**runmanager**](https://github.com/labscript-suite/runmanager) runs them, and each shot's cost comes back through lyse to steer the next proposals. You compute the cost in your own lyse routine; this package never does.
 
-It replaces [M-LOOP](https://github.com/michaelhush/M-LOOP) and its lyse plugin [analysislib-mloop](https://github.com/rpanderson/analysislib-mloop), keeping the algorithms worth keeping and the shape of their TOML configuration. It depends only on numpy, scipy and scikit-learn. An existing M-LOOP configuration needs changes before it loads: [UPGRADING.md](https://github.com/spielman-group/labscript-optimization/blob/Development/UPGRADING.md) lists them.
+It replaces [M-LOOP](https://github.com/michaelhush/M-LOOP) and its lyse plugin [analysislib-mloop](https://github.com/rpanderson/analysislib-mloop), keeping the algorithms worth keeping and the shape of their TOML configuration. Beside the suite, it depends only on numpy, scipy and scikit-learn. An existing M-LOOP configuration needs changes before it loads: [UPGRADING.md](https://github.com/spielman-group/labscript-optimization/blob/Development/UPGRADING.md) lists them.
 
 The optimizer comprises:
 
