@@ -70,6 +70,8 @@ class RunmanagerInterface:
 
     def check_unchanged(self) -> None:
         """Raise if the labscript file has changed since the session started."""
+        # runmanager refuses a sequence of another labscript file by base name
+        # only, so a file of the same name in another folder passes there.
         current = self.client.get_labscript_file()
         if current != self.labscript_file:
             raise RuntimeError(

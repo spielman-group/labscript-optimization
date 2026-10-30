@@ -26,9 +26,10 @@ There is no tensorflow: the neural-network learner is gone, and with it M-LOOP's
 hard import of tensorflow through every other learner.
 
 The routine needs the Development branches of lyse and runmanager from the
-Spielman group's labscript suite, which have class routines (`lyse.Routine`),
-`lyse.data(where=...)`, `save_result`'s `save_to_h5`, and `submit_shots`'s
-`sequence_id` and `sequence_index`. An older lyse or runmanager fails with
+Spielman group's labscript suite, which have class routines (`lyse.Routine`,
+with its `folder`), `lyse.data(where=...)`, `save_result`'s `save_to_h5`,
+`submit_shots`'s `sequence_id` and `sequence_index`, and
+`runmanager.client.bound_for_lyse`. An older lyse or runmanager fails with
 Python's own error for the missing name or argument; the package checks no
 versions.
 

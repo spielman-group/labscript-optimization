@@ -46,6 +46,8 @@ def _set_runmanager_values(session, original, best):
         print(f"Could not set runmanager's values: {reason}")
 
 
+# Kept in this package until a second lyse routine needs one, when it becomes a
+# lyse.Routine facility.
 class Worker:
     """The optimization session, on a thread of its own."""
 

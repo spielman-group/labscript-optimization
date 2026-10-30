@@ -26,7 +26,7 @@ pip install -e "./labscript-optimization[lyse]"
 
 It needs Python 3.13 or newer. The `lyse` extra adds what the routine needs from the suite: `lyse`, `runmanager`, `qtutils` and `pyqtgraph`. The learners alone, without the extra, need numpy, scipy, scikit-learn and `labscript_utils`.
 
-The routine needs the Development branches of lyse and runmanager from the Spielman group's labscript suite, which have class routines (`lyse.Routine`), `lyse.data(where=...)`, `save_result`'s `save_to_h5`, and `submit_shots`'s `sequence_id` and `sequence_index`. An older lyse or runmanager fails with Python's own error for the missing name or argument; the package checks no versions.
+The routine needs the Development branches of lyse and runmanager from the Spielman group's labscript suite, which have class routines (`lyse.Routine`, with its `folder`), `lyse.data(where=...)`, `save_result`'s `save_to_h5`, `submit_shots`'s `sequence_id` and `sequence_index`, and `runmanager.client.bound_for_lyse`. An older lyse or runmanager fails with Python's own error for the missing name or argument; the package checks no versions.
 
 
 ## Documentation
