@@ -233,37 +233,36 @@ def test_the_status_is_written_onto_the_shot_as_lyse_results_and_not_into_its_fi
 
 
 def test_the_shot_that_first_has_a_value_can_be_written_into_its_column(
-    shot, routine, results
+    shot, routine, results, qt_application
 ):
     """A run spends its first shots on costs the fits cannot use, and then has
     an answer. The stand-in written while there was nothing to report fixes the
     column's type, and decides whether the shot that finally has something can
-    be recorded at all.
-
-    The statuses are saved through lyse as it saves them: the shot files are
-    turned into rows, ``lyse.Run.save_result`` records each value, and
-    ``FileBox.update_row`` sets it with ``dataframe.at``, which is spelled out
-    here because ``update_row`` is welded to the Qt model. lyse recovers from
-    the ``ValueError`` a list raises by widening the column to ``object``.
+    be recorded at all. Each pass's saved results go into lyse's shots table
+    through its ``update_rows``, as lyse hands them over.
     """
+    import lyse.filebox
     from lyse.dataframe_utilities import get_dataframe_from_shots
+    from lyse.utils import worker
+    from qtutils.qt import QtWidgets
 
-    rows = [shot() for _ in range(4)]
-    dataframe = get_dataframe_from_shots([r['filepath'] for r in rows])
-    depth = dataframe.columns.nlevels
-    for row_number, row in enumerate(rows):
+    # What the shots table uses of lyse's application, which a test cannot start.
+    app = SimpleNamespace(
+        qapplication=qt_application,
+        output_box=SimpleNamespace(output=lambda text, red=False: None),
+        filebox=SimpleNamespace(
+            add_shots_start_time=None, set_add_shots_progress=lambda *args: None
+        ),
+    )
+    exp_config = SimpleNamespace(getboolean=lambda *args: False)
+    table = lyse.filebox.DataFrameModel(app, QtWidgets.QTableView(), exp_config)
+    paths = [shot()['filepath'] for _ in range(4)]
+    table.add_files(paths, get_dataframe_from_shots(paths))
+    for number, path in enumerate(paths):
         # The last shot is the first with an answer.
-        answer = {'best_params': [0.25, 1.5]} if row_number == 3 else {}
-        routine.save_status(row['filepath'], status(**answer))
-        for name, value in results(row).items():
-            column = ('labscript_optimization', name) + ('',) * (depth - 2)
-            try:
-                dataframe.at[row_number, column] = value
-            except ValueError:
-                if column not in dataframe.columns:
-                    dataframe.at[row_number, column] = None
-                else:
-                    dataframe[column] = dataframe[column].astype('object')
-                dataframe.at[row_number, column] = value
-    saved = list(dataframe[('labscript_optimization', 'best_params')])
+        answer = {'best_params': [0.25, 1.5]} if number == 3 else {}
+        routine.save_status(path, status(**answer))
+        table.update_rows(worker._updated_data)
+        worker._updated_data.clear()
+    saved = list(table.dataframe[('labscript_optimization', 'best_params')])
     assert saved == [[]] * 3 + [[0.25, 1.5]]
