@@ -251,13 +251,15 @@ def test_the_shot_that_first_has_a_value_can_be_written_into_its_column(
         qapplication=qt_application,
         output_box=SimpleNamespace(output=lambda text, red=False: None),
         filebox=SimpleNamespace(
-            add_shots_start_time=None, set_add_shots_progress=lambda *args: None
+            add_shots_start_time=None,
+            fire_event=lambda *args: None,
+            set_add_shots_progress=lambda *args: None,
         ),
     )
     exp_config = SimpleNamespace(getboolean=lambda *args: False)
     table = lyse.filebox.DataFrameModel(app, QtWidgets.QTableView(), exp_config)
     paths = [shot()['filepath'] for _ in range(4)]
-    table.add_files(paths, get_dataframe_from_shots(paths))
+    table.add_files(paths, get_dataframe_from_shots(paths), ['remote'] * len(paths))
     for number, path in enumerate(paths):
         # The last shot is the first with an answer.
         answer = {'best_params': [0.25, 1.5]} if number == 3 else {}
