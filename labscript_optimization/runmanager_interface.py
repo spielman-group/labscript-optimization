@@ -2,7 +2,7 @@
 
 runmanager never stops: submitting appends to the running queue, with no queue
 to start, drain or wait on. A shot is complete when runmanager has sent it to
-lyse and lyse has analyzed it, which is the routine being handed its row. Each
+lyse and lyse has analyzed it, which is the plugin being told of it. Each
 shot file runmanager compiles from a queue row carries the identifier it minted
 for that row, by which a cost is matched to a proposal; its default shots, which
 reach BLACS already compiled, carry none.

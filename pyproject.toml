@@ -42,8 +42,13 @@ content-type = "text/markdown"
 Repository = "https://github.com/spielman-group/labscript-optimization/"
 Tracker = "https://github.com/spielman-group/labscript-optimization/issues/"
 
+# lyse finds its plugins under this group, and loads one whose flag in the
+# labconfig's [lyse/plugins] section is true.
+[project.entry-points."lyse.plugins"]
+labscript_optimization = "labscript_optimization.plugin"
+
 [project.optional-dependencies]
-# The lyse routine needs the suite's applications; the learners do not. Keeping
+# The lyse plugin needs the suite's applications; the learners do not. Keeping
 # these separate is what lets the learners be unit tested without a lab.
 lyse = [
     "lyse",

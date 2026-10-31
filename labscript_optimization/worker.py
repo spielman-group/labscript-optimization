@@ -1,26 +1,20 @@
 """The optimization session's thread, and the queue everything reaches it by.
 
-The lyse routine hands over the shots lyse has analyzed and returns within
-:data:`REPLY_TIMEOUT`, so the fitting and the runmanager traffic happen here,
-on a thread of the routine's own. A reply that comes later is saved by the next
-hand-over. The thread is purely reactive: it proposes only in response to a
-request or a window command.
+The plugin hands over each shot lyse has analyzed and returns at once, so the
+fitting and the runmanager traffic happen here, on a thread of the plugin's own,
+and the reply is saved when it comes. The thread is purely reactive: it proposes
+only in response to a hand-over or a window command.
 """
 
-import queue
 import threading
 import traceback
-from concurrent.futures import Future, wait
+from concurrent.futures import Future
 
 from .runmanager_interface import RunmanagerInterface
 from .session import Session
 
-#: Seconds a hand-over waits for the session's reply. Generous for an answer
-#: that is a dictionary, and short against a shot cycle.
-REPLY_TIMEOUT = 2.0
 
-
-def _set_runmanager_values(session, original, best):
+def _set_runmanager_values(session, original, best, output):
     """Set runmanager's values to the session's best, or restore the originals."""
     # A click queued behind a Reset can find nothing yet to set.
     if session.best is None if best else not original:
@@ -33,9 +27,9 @@ def _set_runmanager_values(session, original, best):
                 original, raw=True, skip_missing=True
             )
             if skipped:
-                print(
+                output(
                     f"Restored runmanager's values, except those in no active "
-                    f"group: {', '.join(skipped)}"
+                    f"group: {', '.join(skipped)}\n"
                 )
     except Exception as exc:
         reason = (
@@ -43,60 +37,46 @@ def _set_runmanager_values(session, original, best):
             if isinstance(exc, TimeoutError)
             else str(exc) or type(exc).__name__
         )
-        print(f"Could not set runmanager's values: {reason}")
+        output(f"Could not set runmanager's values: {reason}\n", red=True)
 
 
-# Kept in this package until a second lyse routine needs one, when it becomes a
-# lyse.Routine facility.
 class Worker:
     """The optimization session, on a thread of its own."""
 
     def __init__(
-        self, load, window, command_queue, interface_factory=RunmanagerInterface
+        self, load, window, command_queue, output, interface_factory=RunmanagerInterface
     ):
         # Returns the configuration and the text of its file, and is called at
         # every Reset, the opening included; a file that does not load raises
         # OSError or ValueError.
         self.load = load
-        # What a hand-over reads before the opening Reset has loaded the file.
-        self.config = load()[0]
+        # None until a Reset has loaded the file.
+        self.config = None
         self.window = window
         # Carries the window's commands and the thread's own requests.
         self.command_queue = command_queue
+        # Takes a message and whether it is an error, as lyse's output box does.
+        self.output = output
         self.interface_factory = interface_factory
-        # Hand-overs whose status has not been saved yet, oldest first.
-        self.unsaved = []
-        # Failures in the work after a reply, for the next hand-over to raise.
-        self.failures = queue.SimpleQueue()
         self.thread = threading.Thread(target=self._run_session, daemon=True)
         self.thread.start()
         self.command_queue.put(("reset", None, None))
 
-    def hand_over(self, filepaths, observations, save):
-        """Hand over one pass's observations and save the shots the session took."""
+    def hand_over(self, observations):
+        """Hand over a shot's observations, without waiting for the session.
+
+        The future gives ``(recorded, status)``: each observation's source, or
+        ``None`` for one the session did not take, and the session's status.
+        """
+        if not self.thread.is_alive():
+            raise RuntimeError(
+                "The optimization session's thread has stopped, so nothing will "
+                "answer. Restart lyse."
+            )
         reply = Future()
         command = "observe" if observations else "shot"
         self.command_queue.put((command, reply, tuple(observations)))
-        self.unsaved.append((filepaths, reply))
-        wait([reply], timeout=REPLY_TIMEOUT)
-        for entry in [entry for entry in self.unsaved if entry[1].done()]:
-            self.unsaved.remove(entry)
-            filepaths, reply = entry
-            recorded, status = reply.result()
-            for filepath, source in zip(filepaths, recorded):
-                # A source comes back only for a shot the session proposed and had
-                # not yet recorded; runmanager mints an id for every row it compiles.
-                if source is not None:
-                    save(filepath, status | {"phase": source})
-        if not self.failures.empty():
-            raise self.failures.get()
-        if not reply.done() and not self.thread.is_alive():
-            # With the thread dead, nothing will complete these.
-            self.unsaved = [entry for entry in self.unsaved if entry[1].done()]
-            raise RuntimeError(
-                "The optimization session's thread has stopped, so nothing will "
-                "answer; its traceback is above. Restart the routine."
-            )
+        return reply
 
     def quit(self):
         """Ask the session thread to stop, without waiting for it."""
@@ -108,7 +88,7 @@ class Worker:
         # runmanager held them before the first Start that set it. They outlast
         # the session and a Reset whose file does not load.
         original = {}
-        printed = None
+        reported = None
         watched_future = None
         # Whether runmanager answers, as the window's light last said.
         answering = True
@@ -166,7 +146,7 @@ class Worker:
                     session.pause()
                 elif command in ("set_best", "restore"):
                     _set_runmanager_values(
-                        session, original, best=command == "set_best"
+                        session, original, command == "set_best", self.output
                     )
                 elif command == "observe":
                     if session is None:
@@ -202,21 +182,17 @@ class Worker:
                 error = str(exc) or type(exc).__name__
                 if session is not None:
                     session.stop(error if reply is None else "stopped by an error")
-                if reply is None:
-                    # A window command has no routine waiting for its error.
-                    traceback.print_exc()
-                elif not reply.done():
+                self.output(traceback.format_exc(), red=True)
+                if reply is not None and not reply.done():
                     reply.set_exception(exc)
-                else:
-                    # The next hand-over raises this, and may never come.
-                    traceback.print_exc()
-                    self.failures.put(exc)
             finally:
                 if session is not None:
-                    ended = session.stopped and printed is not session
+                    ended = session.stopped and reported is not session
                     if ended:
-                        print(f"The optimization has stopped: {session.stopped}")
-                        printed = session
+                        self.output(
+                            f"The optimization has stopped: {session.stopped}\n"
+                        )
+                        reported = session
                     computation = getattr(session.learner, "computation", None)
                     if computation is not None and computation is not watched_future:
                         computation.add_done_callback(
@@ -244,6 +220,6 @@ class Worker:
                         # After the window shows the end, so a runmanager that
                         # does not answer cannot hold it up. runmanager
                         # otherwise shows the last proposal made.
-                        _set_runmanager_values(session, original, best=True)
+                        _set_runmanager_values(session, original, True, self.output)
                 elif error is not None:
                     self.window.update({"stopped": error}, False, (), False, False)

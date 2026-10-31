@@ -6,7 +6,7 @@ for every shot runmanager compiled and empty for one of its default shots.
 """
 
 import itertools
-import warnings
+import time
 from types import SimpleNamespace
 
 try:
@@ -24,10 +24,10 @@ import h5py
 import pandas as pd
 import pytest
 
+from conftest import SESSION_CONFIG, FakeInterface
+
 from labscript_optimization import config as config_module
-from labscript_optimization import plugin as routine_module
-from labscript_optimization.plugin import extract
-from labscript_optimization.session import Session
+from labscript_optimization.plugin import Plugin, extract
 
 CONFIG = """
 [ANALYSIS]
@@ -131,119 +131,20 @@ def test_a_shot_carrying_no_identifier_is_not_the_sessions_to_read(shot):
     assert extract(shots, config_for()) == ([], [])
 
 
-@pytest.fixture
-def routine():
-    """A routine built without its window, worker or runmanager, as lyse
-    allocates one before its ``__init__``.
-    """
-    routine = routine_module.OptimizationRoutine.__new__(
-        routine_module.OptimizationRoutine
-    )
-    routine.path = routine.paths = None
-    return routine
-
-
-def test_a_pass_reads_its_own_files_whatever_order_lyse_keeps_its_columns_in(
-    shot, routine, monkeypatch
-):
-    """lyse keeps its columns in the order they were added, and pandas warns
-    about lexsort depth when an unsorted MultiIndex is read by a shallower key,
-    which would print into lyse's output as though the optimizer had failed.
-    The rows carry an image, which deepens every column label past the cost
-    key, as it does in a sequence of shots with images.
-    """
-    rows = [shot(shot_id=f'row-{i}', cost=i + 1.0) for i in range(3)]
-    for row in rows:
-        row[('image', 'raw', 'width')] = 1
-    lyse_rows = frame(rows)
-    lyse_rows = lyse_rows[lyse_rows.columns[::-1]]
-    monkeypatch.setattr(
-        routine_module.lyse,
-        'data',
-        lambda filepath=None, where=None: lyse_rows[
-            lyse_rows['filepath'].isin(where['filepath'])
-        ],
-    )
-    handed = []
-    routine.worker = SimpleNamespace(
-        config=config_for(), hand_over=lambda *args: handed.append(args)
-    )
-    routine.paths = [rows[0]['filepath'], rows[1]['filepath']]
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', pd.errors.PerformanceWarning)
-        routine.run()
-    [(filepaths, observations, _)] = handed
-    assert filepaths == routine.paths
-    assert [o[:2] for o in observations] == [('row-0', -1.0), ('row-1', -2.0)]
-
-
-def status(**overrides):
-    """What a shot carries: the session's own status, and the shot's phase."""
-    session = Session(config_for(), None)
-    return session.status() | {'phase': 'main'} | overrides
+def wait_until(qt_application, condition):
+    """Process the GUI thread's events until the condition holds, as lyse would."""
+    deadline = time.monotonic() + 5
+    while not condition():
+        assert time.monotonic() < deadline
+        qt_application.processEvents()
+        time.sleep(0.01)
 
 
 @pytest.fixture
-def results(monkeypatch):
-    """Read back what was saved against a shot, as lyse's dataframe gets it.
-
-    Inside lyse, ``save_result`` hands each value over in ``_updated_data``,
-    by file and then by column, and lyse sets it into that shot's row. Outside
-    lyse nothing is handed over, so this stands in for the analysis
-    subprocess.
-    """
-    pytest.importorskip('lyse')
-    from lyse.utils import worker
-
-    monkeypatch.setattr(worker, 'spinning_top', True)
-    monkeypatch.setattr(worker, '_updated_data', {})
-
-    def read(row):
-        # The group name is the promise: df[('labscript_optimization', ...)].
-        saved = worker._updated_data.get(row['filepath'], {})
-        return {
-            name: value
-            for (group, name), value in saved.items()
-            if group == 'labscript_optimization'
-        }
-
-    return read
-
-
-def test_the_status_is_written_onto_the_shot_as_lyse_results_and_not_into_its_file(
-    shot, routine, results
-):
-    """The lab reads it as ``df[('labscript_optimization', 'best_cost')]``
-    alongside the shot it belongs to. The dataframe is where it is read:
-    writing the file as well would take its h5 lock once for every shot the
-    session took, inline in lyse.
-    """
-    row = shot()
-    routine.save_status(
-        row['filepath'],
-        status(phase='warmup', best_cost=7.0, best_params=[0.25]),
-    )
-    assert results(row) == {
-        'phase': 'warmup',
-        'best_cost': 7.0,
-        'best_params': [0.25],
-    }
-    with h5py.File(row['filepath'], 'r') as f:
-        assert 'results' not in f
-
-
-def test_the_shot_that_first_has_a_value_can_be_written_into_its_column(
-    shot, routine, results, qt_application
-):
-    """A run spends its first shots on costs the fits cannot use, and then has
-    an answer. The stand-in written while there was nothing to report fixes the
-    column's type, and decides whether the shot that finally has something can
-    be recorded at all. Each pass's saved results go into lyse's shots table
-    through its ``update_rows``, as lyse hands them over.
-    """
+def lyse_plugin(qt_application, tmp_path, monkeypatch):
+    """The plugin set up as lyse sets it up, with lyse's real shots table and
+    runmanager faked, and what lyse's output box was sent."""
     import lyse.filebox
-    from lyse.dataframe_utilities import get_dataframe_from_shots
-    from lyse.utils import worker
     from qtutils.qt import QtWidgets
 
     # What the shots table uses of lyse's application, which a test cannot start.
@@ -258,13 +159,80 @@ def test_the_shot_that_first_has_a_value_can_be_written_into_its_column(
     )
     exp_config = SimpleNamespace(getboolean=lambda *args: False)
     table = lyse.filebox.DataFrameModel(app, QtWidgets.QTableView(), exp_config)
-    paths = [shot()['filepath'] for _ in range(4)]
-    table.add_files(paths, get_dataframe_from_shots(paths), ['remote'] * len(paths))
+    output = []
+    plugin = Plugin()
+    plugin.interface_factory = FakeInterface
+    # The runmanager light would ask the lab's runmanager.
+    monkeypatch.setattr(plugin.window.link, 'start', lambda: None)
+    plugin.plugin_setup_complete(
+        {
+            'shots_model': table,
+            'output_box': SimpleNamespace(
+                output=lambda text, red=False: output.append(text)
+            ),
+        }
+    )
+    yield plugin, table, output
+    plugin.close()
+
+
+def test_the_configuration_file_is_chosen_saved_and_driven_remotely(
+    lyse_plugin, qt_application, tmp_path
+):
+    """With no file chosen the session cannot open; a file chosen remotely is
+    read, saved with lyse's configuration, and the session started from it."""
+    plugin, _, _ = lyse_plugin
+
+    def phase():
+        return plugin.handle_get_status()['phase']
+
+    wait_until(qt_application, lambda: phase().startswith('Ended: No configuration'))
+    config_file = tmp_path / 'config.toml'
+    config_file.write_text(SESSION_CONFIG)
+    plugin.handle_set_config_file(config_file)
+    wait_until(qt_application, lambda: phase() == 'Paused')
+    assert plugin.get_save_data()['config_file'] == str(config_file)
+    plugin.handle_start()
+    wait_until(qt_application, lambda: phase() == 'Running')
+    assert plugin.handle_get_status()['submitted'] == 2
+
+
+def test_each_analysed_shot_the_session_proposed_gets_its_status_columns(
+    lyse_plugin, qt_application, tmp_path
+):
+    """After all analysis of a shot, its cost goes to the session, and the
+    shot's row gets what proposed it and the best so far, in lyse's dataframe
+    and not in the file. The first shot's cost is unusable, so its stand-ins
+    fix the columns' types before the next has values to put in them."""
+    plugin, table, _ = lyse_plugin
+    config_file = tmp_path / 'config.toml'
+    config_file.write_text(SESSION_CONFIG)
+    plugin.restore_save_data({'config_file': str(config_file)})
+    plugin.handle_start()
+    wait_until(qt_application, lambda: plugin.handle_get_status().get('submitted'))
+
+    from lyse.dataframe_utilities import get_dataframe_from_shots
+
+    paths = []
+    for number, cost in enumerate([float('nan'), 2.0]):
+        path = str(tmp_path / f'shot{number}.h5')
+        with h5py.File(path, 'w') as f:
+            f.create_group('globals')
+            f.attrs['sequence_id'] = '20260922T120000_optimization'
+            f.attrs['shot_id'] = f'shot-{number}'
+            f.create_group('results/r').attrs['c'] = cost
+        paths.append(path)
+    table.add_files(paths, get_dataframe_from_shots(paths), ['runmanager'] * 2)
+    phase = ('labscript_optimization', 'phase')
     for number, path in enumerate(paths):
-        # The last shot is the first with an answer.
-        answer = {'best_params': [0.25, 1.5]} if number == 3 else {}
-        routine.save_status(path, status(**answer))
-        table.update_rows(worker._updated_data)
-        worker._updated_data.clear()
-    saved = list(table.dataframe[('labscript_optimization', 'best_params')])
-    assert saved == [[]] * 3 + [[0.25, 1.5]]
+        plugin.on_analysis_done(path, {})
+        wait_until(
+            qt_application,
+            lambda: phase in table.dataframe and table.dataframe[phase][number] == 'main',
+        )
+    columns = table.dataframe['labscript_optimization']
+    assert list(columns['phase']) == ['main', 'main']
+    assert list(columns['best_cost'].isna()) == [True, False]
+    assert columns['best_params'][0] == [] and len(columns['best_params'][1]) == 1
+    with h5py.File(paths[1], 'r') as f:
+        assert 'labscript_optimization' not in f['results']

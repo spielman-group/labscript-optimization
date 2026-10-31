@@ -119,6 +119,19 @@ class FakeRunmanager:
         self.finished.update(dict.fromkeys(shot_ids, lyse))
 
 
+class FakeInterface(FakeRunmanager):
+    """The fake runmanager, built from a configuration, and ready to Start."""
+
+    def __init__(self, config):
+        super().__init__()
+
+    def check_ready(self):
+        pass
+
+    def pin_labscript_file(self):
+        pass
+
+
 @pytest.fixture
 def runmanager():
     return FakeRunmanager()

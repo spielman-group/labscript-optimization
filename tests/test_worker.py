@@ -8,33 +8,20 @@ import numpy as np
 import pytest
 
 from labscript_optimization import config as config_module
-from labscript_optimization import worker as worker_module
 from labscript_optimization.worker import Worker
 
 from conftest import SESSION_CONFIG as CONFIG
-from conftest import FakeRunmanager
-
-
-class FakeInterface(FakeRunmanager):
-    """The fake runmanager, built from a configuration, and ready to Start."""
-
-    def __init__(self, config):
-        super().__init__()
-
-    def check_ready(self):
-        pass
-
-    def pin_labscript_file(self):
-        pass
+from conftest import FakeInterface
 
 
 class Shown(list):
-    """The statuses the window was shown, which a test can wait on, and the
-    texts of the configurations it was shown."""
+    """The statuses the window was shown, which a test can wait on, the texts of
+    the configurations it was shown, and the messages lyse's output box was."""
 
     def __init__(self):
         super().__init__()
         self.texts = []
+        self.output = []
         self.changed = threading.Condition()
 
     def append(self, status):
@@ -60,33 +47,34 @@ def start(interface=FakeInterface, text=CONFIG):
         show_config=lambda config, loaded: shown.texts.append(loaded),
     )
     commands = queue.Queue()
-    worker = Worker(reads(text), window, commands, interface)
+
+    def output(message, red=False):
+        shown.output.append(message)
+
+    worker = Worker(reads(text), window, commands, output, interface)
     # Answered after the opening, which is ahead of it in the queue.
-    worker.hand_over([], [], None)
+    worker.hand_over([]).result(timeout=5)
     return worker, commands, shown
 
 
 def hand_over(worker, *shot_ids):
-    """Hand over a cost for each id, and return the files whose status was saved."""
-    saved = []
-    worker.hand_over(
-        [f'{i}.h5' for i in shot_ids],
-        [(i, 1.0, None, False) for i in shot_ids],
-        lambda filepath, status: saved.append((filepath, status['phase'])),
-    )
-    return saved
+    """Hand over a cost for each id, and return the ids the session took, with
+    what proposed each."""
+    reply = worker.hand_over([(i, 1.0, None, False) for i in shot_ids])
+    recorded, _ = reply.result(timeout=5)
+    return [(i, source) for i, source in zip(shot_ids, recorded) if source]
 
 
 def test_only_the_shots_the_session_proposed_get_their_status():
     worker, commands, _ = start()
     commands.put(('start', None, None))
-    assert hand_over(worker, 'shot-0', 'someone-elses') == [('shot-0.h5', 'main')]
+    assert hand_over(worker, 'shot-0', 'someone-elses') == [('shot-0', 'main')]
 
 
-def test_a_reply_later_than_the_deadline_is_saved_by_the_next_hand_over(monkeypatch):
-    """The reply precedes the runmanager round trips behind it, and a request
-    queued behind slow ones is answered when they finish."""
-    monkeypatch.setattr(worker_module, 'REPLY_TIMEOUT', 0.2)
+def test_a_hand_over_returns_at_once_and_is_answered_when_the_session_gets_to_it():
+    """The reply precedes the runmanager round trips behind it, and a hand-over
+    queued behind slow ones is answered when they finish, so lyse's analysis
+    never waits on runmanager."""
     release = threading.Event()
 
     class Slow(FakeInterface):
@@ -96,31 +84,26 @@ def test_a_reply_later_than_the_deadline_is_saved_by_the_next_hand_over(monkeypa
 
     worker, commands, _ = start(Slow)
     commands.put(('start', None, None))
-    assert hand_over(worker, 'shot-0') == [('shot-0.h5', 'main')]
-    assert hand_over(worker, 'shot-1') == []
+    assert hand_over(worker, 'shot-0') == [('shot-0', 'main')]
+    reply = worker.hand_over([('shot-1', 1.0, None, False)])
+    assert not reply.done()
     release.set()
-    assert hand_over(worker) == [('shot-1.h5', 'main')]
+    assert reply.result(timeout=5)[0] == ('main',)
 
 
-def test_a_failure_after_a_reply_stops_the_session_and_is_raised_next(capsys):
+def test_a_failure_after_a_reply_stops_the_session_and_is_reported():
     class FailsOnStatus(FakeInterface):
         def shot_status(self, shot_ids):
             raise RuntimeError('runmanager went away')
 
     worker, commands, shown = start(FailsOnStatus)
     commands.put(('start', None, None))
-    # Raised by this hand-over if it has already failed by its end, else by the next.
-    with pytest.raises(RuntimeError, match='runmanager went away'):
-        hand_over(worker, 'shot-0')
-        hand_over(worker)
+    hand_over(worker, 'shot-0')
     shown.wait_for(lambda status: status.get('stopped') == 'stopped by an error')
-    # Shown at once, in case no later pass comes to raise it.
-    assert 'runmanager went away' in capsys.readouterr().err
+    assert 'runmanager went away' in ''.join(shown.output)
 
 
-def test_runmanager_not_answering_mid_run_pauses_the_session_and_start_resumes_it(
-    capsys,
-):
+def test_runmanager_not_answering_mid_run_pauses_the_session_and_start_resumes_it():
     silent, asked = [True], []
 
     class Silent(FakeInterface):
@@ -132,12 +115,12 @@ def test_runmanager_not_answering_mid_run_pauses_the_session_and_start_resumes_i
 
     worker, commands, shown = start(Silent)
     commands.put(('start', None, None))
-    # Neither hand-over raises: the failure is not one to report.
     hand_over(worker, 'shot-0')
     hand_over(worker)
     shown.wait_for(lambda s: s.get('pause_reason') == 'runmanager is not answering')
     assert shown[-1]['paused'] and shown[-1]['awaiting'] == 1
-    assert capsys.readouterr() == ('', '')
+    # The failure is not one to report.
+    assert shown.output == []
     silent.clear()
     commands.put(('start', None, None))
     hand_over(worker)
@@ -156,22 +139,18 @@ def test_runmanager_not_answering_mid_run_pauses_the_session_and_start_resumes_i
     assert asked
 
 
-def test_a_session_thread_that_has_died_is_reported(monkeypatch):
-    monkeypatch.setattr(worker_module, 'REPLY_TIMEOUT', 0.2)
-
+def test_a_session_thread_that_has_died_is_reported():
     def update(status, *args):
         raise RuntimeError('the window is broken')
 
     window = SimpleNamespace(update=update, show_config=lambda config, text: None)
-    worker = Worker(reads(CONFIG), window, queue.Queue(), FakeInterface)
+    worker = Worker(reads(CONFIG), window, queue.Queue(), print, FakeInterface)
     worker.thread.join(timeout=10)
     with pytest.raises(RuntimeError, match='thread has stopped'):
-        hand_over(worker)
-    # Nothing is left awaiting a reply that cannot come.
-    assert not worker.unsaved
+        worker.hand_over([])
 
 
-def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(capsys):
+def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends():
     writes, failures, absent = [], [], set()
     holds = {'gx': '1', 'other': '3'}
 
@@ -208,18 +187,16 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
     assert shown[-1]['restorable'] and writes == [best, {'gx': '1'}]
 
     # Nothing has been skipped so far, so nothing has been said.
-    assert capsys.readouterr().out == ''
+    assert shown.output == []
     # A write runmanager does not take is one line, and the run is as it was.
     for failure in (TimeoutError('timed out'), RuntimeError('refused')):
         failures[:] = [failure]
         commands.put(('set_best', None, None))
         hand_over(worker)
-    out, err = capsys.readouterr()
-    assert out.splitlines() == [
-        "Could not set runmanager's values: runmanager is not answering",
-        "Could not set runmanager's values: refused",
+    assert shown.output == [
+        "Could not set runmanager's values: runmanager is not answering\n",
+        "Could not set runmanager's values: refused\n",
     ]
-    assert err == ''
     assert shown[-1]['paused'] and shown[-1]['stopped'] is None
 
     # The limit ends the run, said once however many passes follow it, and
@@ -231,7 +208,7 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
     assert shown[-1]['stopped']
     assert writes == [best, {'gx': '1'}, shown[-1]['best_params']]
     stopped = shown[-1]['stopped']
-    assert capsys.readouterr().out == f'The optimization has stopped: {stopped}\n'
+    assert shown.output[2:] == [f'The optimization has stopped: {stopped}\n']
 
     # Reset keeps the originals from before the first run, and the new
     # session's own first Start records only a global the file adds. A global
@@ -250,14 +227,12 @@ def test_runmanagers_values_are_set_from_the_window_and_when_the_session_ends(ca
     hand_over(worker)
     assert shown[-1]['restorable']
     assert writes == [{'gx': '1'}, {'gx': '1', 'other': '3'}]
-    assert capsys.readouterr().out.splitlines() == [
-        "Restored runmanager's values, except those in no active group: other"
+    assert shown.output[3:] == [
+        "Restored runmanager's values, except those in no active group: other\n"
     ]
 
 
-def test_reset_reads_the_file_again_and_a_file_that_does_not_load_ends_the_session(
-    capsys,
-):
+def test_reset_reads_the_file_again_and_a_file_that_does_not_load_ends_the_session():
     class Records(FakeInterface):
         def check_ready(self):
             return {'x': '0'}
@@ -287,7 +262,7 @@ def test_reset_reads_the_file_again_and_a_file_that_does_not_load_ends_the_sessi
     commands.put(('start', None, None))
     hand_over(worker)
     assert shown[-1]['submitted'] == 2
-    assert capsys.readouterr() == ('', '')
+    assert shown.output == []
 
 
 def test_a_start_runmanager_refuses_leaves_the_session_paused_and_a_later_one_goes():
@@ -330,7 +305,7 @@ def test_a_start_runmanager_refuses_leaves_the_session_paused_and_a_later_one_go
         assert not shown[-1]['restorable'] and not pins
     # A later one opens the run at runmanager's values.
     commands.put(('start', None, True))
-    assert hand_over(worker, 'shot-0') == [('shot-0.h5', 'start')]
+    assert hand_over(worker, 'shot-0') == [('shot-0', 'start')]
     assert sent[0] == [0.25] and shown[-1]['start'] == [0.25]
 
     # A Start that resumes the run does not read runmanager again.

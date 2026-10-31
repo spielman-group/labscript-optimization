@@ -37,15 +37,14 @@ def test_window_shows_the_session_and_its_controls_follow_it_and_send_commands(
        column;
     6. plots each usable cost at the position of its shot, in a series for what
        proposed it, with a line along the best so far;
-    7. opens the configuration file from the edit button and from the text's
-       right-click menu;
+    7. shows the configuration file chosen and resets the session to read it,
+       and opens the file from the edit button and the text's right-click menu;
     8. tells the worker of the light's first answer and of each change.
     """
     commands = Queue()
     ui = UiLoader().load(str(Path(window_module.__file__).with_suffix('.ui')))
-    config_file = tmp_path / "config.toml"
     # The indicator is never started, so nothing is asked.
-    window = WindowController(ui, commands, "localhost", 42523, config_file)
+    window = WindowController(ui, commands, "localhost", 42523)
     window.ui.show()
     qt_application.processEvents()
 
@@ -159,6 +158,10 @@ def test_window_shows_the_session_and_its_controls_follow_it_and_send_commands(
     assert ([2], [3.0]) in drawn
     assert ([1, 2, 4], [2.0, 2.0, 1.0]) in drawn
 
+    config_file = str(tmp_path / "config.toml")
+    window.set_config_file(config_file)
+    assert window.ui.config_file_edit.text() == config_file
+    assert list(commands.queue)[-1] == ("reset", None, None)
     # The button and the right-click item open the configuration file, over
     # this window.
     opened = []

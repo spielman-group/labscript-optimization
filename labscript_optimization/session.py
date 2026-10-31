@@ -252,9 +252,9 @@ class Session:
         return shot_ids
 
     def status(self) -> dict:
-        """A snapshot for the routine to write back as lyse results."""
+        """A snapshot for the plugin to write back as lyse results."""
         best = self.best
-        # The routine flips a maximized cost on the way in; this undoes it, so
+        # The plugin flips a maximized cost on the way in; this undoes it, so
         # the status is in the lab's own sign.
         best_cost = None if best is None else best.cost
         if best_cost is not None and self.config.maximize:

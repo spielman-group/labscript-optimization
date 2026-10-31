@@ -66,8 +66,8 @@ posterior is refit to all of them with those hyperparameters held.
 
 scikit-learn and scipy are imported where they are used, and nothing here
 reaches a point of use until a batch is asked for. Loading a configuration
-resolves the learner's class and builds it, to read its ``generation``, in the
-lyse routine's own process, which should not pay several seconds to import the
+resolves the learner's class and builds it, to read its ``generation``, in
+lyse's own process, which should not pay several seconds to import the
 scientific stack.
 """
 

@@ -50,7 +50,7 @@ class Observation:
     source : str, optional
         What proposed this shot, as recorded by the session at submission: the
         source the learner returned beside the proposal, or the session's own
-        name for the configured start. The routine writes it onto the shot as
+        name for the configured start. The plugin writes it onto the shot as
         its ``phase``. ``None`` for a record made outside a session.
     """
 

@@ -1,37 +1,33 @@
-"""The lyse multishot routine.
+"""The lyse plugin.
 
-A lab's routine is a folder, ``<name>.lyse``, whose ``lyse_routine.py`` holds a
-subclass of :class:`OptimizationRoutine`::
-
-    from labscript_optimization.routine import OptimizationRoutine
-
-    class Optimization(OptimizationRoutine):
-        config_path = "optimization_config.toml"
-
-Adding it to lyse's multishot routines opens the optimizer window with a
-paused session; Start begins submitting shots. Removing or restarting the
-routine, or reaching the run budget, stops it. :data:`SHOT_RESULTS` is saved
-into lyse's dataframe, as lyse results under the routine's
-:attr:`~OptimizationRoutine.group` in the row of each shot the session
-proposed, so the best cost, where the search has got to, and what proposed
-each shot are columns of it.
-
-lyse runs a multishot routine once per drained batch of singleshot analyses,
-not once per shot, and names that batch's files in ``paths``. Every one is a
-run the session spent, so all are handed over.
+lyse loads it when its labconfig's ``[lyse/plugins]`` section has
+``labscript_optimization = True``. Its window, opened from lyse's Optimizer
+menu, runs one session at a time from the TOML configuration file chosen there,
+and Start begins submitting shots. After all analysis of a shot, the plugin
+hands the shot's cost to the session and saves :data:`SHOT_RESULTS` into lyse's
+dataframe, as ``df[(GROUP, name)]``, in the row of each shot the session
+proposed, so the best cost, where the search has got to, and what proposed each
+shot are columns of it.
 """
 
 import queue
-import sys
+from functools import partial
 from pathlib import Path
 
-import lyse
 import numpy as np
+from lyse.plugins import BasePlugin
+from qtutils import UiLoader, inmain, inmain_later
+from qtutils.qt import QtGui
+from runmanager.client import RunmanagerClient
 
 from . import config as config_module
 from .runmanager_interface import RunmanagerInterface
 from .window import WindowController
 from .worker import Worker
+
+#: The lyse results group the plugin's columns are saved under, and so the first
+#: level of each: ``df[('labscript_optimization', 'best_cost')]``.
+GROUP = "labscript_optimization"
 
 #: The keys written onto a shot, and so the columns the session produces. They
 #: say what proposed the shot, and where the search has got to.
@@ -107,115 +103,151 @@ def extract(shots, config):
     return filepaths, observations
 
 
-class OptimizationRoutine(lyse.Routine):
-    """One optimization session, as a lyse GUI routine.
-
-    A lab's ``lyse_routine.py`` subclasses this and sets :attr:`config_path`. The
-    configuration is read when lyse starts the routine, which fails if the file
-    does not load, and again at each Reset.
-    """
-
-    #: The TOML configuration, relative to the routine folder. A subclass must
-    #: set it.
-    config_path = None
-
-    #: The lyse results group the session's status is saved in, and so the first
-    #: level of every column it produces: ``df[('labscript_optimization',
-    #: 'best_cost')]``.
-    group = "labscript_optimization"
-
-    #: The routine's icon in lyse, the package's ``optimizer.svg``.
-    #:
-    #: :meta hide-value:
-    icon = str(Path(__file__).with_name("optimizer.svg"))
+class Plugin(BasePlugin):
+    """The optimizer in lyse: its window, its session and its remote commands."""
 
     #: Called with the session's :class:`~labscript_optimization.config.Config`
     #: to build the runmanager interface the session submits shots through.
     interface_factory = RunmanagerInterface
 
-    def _load_config(self):
-        config = config_module.load(self._config_file)
-        return config, self._config_file.read_text(encoding="utf-8")
-
     def __init__(self):
-        if self.config_path is None:
-            raise ValueError(
-                f"{type(self).__name__} must set config_path to its TOML "
-                f"configuration file."
-            )
-        self._config_file = self.folder / self.config_path
-
-        from runmanager.client import RunmanagerClient
-
-        # Only for runmanager's address: the light asks through a client of
-        # its own.
+        self.commands = queue.Queue()
+        ui = UiLoader().load(str(Path(__file__).with_name("window.ui")))
+        ui.setWindowIcon(QtGui.QIcon(str(Path(__file__).with_name("optimizer.svg"))))
+        # Only for runmanager's address: the light asks through a client of its own.
         client = RunmanagerClient()
-        ui = self.load_ui(Path(__file__).with_name("window.ui"))
-        self.saved_widgets(ui.start_from_runmanager)
-        commands = queue.Queue()
-        window = WindowController(
-            ui, commands, client.host, client.port, self._config_file
-        )
-        # The worker reads the file at once, so one that does not load raises
-        # here, and lyse shows no window.
+        self.window = WindowController(ui, self.commands, client.host, client.port)
+        self.shots = None
+        self.worker = None
+
+    def plugin_setup_complete(self, data):
+        self.shots = data["shots_model"]
         self.worker = Worker(
-            self._load_config, window, commands, self.interface_factory
+            self._load_config,
+            self.window,
+            self.commands,
+            data["output_box"].output,
+            self.interface_factory,
         )
-        self.link = window.link
-        self.link.start()
+        self.window.link.start()
 
-    def run(self):
-        """Hand the shots of lyse's current multishot pass to the session."""
-        if self.paths is None:
-            raise ValueError(
-                "labscript_optimization's routine runs on the shots of a "
-                "multishot pass; add it to lyse's multishot routines."
-            )
-        # An empty pass, from Run multishot with nothing analyzed, reads nothing.
-        shots = []
-        if self.paths:
-            # lyse keeps columns in the order added, and pandas warns about
-            # lexsort depth when an unsorted MultiIndex is read by a key
-            # shallower than it, as extract does.
-            shots = self.data(where={"filepath": self.paths}).sort_index(axis=1)
-        filepaths, observations = extract(shots, self.worker.config)
-        self.worker.hand_over(filepaths, observations, self.save_status)
+    def _load_config(self):
+        # The worker's thread reads the path the window holds, a plain string.
+        if not self.window.config_file:
+            raise ValueError("No configuration file is chosen. Choose one above.")
+        path = Path(self.window.config_file)
+        return config_module.load(path), path.read_text(encoding="utf-8")
 
-    def save_status(self, filepath, status) -> None:
-        """Save :data:`SHOT_RESULTS` of ``status`` into a shot's row of lyse's data.
+    def get_event_handlers(self):
+        return {"analysis_done": self.on_analysis_done}
 
-        Each key becomes ``df[(group, key)]``, saved with ``save_to_h5=False``
-        so the shot file is not opened: writing it too would take its h5 lock
-        once per shot, inline in lyse. A ``None`` is saved as its
-        :data:`NO_VALUE_YET`. A shot whose file is gone is reported to the
-        routine's Output dock and passed over.
-
-        Parameters
-        ----------
-        filepath : str
-            The shot file whose row is set.
-        status : dict
-            The session's status, with the shot's own ``phase`` beside it.
-        """
-        # The only save that can fail: lyse.Run refuses a file that is not
-        # there, though the save itself never opens it.
-        try:
-            run = self.get_run(filepath)
-        except FileNotFoundError as exc:
-            print(f"Not saving the optimization status: {exc}", file=sys.stderr)
+    def on_analysis_done(self, filepath, outcomes):
+        """Hand the shot's cost to the session, and save its status when it answers."""
+        config = self.worker.config
+        # None until a configuration file has loaded.
+        if config is None:
             return
-        for name in SHOT_RESULTS:
-            reported = status[name]
-            if reported is None:
-                reported = NO_VALUE_YET[name]
-            # save_result although best_params is a list, because it is what
-            # reaches the dataframe; save_result_array writes the file alone.
-            run.save_result(name, reported, save_to_h5=False)
+        filepaths, observations = extract(inmain(self._row, filepath), config)
+        reply = self.worker.hand_over(observations)
+        reply.add_done_callback(partial(self._save_status, filepaths))
+
+    def _row(self, filepath):
+        # lyse keeps columns in the order added, and pandas warns about lexsort
+        # depth when an unsorted MultiIndex is read by a key shallower than it,
+        # as extract does.
+        row = self.shots.row_number_by_filepath[filepath]
+        return self.shots.dataframe.iloc[[row]].sort_index(axis=1)
+
+    def _save_status(self, filepaths, reply):
+        # On the worker's thread, which has reported any error.
+        if reply.exception() is not None:
+            return
+        recorded, status = reply.result()
+        updated = {}
+        for filepath, source in zip(filepaths, recorded):
+            # A source comes back only for a shot the session proposed and had
+            # not yet recorded; runmanager mints an id for every row it compiles.
+            if source is not None:
+                values = status | {"phase": source}
+                updated[filepath] = {
+                    (GROUP, name): NO_VALUE_YET[name]
+                    if values[name] is None
+                    else values[name]
+                    for name in SHOT_RESULTS
+                }
+        if updated:
+            inmain_later(self.shots.update_rows, updated)
+
+    def get_menu_contributions(self):
+        return [
+            {
+                "location": "menubar",
+                "path": "Optimizer",
+                "name": "Show window",
+                "action": self._show_window,
+            }
+        ]
+
+    def _show_window(self, checked=False):
+        self.window.ui.show()
+        self.window.ui.raise_()
+        self.window.ui.activateWindow()
+
+    def get_save_data(self):
+        ui = self.window.ui
+        geometry = ui.geometry()
+        return {
+            "config_file": self.window.config_file,
+            "start_from_runmanager": ui.start_from_runmanager.isChecked(),
+            "visible": ui.isVisible(),
+            "geometry": [
+                geometry.x(), geometry.y(), geometry.width(), geometry.height()
+            ],
+        }
+
+    def restore_save_data(self, data):
+        ui = self.window.ui
+        if "geometry" in data:
+            ui.setGeometry(*data["geometry"])
+        if "start_from_runmanager" in data:
+            ui.start_from_runmanager.setChecked(data["start_from_runmanager"])
+        if "visible" in data:
+            ui.setVisible(data["visible"])
+        if "config_file" in data:
+            self.window.set_config_file(data["config_file"])
 
     def close(self):
-        """Stop watching runmanager and ask the session's thread to quit.
+        self.window.link.shutdown()
+        if self.worker is not None:
+            self.worker.quit()
 
-        Called when lyse removes or restarts the routine.
-        """
-        self.link.shutdown()
-        self.worker.quit()
+    def get_remote_handler(self):
+        return self
+
+    def handle_start(self, from_runmanager=False):
+        """Start or resume the optimization, as the window's Start does. With
+        from_runmanager, a run's first Start opens at runmanager's current values."""
+        self.commands.put(("start", None, from_runmanager))
+
+    def handle_pause(self):
+        """Pause the optimization, as the window's Pause does; start resumes it."""
+        self.commands.put(("pause", None, None))
+
+    def handle_reset(self):
+        """End the session and open a new one, reading the configuration file again."""
+        self.commands.put(("reset", None, None))
+
+    def handle_set_config_file(self, path):
+        """Choose the TOML configuration file; the session is reset to read it."""
+        inmain(self.window.set_config_file, str(path))
+
+    def handle_get_status(self):
+        """Return the window's phase, the configuration file, the shot counts and
+        the best cost and parameters so far."""
+        return inmain(
+            lambda: {
+                "phase": self.window.ui.phase_value.text(),
+                "config_file": self.window.config_file,
+            }
+            | self.window.status
+        )

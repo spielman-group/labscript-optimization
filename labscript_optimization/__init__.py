@@ -1,6 +1,6 @@
 """Machine-learning online optimization of labscript suite experiments.
 
-A lyse routine proposes shots, runmanager runs them, and the costs come back
+A lyse plugin proposes shots, runmanager runs them, and the costs come back
 through lyse. The learners are ordinary objects, driven through one method,
 so they can be used on their own::
 
@@ -14,12 +14,7 @@ so they can be used on their own::
     history = []  # one Observation per proposal made so far
     proposals = learner.propose(history, hint=4)  # (params, source) pairs
 
-In a lab, the entry point is a lyse routine folder, ``<name>.lyse``, whose
-``lyse_routine.py`` holds a subclass of
-:class:`~labscript_optimization.routine.OptimizationRoutine`::
-
-    from labscript_optimization.routine import OptimizationRoutine
-
-    class Optimization(OptimizationRoutine):
-        config_path = 'optimization_config.toml'
+In a lab, it is a lyse plugin, :class:`~labscript_optimization.plugin.Plugin`,
+which lyse loads when its labconfig's ``[lyse/plugins]`` section has
+``labscript_optimization = True``.
 """

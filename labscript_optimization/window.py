@@ -15,6 +15,7 @@
 
 import importlib.resources
 import itertools
+from pathlib import Path
 
 import pyqtgraph as pg
 import qtutils.icons  # registers the :/qtutils icons window.ui uses
@@ -27,11 +28,14 @@ from qtutils.qt import QtGui, QtWidgets
 class WindowController:
     """The optimizer window: its buttons queue commands, and the worker updates it."""
 
-    def __init__(self, ui, command_queue, host, port, config_path):
+    def __init__(self, ui, command_queue, host, port):
         self.command_queue = command_queue
         self.ui = ui
-        self.config_path = config_path
-        # Started by the routine, so a window can be built without asking.
+        # Empty until one is chosen; the worker reads it at each Reset.
+        self.config_file = ""
+        # The latest status shown, for the plugin's remote status.
+        self.status = {}
+        # Started by the plugin, so a window can be built without asking.
         self.link = LinkIndicator(
             "runmanager", host, port, on_answer=self._link_answered
         )
@@ -60,6 +64,7 @@ class WindowController:
                     (command, None, None)
                 )
             )
+        self.ui.choose_config_button.clicked.connect(self._choose_config_file)
         self.ui.edit_config_button.clicked.connect(self._edit_config)
         self.ui.edit_config_action.triggered.connect(self._edit_config)
         self.ui.config_text.customContextMenuRequested.connect(self._show_config_menu)
@@ -96,8 +101,27 @@ class WindowController:
         svg = importlib.resources.files("runmanager") / "runmanager.svg"
         self.ui.runmanager_icon.setPixmap(QtGui.QIcon(str(svg)).pixmap(16, 16))
 
+    def set_config_file(self, path):
+        """Show the file, and reset the session to read it if it changed."""
+        if path == self.config_file:
+            return
+        self.config_file = path
+        self.ui.config_file_edit.setText(path)
+        self.command_queue.put(("reset", None, None))
+
+    def _choose_config_file(self, checked=False):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self.ui,
+            "Choose the optimizer's configuration file",
+            str(Path(self.config_file).parent) if self.config_file else "",
+            "TOML files (*.toml)",
+        )
+        if path:
+            self.set_config_file(path)
+
     def _edit_config(self, checked=False):
-        open_in_editor(self.config_path, parent=self.ui)
+        if self.config_file:
+            open_in_editor(self.config_file, parent=self.ui)
 
     def _show_config_menu(self, position):
         # The position is in the viewport, which the text box's frame offsets.
@@ -146,6 +170,7 @@ class WindowController:
     @inmain_decorator(wait_for_return=False)
     def update(self, status, computing, observations, gaussian_process, maximize):
         """Show a session's status, with its observations as (source, cost) pairs."""
+        self.status = status
         stopped = status.get("stopped")
         # An empty status is a session still opening.
         opening = not status
