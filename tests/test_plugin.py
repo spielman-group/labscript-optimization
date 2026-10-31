@@ -25,8 +25,8 @@ import pandas as pd
 import pytest
 
 from labscript_optimization import config as config_module
-from labscript_optimization import routine as routine_module
-from labscript_optimization.routine import extract
+from labscript_optimization import plugin as routine_module
+from labscript_optimization.plugin import extract
 from labscript_optimization.session import Session
 
 CONFIG = """

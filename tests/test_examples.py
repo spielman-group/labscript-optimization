@@ -15,7 +15,7 @@ from pathlib import Path
 
 from labscript_optimization import config
 
-EXAMPLE = Path(__file__).resolve().parent.parent / 'examples' / 'optimization.lyse'
+EXAMPLE = Path(__file__).resolve().parent.parent / 'examples'
 
 
 def test_the_example_configuration_loads():

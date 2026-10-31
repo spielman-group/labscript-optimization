@@ -19,7 +19,7 @@ the folder. The cost column the configuration names must come from a singleshot
 routine, or from a multishot routine above this one.
 """
 
-from labscript_optimization.routine import OptimizationRoutine
+from labscript_optimization.plugin import OptimizationRoutine
 
 
 class Optimization(OptimizationRoutine):
