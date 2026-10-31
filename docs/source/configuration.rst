@@ -6,21 +6,16 @@ A TOML file configures one optimization session: the cost to optimize, the param
 Where the file is read
 ----------------------
 
-The routine's ``lyse_routine.py`` sets ``config_path`` on its :class:`~labscript_optimization.routine.OptimizationRoutine` subclass:
+The window's Configuration file field holds the path of the file, chosen with its Choose… button. The path is absolute, and nothing is relative to a folder. lyse saves it with its configuration.
 
-.. code-block:: python
-
-    class Optimization(OptimizationRoutine):
-        config_path = "optimization_config.toml"
-
-``config_path`` is relative to the routine folder. The file is read when lyse starts the routine, and again at each Reset, so press Reset after editing it. A file that is refused when the routine starts fails the routine's load, and the reason appears in lyse's output. One that is refused at a Reset ends the session with the reason in the window, and Reset tries it again.
+The session reads the file when a file is chosen, at each Reset, and when lyse starts with a path saved in its configuration, so press Reset after editing the file. A file that is refused ends the session with the reason in the window, and Reset tries it again.
 
 The example file
 ----------------
 
-``examples/optimization.lyse/optimization_config.toml`` in the repository presents every option. A commented line shows a key at its default, or an example value where the key has no default. The sections below describe each table.
+``examples/optimization_config.toml`` in the repository presents every option. A commented line shows a key at its default, or an example value where the key has no default. The sections below describe each table.
 
-.. literalinclude:: ../../examples/optimization.lyse/optimization_config.toml
+.. literalinclude:: ../../examples/optimization_config.toml
     :language: toml
     :caption: optimization_config.toml
 
@@ -40,7 +35,7 @@ What the session optimizes, and which parameter groups take part.
     * - ``cost_key``
       - list of two strings
       - required
-      - ``[routine_name, result_name]``, the lyse dataframe column that holds the cost. The column ``[routine_name, "u_<result_name>"]`` holds the uncertainty on the cost, and is read when it exists; only ``gaussian_process`` uses it. The cost must come from a singleshot routine, or from a multishot routine above this one in lyse's list. A shot whose cost column is missing, or whose cost is not finite, is recorded as a bad observation, which no learner uses to propose.
+      - ``[routine_name, result_name]``, the lyse dataframe column that holds the cost. The column ``[routine_name, "u_<result_name>"]`` holds the uncertainty on the cost, and is read when it exists; only ``gaussian_process`` uses it. The cost must come from a routine of your own in lyse, single-shot or multishot. A shot whose cost column is missing, or whose cost is not finite, is recorded as a bad observation, which no learner uses to propose.
     * - ``maximize``
       - boolean
       - ``false``
@@ -290,7 +285,7 @@ Takes no knobs. A table written for it must be empty.
     * - ``length_scale_bounds``
       - pair of numbers, ``[low, high]``
       - ``[1e-2, 1e2]``
-      - The bounds on each parameter's length scale, in units of the unit cube the parameters are scaled onto. Both numbers must be positive, with ``low`` below ``high``. When a refit leaves a length scale at an end of the bounds, scikit-learn's own warning appears in the routine's Output dock, at each refit that does.
+      - The bounds on each parameter's length scale, in units of the unit cube the parameters are scaled onto. Both numbers must be positive, with ``low`` below ``high``. When a refit leaves a length scale at an end of the bounds, scikit-learn's own warning is issued at each refit that does.
     * - ``noise_level_bounds``
       - pair of numbers, ``[low, high]``
       - ``[1e-5, 1e1]``

@@ -4,15 +4,15 @@ Troubleshooting
 Where errors appear
 -------------------
 
-A session that has stopped shows ``Ended:`` and the reason in the window's phase. The routine's Output dock holds tracebacks, and one line, ``The optimization has stopped: <reason>``, printed once for each session. A configuration that does not load when the routine starts is reported in lyse's own output box, and one that does not load at a Reset ends the session in the window.
+A session that has stopped shows ``Ended:`` and the reason in the window's phase. lyse's output box holds tracebacks, in red, and one line, ``The optimization has stopped: <reason>``, printed once for each session. A configuration that does not load ends the session in the window, with the reason and no traceback.
 
 How an error is reported depends on what the session was doing:
 
-* During the opening, Start and Reset, and when a Gaussian process batch finishes, the message becomes the reason in the window. The traceback goes to the Output dock, except for a configuration file that does not load at a Reset, which is yours to fix and prints none. The routine does not raise, and lyse goes on analyzing.
-* During the work after a shot, the window reads ``Ended: stopped by an error``. The routine raises the error in lyse, in that pass or the next, and lyse then pauses analysis. An error raised in the next pass has its traceback in the Output dock as soon as it happens. When you resume, the shots of the failed pass are part of the next pass.
+* During the opening, Start and Reset, and when a Gaussian process batch finishes, the message becomes the reason in the window. The traceback goes to lyse's output box, except for a configuration file that does not load at a Reset, which is yours to fix and prints none. lyse goes on analyzing.
+* During the work after a shot, the window reads ``Ended: stopped by an error``, and the traceback goes to lyse's output box as soon as it happens. lyse goes on analyzing.
 * When Start finds an error in runmanager's globals or cannot use its values for the start, or runmanager stops answering during a run, the session pauses and the window reads ``Paused:`` and the reason. Nothing is printed, and the session does not end.
 
-The messages quoted below are the reason in the first and third cases and the error the routine raises in the second.
+The messages quoted below are the reason in the first and third cases and the error in the traceback in the second.
 
 An ended session cannot be resumed. After fixing the cause, press Reset and then Start.
 
@@ -49,7 +49,7 @@ With the box ticked, the run's first Start reads runmanager's current values of 
 Scan? or JIT? ticked
 --------------------
 
-runmanager refuses a submission that sets a global whose Scan? or JIT? box is ticked, and queues nothing, because a ticked global runs its scan values, or under JIT? the value in runmanager's window, instead of the value submitted. The session ends with runmanager's message, ``Cannot submit a value for a global with its Scan? or JIT? box ticked, since the shot would not run it: <globals>.``, which names every global that has a box ticked. It is the reason in the window when Start or a finished Gaussian process batch made the submission, and the error the routine raises when a shot's pass did; see :ref:`troubleshooting:Where errors appear`. Untick the boxes in runmanager, press Reset and then Start.
+runmanager refuses a submission that sets a global whose Scan? or JIT? box is ticked, and queues nothing, because a ticked global runs its scan values, or under JIT? the value in runmanager's window, instead of the value submitted. The session ends with runmanager's message, ``Cannot submit a value for a global with its Scan? or JIT? box ticked, since the shot would not run it: <globals>.``, which names every global that has a box ticked. It is the reason in the window when Start or a finished Gaussian process batch made the submission, and the error in the traceback when the work after a shot did; see :ref:`troubleshooting:Where errors appear`. Untick the boxes in runmanager, press Reset and then Start.
 
 A scan on a global the configuration does not set makes runmanager refuse the submission, because the entry would not produce exactly one shot. Its message names the globals that expand it.
 
@@ -61,17 +61,17 @@ The session notes runmanager's labscript file at its first Start that is not ref
 A refused sequence join
 -----------------------
 
-A run is one runmanager sequence, and runmanager remembers a sequence only until it restarts. If runmanager restarts during a run, it refuses the next submission, and the session stops with runmanager's reason, such as ``Cannot add shots to sequence <id>: runmanager has no record of it, or has two and was not told which``. runmanager also refuses to join a sequence of a different labscript file. The session does not raise: the routine prints the reason once and lyse goes on analyzing. Press Reset. The new session starts a new sequence, with an empty history.
+A run is one runmanager sequence, and runmanager remembers a sequence only until it restarts. If runmanager restarts during a run, it refuses the next submission, and the session stops with runmanager's reason, such as ``Cannot add shots to sequence <id>: runmanager has no record of it, or has two and was not told which``. runmanager also refuses to join a sequence of a different labscript file. The plugin does not raise: it prints the reason once and lyse goes on analyzing. Press Reset. The new session starts a new sequence, with an empty history.
 
 A missing cost column
 ---------------------
 
-The routine reads the cost from the column that ``cost_key`` names. If the column is not in lyse's dataframe when the routine runs, or the cost is NaN or infinite, the shot is recorded as a bad observation and nothing says why. Completed counts the shot, Best cost stays "—", the plot stays empty, and a Gaussian process stays in Warmup, which counts only usable observations.
+The plugin reads the cost from the column that ``cost_key`` names. If the column is not in the shot's row of lyse's dataframe when all analysis of the shot has ended, or the cost is NaN or infinite, the shot is recorded as a bad observation and nothing says why. Completed counts the shot, Best cost stays "—", the plot stays empty, and a Gaussian process stays in Warmup, which counts only usable observations.
 
 Check that:
 
 * ``cost_key`` names the group and the result as they are saved: the file name of a classic script without its ``.py``, or the class of a GUI routine, then the result.
-* The routine that saves the cost is in the Singleshot routines box, or above the optimization routine in the Multishot routines box.
+* The routine that saves the cost is active in lyse, in either routine box.
 * That routine does not fail on the shots.
 
 A run with no usable cost still ends at the limits the configuration sets, ``no better parameters in <N> runs (max_num_runs_without_better_params)`` or ``reached max_num_runs (<N>)``, because both count every completed shot.
@@ -86,14 +86,9 @@ Starved counts each time the session ran and found none of its shots queued. run
 A stopped session thread
 ------------------------
 
-If the session thread has stopped, the routine raises ``The optimization session's thread has stopped, so nothing will answer; its traceback is above. Restart the routine.`` at every shot, and lyse pauses analysis. The traceback is in the routine's Output dock. In lyse, right-click the routine and choose "restart worker process for selected routines", then resume analysis. The history is lost with the thread.
-
-The folder is added as a singleshot routine
--------------------------------------------
-
-A singleshot routine gets one shot file at a time, so the optimization routine raises ``labscript_optimization's routine runs on the shots of a multishot pass; add it to lyse's multishot routines.`` at every shot, and lyse pauses analysis. The window still opens. Remove the routine from the Singleshot routines box and add the folder to the Multishot routines box.
+If the session thread has stopped, the plugin raises ``The optimization session's thread has stopped, so nothing will answer. Restart lyse.`` at every shot. lyse logs it and goes on analyzing. Restart lyse: the history is lost with the thread.
 
 The configuration does not load
 -------------------------------
 
-The routine reads its configuration when lyse starts it. If the file is unreadable or a setting is refused, lyse's output box shows the message, which names the setting, and no window opens. lyse reports the error again at each analysis until you fix the file and restart the routine. Reset reads the file again: if it does not load then, the window's phase reads ``Ended:`` followed by that message, nothing is printed, and there is no session until you fix the file and press Reset. :doc:`configuration` describes the settings.
+The session reads its configuration when a file is chosen, at each Reset, and when lyse starts with a file saved in its configuration. If no file is chosen, the window's phase reads ``Ended: No configuration file is chosen. Choose one above.`` If the file is unreadable or a setting is refused, the phase reads ``Ended:`` followed by the message, which names the setting. Nothing is printed, and there is no session until you fix the file and press Reset, or choose another file. :doc:`configuration` describes the settings.

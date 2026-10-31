@@ -8,7 +8,7 @@ algorithms.
 Work through the six steps below. Each says what to change and why, so you can
 tell whether it applies to your lab.
 
-## 1. Install it, and point lyse at the new routine
+## 1. Install it, and enable the plugin in lyse
 
 ```
 git clone https://github.com/spielman-group/labscript-optimization
@@ -16,37 +16,33 @@ pip install -e "./labscript-optimization[lyse]"
 ```
 
 Run those in the Python environment lyse itself runs in, the one holding the
-rest of your suite: the routine runs inside a lyse analysis subprocess, so an
-installation anywhere else is one lyse cannot import.
+rest of your suite: the plugin runs in lyse's own process, so an installation
+anywhere else is one lyse cannot import.
 
-It needs Python 3.13 or newer. The `lyse` extra adds what the routine needs from
+It needs Python 3.13 or newer. The `lyse` extra adds what the plugin needs from
 the suite: `lyse`, `runmanager`, `qtutils` and `pyqtgraph`. The learners alone,
 without the extra, need numpy, scipy, scikit-learn and `labscript_utils`.
 There is no tensorflow: the neural-network learner is gone, and with it M-LOOP's
 hard import of tensorflow through every other learner.
 
-The routine needs the Development branches of lyse and runmanager from the
-Spielman group's labscript suite, which have class routines (`lyse.Routine`,
-with its `folder`), `lyse.data(where=...)`, `save_result`'s `save_to_h5`,
+The plugin needs the Development branches of lyse and runmanager from the
+Spielman group's labscript suite, which have lyse's plugins (`lyse.plugins`,
+with the analysis done call), its shots table's `update_rows`,
 `submit_shots`'s `sequence_id` and `sequence_index`, and
 `runmanager.client.bound_for_lyse`. An older lyse or runmanager fails with
 Python's own error for the missing name or argument; the package checks no
 versions.
 
-Your lyse analysis routine becomes a routine folder, named with a `.lyse`
-suffix, such as `optimization.lyse`, and added to lyse's multishot routines. It
-holds your edited configuration, saved as `optimization_config.toml`, and a
-`lyse_routine.py` containing:
+The installation registers the plugin with lyse as `labscript_optimization`.
+lyse loads it only when the `[lyse/plugins]` section of the labconfig has
+`labscript_optimization = True`. Add the flag and restart lyse. The Optimizer
+menu in lyse's menu bar then shows the plugin's window, where Choose… selects
+your edited configuration, saved under any name, such as
+`optimization_config.toml`. The path is absolute, and lyse saves it with its
+configuration.
 
-```python
-from labscript_optimization.routine import OptimizationRoutine
-
-
-class Optimization(OptimizationRoutine):
-    config_path = "optimization_config.toml"
-```
-
-Remove `mloop_multishot.py`, `mloop_interface.py`, `mloop_controller.py`,
+Remove the analysislib-mloop routine from lyse's multishot routines, and
+`mloop_multishot.py`, `mloop_interface.py`, `mloop_controller.py`,
 `mloop_learner.py` and `monkey.py` from your analysis directory. Nothing from
 analysislib-mloop is imported any more, and `mloop` itself is not a dependency.
 
@@ -59,10 +55,10 @@ When a run ends, analysislib-mloop set the best values in runmanager and engaged
 a shot. labscript-optimization only sets the best values; runmanager runs them at
 once if it is running default shots. While the session is paused or has ended,
 Set best values sets them again, and Restore original values puts back what
-runmanager held before the routine first started a run, also after a Reset.
+runmanager held before the optimizer first started a run, also after a Reset.
 
 The Results, Window and Troubleshooting pages of the documentation describe what
-the routine saves into lyse's dataframe, its window, and how it fails.
+the plugin saves into lyse's dataframe, its window, and how it fails.
 
 ## 2. Rename the two M-LOOP tables, and cut the settings that no longer exist
 
@@ -98,7 +94,7 @@ Delete these from your configuration:
 | `[ANALYSIS]` | `analysislib_console_log_level`, `analysislib_file_log_level` | The plugin's own logging configuration. It has no logging of its own to configure. |
 | `[GENERAL]` | `session` | A label. Nothing read it but the status `optimize` returns, where it was one more key in the printed dictionary; it was never written onto a shot and never matched on. A shot is attributed by the id runmanager mints for its queue row, which lyse reads as the `shot_id` column. |
 | `[GENERAL]` | `no_delay` | The Gaussian process always behaves as M-LOOP's `no_delay = true`: while it computes a batch its explorer keeps the queue topped up, and each of its points goes out as soon as it is ready. |
-| `[GENERAL]` | `visualisations` | The routine's window always plots the costs and shows the run's state, and progress also comes back as the routine's results. There is nothing to switch on. |
+| `[GENERAL]` | `visualisations` | The plugin's window always plots the costs and shows the run's state, and progress also comes back as columns of lyse's dataframe. There is nothing to switch on. |
 | `[GENERAL]` | `console_log_level`, `console_log_string` | As for the `[ANALYSIS]` log levels: it has no logging of its own to configure. |
 | `[LEARNER.random]`, `[LEARNER.directed_random]`, `[LEARNER.differential_evolution]` | `first_params` | Where a run begins is written on the parameters, as each one's `start` beside its own `min` and `max`, and the session proposes that point first and once, whichever learner is running. `first_params` was a second way to say the same thing, and only three of the four learners took it, so the file's answer to where a run starts depended on which learner had been chosen. As a bare vector it could not be checked against the parameter tables it stood for either: reorder them and it silently meant a different experiment, which is not an error but a different run. Write `start` on the parameters instead. |
 | `[GENERAL]`, `[LEARNER.differential_evolution]` | `restart_tolerance` | The population is not re-seeded when its costs converge. That decision was taken at a generation boundary from the costs resolved by then, so a cost arriving afterwards could change it and turn a block generated as trials into founders of a new epoch; and within a lab's budget it re-seeded populations that had converged to within a fraction of their initial spread but not to the minimum. `max_num_runs_without_better_params` is the stop to use instead. |
@@ -221,7 +217,7 @@ that moment and runmanager gives BLACS a default shot instead. At one buffered
 run roughly every second shot is a default one. Those shots go to BLACS
 already compiled, so runmanager never writes a shot id into them.
 
-The status counts a `starved` for each time the routine found nothing of its
+The status counts a `starved` for each time the session found nothing of its
 own queued. If it keeps climbing, raise `num_buffered_runs`.
 
 Every learner that takes it keeps exactly `num_buffered_runs` in flight, so

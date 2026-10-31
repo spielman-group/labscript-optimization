@@ -68,16 +68,17 @@ extensions = [
 autodoc_typehints = 'description'
 numfig = True
 # The suite and GUI modules the package imports; a docs build has no lab to
-# provide them. routine.py subclasses lyse.Routine, which a mock allows.
+# provide them. plugin.py's Plugin subclasses lyse.plugins.BasePlugin, which a
+# mock allows.
 autodoc_mock_imports = ['lyse', 'runmanager', 'labscript_utils', 'qtutils', 'pyqtgraph']
-# Nitpicky references that nothing documents: lyse.Routine is mocked, Future
-# reports a private module, concurrent.futures._base, and the page leaves out
-# the runmanager interface that OptimizationRoutine.interface_factory aliases.
+# Nitpicky references that nothing documents: lyse.plugins.BasePlugin is mocked,
+# Future reports a private module, concurrent.futures._base, and the page leaves
+# out the runmanager interface that Plugin.interface_factory aliases.
 # ``optional`` and ``sequence`` are NumPy docstring words, not classes.
 nitpick_ignore = [
     ('py:class', 'optional'),
     ('py:class', 'sequence'),
-    ('py:class', 'lyse.Routine'),
+    ('py:class', 'lyse.plugins.BasePlugin'),
     ('py:class', 'concurrent.futures._base.Future'),
     ('py:class', 'labscript_optimization.runmanager_interface.RunmanagerInterface'),
 ]

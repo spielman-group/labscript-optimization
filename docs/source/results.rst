@@ -1,7 +1,7 @@
 Results
 =======
 
-The session saves its progress into lyse's dataframe as lyse results in the group ``labscript_optimization``, in the row of each shot it proposed. Each key below is a column. For example, ``df[("labscript_optimization", "best_cost")]`` is the best cost so far:
+The plugin saves the session's progress into lyse's dataframe, in the group ``labscript_optimization``, in the row of each shot the session proposed. Each key below is a column. For example, ``df[("labscript_optimization", "best_cost")]`` is the best cost so far:
 
 .. code-block:: python
 
@@ -29,9 +29,9 @@ The columns are written to the dataframe alone and not into the shot files, so s
       - list of floats
       - The parameter values of the shot with the best cost, in real units, in the order of the window's parameter table.
 
-``phase`` is the shot's own. It is the source recorded when the session proposed that shot, however far the run has moved on since, and it is not the phase of whatever was proposed most recently. The other two columns are the session's state when it took the costs of the pass that handed over the shot, so the shots of one pass share them.
+``phase`` is the shot's own. It is the source recorded when the session proposed that shot, however far the run has moved on since, and it is not the phase of whatever was proposed most recently. The other two columns are the session's state when it took the shot's cost.
 
-The status counters and the reason the session stopped are one answer for the whole run rather than anything about a shot, so they are not saved. The window shows them, and the reason is printed once to the Output dock.
+The status counters and the reason the session stopped are one answer for the whole run rather than anything about a shot, so they are not saved. The window shows them, and the reason is printed once to lyse's output box.
 
 Empty values
 ------------
@@ -54,6 +54,6 @@ The best columns are empty until a shot has a usable cost.
 Which shots are written
 -----------------------
 
-The session writes onto a shot id it proposed and onto no other. runmanager mints a shot id for every queue row it compiles, so carrying one does not make a shot the session's. Your own shots, runmanager's default shots, and a rerun of a shot the session has already counted are left alone, and their rows have no value in these columns.
+The session writes onto a shot id it proposed and onto no other. runmanager mints a shot id for every queue row it compiles, so carrying one does not make a shot the session's. Your own shots, runmanager's default shots, and a shot the session has already counted, rerun or analyzed again, are left alone, and their rows have no value in these columns.
 
-A shot is saved when the session takes its cost, in the pass that hands it over. lyse takes a routine's results only while the routine runs, so when the session's reply is slower than the routine will wait, the shot is saved at the next pass. If lyse's dataframe has lost the shot's row by then, lyse warns and the save is dropped. A shot whose file no longer exists is reported in the routine's output and passed over.
+A shot is saved when the session thread answers the plugin's hand-over of its cost, by which time lyse may have gone on to later shots. If lyse's dataframe has lost the shot's row, lyse warns in its output box and the save is dropped.

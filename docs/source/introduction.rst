@@ -3,34 +3,32 @@ Introduction
 
 labscript-optimization optimizes an experiment online. You choose the runmanager globals to vary, and write a lyse analysis that computes a cost from each shot. The package proposes values for the globals, runmanager runs them as shots, and lyse returns the costs, until a limit is reached or you stop the run. Your labscript file does not change: the optimization only sets runmanager globals.
 
-It is one lyse GUI routine, :class:`~labscript_optimization.routine.OptimizationRoutine`, in lyse's Multishot routines box. There is no program of its own to start.
+It is a lyse plugin, :class:`~labscript_optimization.plugin.Plugin`, which lyse loads when its labconfig enables it. There is no program of its own to start.
 
 How it works
 ------------
 
-Behind the routine is one *session*: the history of every proposal made, one learner that makes them, and the rules that stop the run. The session runs on a thread of its own in the routine's lyse worker process, and the routine's window controls it. A cycle goes round three programs:
+Behind the plugin is one *session*: the history of every proposal made, one learner that makes them, and the rules that stop the run. The session runs on a thread of its own in lyse's process, and the plugin's window controls it. A cycle goes round three programs:
 
 #. The session submits the learner's proposals to runmanager, one shot per proposal. runmanager compiles each shot and adds it to its running queue, which is never stopped or waited on. The globals in runmanager's window are left at the last proposal submitted.
-#. BLACS runs the shots. lyse analyses each one, and your singleshot routine computes its cost.
-#. lyse runs the optimization routine on the batch of shots it has just analyzed. The routine reads each shot's id and cost from lyse's dataframe, hands them to the session and returns. The session takes the costs, saves its progress into the dataframe (see :doc:`results`), and submits what the learner proposes next.
+#. BLACS runs the shots. lyse analyzes each one, and your own routine computes its cost.
+#. lyse calls the plugin when all analysis of a shot has ended: its single-shot routines and, if any multishot routine is active, the multishot pass that includes it. The plugin reads the shot's id and cost from its row of lyse's dataframe, hands them to the session and returns. The session takes the cost, saves its progress into the dataframe (see :doc:`results`), and submits what the learner proposes next.
 
 A run is one runmanager sequence: the first submission starts it and every later one joins it.
 
 Shot ids
 ~~~~~~~~
 
-runmanager mints an id for every queue row it compiles and writes it into the shot file, and lyse reads it as the ``shot_id`` column. The session records the id of each shot it submits and matches costs to proposals by it. Shots can therefore come back in any order, and shots that are not the session's pass through unharmed: your own shots in the same queue, and the default shots runmanager makes to keep the apparatus busy, which carry no id. The session takes a cost for an id once, so a shot that BLACS reruns is not counted twice.
+runmanager mints an id for every queue row it compiles and writes it into the shot file, and lyse reads it as the ``shot_id`` column. The session records the id of each shot it submits and matches costs to proposals by it. Shots can therefore come back in any order, and shots that are not the session's pass through unharmed: your own shots in the same queue, and the default shots runmanager makes to keep the apparatus busy, which carry no id. The session takes a cost for an id once, so a shot that BLACS reruns, or that lyse analyzes again, is not counted twice.
 
-The session keeps no count of shots in flight. Each time the routine runs it asks runmanager which of the awaited shots can still produce a cost, and gives up on one that cannot instead of waiting for it forever: a shot that was deleted, failed to compile or was refused by BLACS, or one lyse will not get because Analyse is off in runmanager or lyse rejected it. The window counts such shots as dropped.
+The session keeps no count of shots in flight. After each shot lyse analyzes, the session asks runmanager which of the awaited shots can still produce a cost, and gives up on one that cannot instead of waiting for it forever: a shot that was deleted, failed to compile or was refused by BLACS, or one lyse will not get because Analyse is off in runmanager or lyse rejected it. The window counts such shots as dropped.
 
 The session thread
 ~~~~~~~~~~~~~~~~~~
 
-lyse runs a multishot routine inline, so a slow one delays every shot behind it. The routine therefore does no fitting and no runmanager traffic. It hands the observations to the session thread and waits at most two seconds for the reply, which the thread sends before it talks to runmanager again. A reply that arrives later is saved onto its shots at the next pass.
+lyse calls the plugin on its analysis thread, so a slow call delays every shot behind it. The plugin therefore does no fitting and no runmanager traffic. It hands the observations to the session thread and returns at once. The thread sends its reply before it talks to runmanager again, and the plugin saves the reply onto the shot when it arrives.
 
-The session is touched by the session thread alone. The routine reads the shots and saves their status columns on lyse's analysis thread, inside its ``run()``. After each request the session thread hands the window a snapshot of the status, which the window applies on the GUI thread. The runmanager light asks runmanager on a thread of its own, and a Gaussian process computes its batches on a background thread that tells the session thread when one is done.
-
-lyse runs the routine once per batch of analyzed shots, not once per shot, and names every shot of the batch in the routine's ``paths``. The routine hands over all of them.
+The session is touched by the session thread alone. The plugin reads the shot's row, asked for by lyse's analysis thread, and saves the status columns when the reply arrives; both happen on lyse's GUI thread. After each request the session thread hands the window a snapshot of the status, which the window applies on the GUI thread. The runmanager light asks runmanager on a thread of its own, and a Gaussian process computes its batches on a background thread that tells the session thread when one is done.
 
 Learners
 --------

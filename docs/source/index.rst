@@ -4,7 +4,7 @@
 labscript-optimization |version|
 ================================
 
-Machine-learning online optimization of labscript suite experiments: a lyse routine proposes shots, runmanager runs them, and the costs come back through lyse.
+Machine-learning online optimization of labscript suite experiments: a lyse plugin proposes shots, runmanager runs them, and the costs come back through lyse.
 
 .. toctree::
    :maxdepth: 2

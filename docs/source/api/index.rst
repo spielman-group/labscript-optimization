@@ -3,11 +3,11 @@ API Reference
 
 .. automodule:: labscript_optimization
 
-The lyse routine
-----------------
+The lyse plugin
+---------------
 
-.. automodule:: labscript_optimization.routine
-    :members: OptimizationRoutine, extract, SHOT_RESULTS, NO_VALUE_YET
+.. automodule:: labscript_optimization.plugin
+    :members: Plugin, extract, GROUP, SHOT_RESULTS, NO_VALUE_YET
     :undoc-members:
     :show-inheritance:
 
